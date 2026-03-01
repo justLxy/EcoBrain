@@ -87,17 +87,7 @@ public class MarketViewGUI {
     public static ItemCategory getCategory(Material material) {
         String name = material.name();
         
-        if (name.endsWith("_HELMET") || name.endsWith("_CHESTPLATE") || name.endsWith("_LEGGINGS") || name.endsWith("_BOOTS") || name.equals("SHIELD") || name.equals("ELYTRA")) {
-            return ItemCategory.ARMOR;
-        } else if (name.endsWith("_SWORD") || name.endsWith("_BOW") || name.equals("TRIDENT") || name.equals("CROSSBOW") || name.equals("MACE")) {
-            return ItemCategory.WEAPONS;
-        } else if (name.endsWith("_PICKAXE") || name.endsWith("_AXE") || name.endsWith("_SHOVEL") || name.endsWith("_HOE") || name.equals("FISHING_ROD") || name.equals("SHEARS") || name.equals("FLINT_AND_STEEL") || name.equals("BRUSH") || name.endsWith("COMPASS") || name.equals("LEAD") || name.equals("SPYGLASS") || name.equals("CLOCK")) {
-            return ItemCategory.TOOLS;
-        } else if (name.startsWith("MUSIC_DISC")) {
-            return ItemCategory.RECORDS;
-        } else if (name.contains("POTION") || name.equals("EXPERIENCE_BOTTLE") || name.equals("HONEY_BOTTLE") || name.equals("OMINOUS_BOTTLE")) {
-            return ItemCategory.POTIONS;
-        } else if (material.isEdible() || name.equals("MILK_BUCKET")) {
+        if (material.isEdible() || name.equals("MILK_BUCKET")) {
             return ItemCategory.FOOD;
         } else if (material.isBlock()) {
             return ItemCategory.BLOCKS;
