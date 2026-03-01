@@ -76,6 +76,11 @@ ai:
   # 推荐：2048 ~ 16384
   replay-buffer-capacity: 4096
 
+  # 【动态客单价(AOV)统计窗口（小时）】
+  # AI 会统计过去 X 小时内的全服平均客单价作为通胀惩罚的基准。
+  # 推荐：12 ~ 48
+  aov-window-hours: 24
+
   reward:
     # 奖励函数：
     # R = (w1 * TransactionVolume) - (w2 * InflationDelta) - (w3 * InventoryImbalance)
@@ -86,15 +91,16 @@ ai:
 
     # 成交量权重（正向）
     # 推荐：0.5 ~ 2.0
+    # 【注：这三项是可以自定义的，不建议全设为 1，要根据你更希望 AI 防通胀还是促交易来做出权衡侧重】
     w1-transaction-volume: 1.0
 
     # 通胀惩罚权重（负向）
     # 推荐：0.2 ~ 1.5
-    w2-inflation-delta: 0.6
+    w2-inflation-delta: 1.0
 
     # 库存失衡惩罚权重（负向）
     # 推荐：0.2 ~ 1.5
-    w3-inventory-imbalance: 0.8
+    w3-inventory-imbalance: 1.0
 
   tuning:
     # 【上调动作价格倍率】

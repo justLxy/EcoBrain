@@ -124,9 +124,13 @@ public class AIScheduler {
 
             // 3. 计算专属 Reward
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
+            // 维度对齐：将绝对金币额除以动态客单价，将其转化为一个比例乘数（否则金币额太大将彻底吞噬另外两个百分比指标）
+            double normalizedVolume = recentVolume / Math.max(1.0, dynamicAov);
+
             double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
                 / (double) Math.max(1, item.getTargetInventory());
-            double reward = (settings.rewardW1() * recentVolume)
+                
+            double reward = (settings.rewardW1() * normalizedVolume)
                 - (settings.rewardW2() * Math.abs(globalInflationRate))
                 - (settings.rewardW3() * imbalance);
 
