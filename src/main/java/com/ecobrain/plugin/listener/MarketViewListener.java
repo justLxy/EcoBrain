@@ -204,7 +204,7 @@ public class MarketViewListener implements Listener {
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
                         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                            marketService.settleBuy(itemHash, record, quote, amount);
+                            marketService.settleBuy(player, itemHash, record, quote, amount);
                             List<ItemMarketRecord> refreshed = repository.findAll();
                             List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(refreshed, player.getUniqueId());
                             Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, session.page()));

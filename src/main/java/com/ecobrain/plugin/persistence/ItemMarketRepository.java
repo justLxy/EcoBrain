@@ -151,6 +151,26 @@ public class ItemMarketRepository {
         }
     }
 
+    public void recordPlayerTransaction(java.util.UUID playerUuid, String playerName, TradeType tradeType, String itemHash, int quantity, double moneyAmount, long createdAtMillis) {
+        String sql = """
+            INSERT INTO ecobrain_player_transactions(player_uuid, player_name, trade_type, item_hash, quantity, money_amount, created_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, playerName);
+            statement.setString(3, tradeType.name());
+            statement.setString(4, itemHash);
+            statement.setInt(5, quantity);
+            statement.setDouble(6, moneyAmount);
+            statement.setLong(7, createdAtMillis);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record player transaction", e);
+        }
+    }
+
     public long queryLastTradeTime(String itemHash) {
         String sql = "SELECT MAX(created_at) AS last_time FROM ecobrain_trade_stats WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();

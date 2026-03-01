@@ -63,18 +63,33 @@ public class DatabaseManager {
                 created_at INTEGER NOT NULL
             )
             """;
+        String createPlayerTxSql = """
+            CREATE TABLE IF NOT EXISTS ecobrain_player_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_uuid TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                trade_type TEXT NOT NULL,
+                item_hash TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                money_amount REAL NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """;
         String indexInventorySql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_inventory ON ecobrain_items(current_inventory)";
         String indexPhysicalSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_physical ON ecobrain_items(physical_stock)";
         String indexTradeTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_time ON ecobrain_trade_stats(created_at)";
+        String indexPlayerTxSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_player_tx ON ecobrain_player_transactions(player_uuid, created_at)";
 
         try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
             statement.execute(createItemsSql);
             ensurePhysicalStockColumn(connection);
             statement.execute(createRiskSql);
             statement.execute(createTradeStatSql);
+            statement.execute(createPlayerTxSql);
             statement.execute(indexInventorySql);
             statement.execute(indexPhysicalSql);
             statement.execute(indexTradeTimeSql);
+            statement.execute(indexPlayerTxSql);
         } catch (SQLException e) {
             plugin.getLogger().severe("Failed to initialize database schema: " + e.getMessage());
             throw new IllegalStateException("Failed to initialize schema", e);

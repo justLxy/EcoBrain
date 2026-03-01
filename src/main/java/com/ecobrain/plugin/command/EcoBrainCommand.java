@@ -194,7 +194,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                         player.sendMessage(ChatColor.GREEN + "出售成功，共出售 " + finalAmount + " 个，获得 "
                             + String.format("%.2f", quote.totalPrice()) + " 金币。");
                         Bukkit.getScheduler().runTaskAsynchronously(plugin,
-                            () -> marketService.settleSell(hash, record, quote, finalAmount, ipoState.createdNow()));
+                            () -> marketService.settleSell(player, hash, record, quote, finalAmount, ipoState.createdNow()));
                     } finally {
                         releaseLock(player);
                     }
@@ -293,7 +293,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuy(hash, record, quote, amount));
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuy(player, hash, record, quote, amount));
                     } finally {
                         releaseLock(player);
                     }

@@ -95,19 +95,27 @@ public class MarketService {
      * - 虚拟库存始终按 AMM 结算后库存写入
      * - 真实库存仅在非 IPO 建档首单时再追加数量（首单数量已在建档时入 physical_stock）
      */
-    public void settleSell(String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
+    public void settleSell(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
         int newPhysical = ipoCreatedNow ? record.getPhysicalStock() : record.getPhysicalStock() + amount;
         repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
+        if (player != null) {
+            repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
+        }
     }
 
     /**
      * 买入结算：虚拟库存与真实库存同步扣减。
      */
-    public void settleBuy(String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
+    public void settleBuy(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
         int newPhysical = record.getPhysicalStock() - amount;
         repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
+        if (player != null) {
+            repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
+        }
     }
 
     public record TradeQuote(double totalPrice, int postInventory, TradeType type) {}

@@ -181,7 +181,7 @@ public class BulkSellListener implements Listener {
                     MarketService.TradeQuote quote = marketService.quoteSell(record, aggregatedItem.amount);
                     total += quote.totalPrice();
                     settleActions.add(() -> marketService.settleSell(
-                        hash, record, quote, aggregatedItem.amount, ipoState.createdNow()));
+                        player, hash, record, quote, aggregatedItem.amount, ipoState.createdNow()));
                 }
 
                 double finalTotal = total;
