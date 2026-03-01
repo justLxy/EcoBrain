@@ -2,77 +2,100 @@
 alwaysApply: true
 ---
 
-# Role Setup & Persona (角色设定)
-你现在是一位拥有 15 年经验的资深 Java 架构师、Minecraft 插件底层开发者（精通 Spigot/Paper API, Java 17+），同时兼顾金融量化交易（DeFi AMM 自动做市商算法）与人工智能（Deep Reinforcement Learning, 深度强化学习）的跨界交叉工程专家。
 
-我需要你作为我的“首席主程序员”，带我从零开始，手把手开发一款具有前沿学术含金量的 RPG 服务器 P2S 动态市场经济插件：**EcoBrain (生态脑)**。我的服务器版本是 paper/purpur 1.20.1版本，这个插件需要兼容1.20.1及以上版本。代码要符合最佳实践，并且每个重要函数要写好中文详细注释。
+# EcoBrain: 基于 vAMM 与深度强化学习的自适应虚拟微观经济系统
+**核心技术架构与工程实现白皮书 (Technical Whitepaper)**
 
-# Project Manifesto & Absolute Constraints (项目宣言与绝对红线)
-这绝不是一个传统的、死板的、基于 YAML 配置的商店插件。这是一个微缩版的纳斯达克交易所与 AI 宏观调控引擎的结合体。
-在编写代码时，你**必须严格遵守以下绝对红线（STRICT CONSTRAINTS）**：
-1. **纯净单文件交付 (Zero-Dependency AI)**：绝对不允许要求服主安装 Python、TensorFlow、PyTorch 等任何外部环境。所有机器学习模型（多层感知机 MLP、DQN 更新逻辑）必须使用纯 Java 手搓，或引入极轻量级库并使用 Maven Shadow Plugin 打入最终的 `.jar` 中。
-2. **极致性能与异步 (Async Everything)**：所有数据库读写 (SQLite)、AMM 批量滑点计算、AI 经验回放与梯度下降反向传播，**必须全部且强制性地**运行在 `Bukkit.getScheduler().runTaskAsynchronously` 中，绝对禁止阻塞 Server Main Thread。
-3. **NBT 与自定义物品的完美兼容**：必须能完美区分原版物品与 MythicMobs/RPGItems 等含有复杂 NBT 的物品。不允许使用 Material ID 作为主键。
-4. **零配置与冷启动 (Zero-Config IPO)**：坚决不使用 items.yml 等配置文件让服主手动添加物品。所有物品的收录全靠玩家第一次向系统出售（IPO 智能发现机制）。
-5. **绝对防刷物品与防爆刷金币漏洞 (Anti-Exploit)**：在开发 GUI 和 AMM 滑点函数时，必须考虑周全。
+## 摘要 (Abstract)
+传统的多人在线生存游戏（如 Minecraft）经济系统多采用基于静态配置文件的固定价格模型，这必然导致服务器中后期面临严重的通货膨胀或流动性枯竭。本文（本系统）提出并实现了一种名为 **EcoBrain** 的单体架构插件方案。该系统在无需外部计算环境的严格约束下，创新性地将**去中心化金融（DeFi）中的虚拟自动做市商（vAMM）算法**与**深度强化学习（DRL）模型**相融合，并辅以严格的并发事务控制与 NBT 序列化技术，构建了一个具备防刷机制（Anti-Exploit）、智能发现（Zero-Config IPO）及宏观自我调控能力的封闭式虚拟经济体。
 
 ---
 
-# Mathematical & Economic Core Models (核心数学与经济模型)
-为了防止你产生幻觉，我在此直接规定底层经济学公式，你必须在代码中严格按照此公式实现：
+## 1. 系统总体架构 (System Architecture)
+EcoBrain 采用严格的分层架构设计，确保 Bukkit 主线程的极低负载与金融事务的绝对安全。系统技术栈及核心依赖如下：
+- **运行环境**: Java 17+, Spigot/Paper API
+- **经济前置**: Vault API (用于与底层的 EssentialsX/CMI 等基础经济核心交互)
+- **持久化层**: 嵌入式 SQLite (无网络 IO 延迟)
+- **AI 计算层**: 纯 Java 原生实现的多层感知机（MLP）与 Q-Learning 更新机制。
 
-**1. 基础 AMM 联合曲线定价公式**
+架构按逻辑划分为三大核心引擎：**金融数学引擎（vAMM）**、**AI 调控引擎（DRL Core）** 与 **Bukkit 事务状态机（Transaction State Machine）**。
+
+---
+
+## 2. 金融数学引擎：vAMM 与定价模型 (Financial & Pricing Methodology)
+
+本系统摒弃了传统的“挂单撮合”机制，采用资金池与自动做市商机制保障市场绝对的流动性。
+
+### 2.1 物理与虚拟库存隔离架构 (The vAMM Architecture)
+为了解决系统在初始阶段凭空创造实体物品的恶性漏洞（Item Duplication Exploit），本系统创新性地将数据库中的“库存”状态解耦为两个独立维度：
+*   **虚拟数学池 (`current_inventory`)**：仅作为连续函数自变量参与价格计算。
+*   **实体物理仓 (`physical_stock`)**：记录系统真实持有的由玩家售出的物理物品数量，作为交割的硬性约束。
+
+### 2.2 动态联合曲线与离散滑点积分 (Dynamic Bonding Curve & Slippage)
+单一物品的瞬时成交价格 $P$ 遵循基于库存偏离度的指数级反比例衰减模型：
 $$ P_{current} = BasePrice \times \left( \frac{TargetInventory}{CurrentInventory} \right)^k $$
-*   `BasePrice` (基准价格)：由 AI 每日调控或首次发现时设定的基石价值。
-*   `TargetInventory` (理想库存)：系统期望持有的健康库存量（IPO 时默认设为 50）。
-*   `CurrentInventory` (当前实际库存)：系统实际持有的数量（绝不能为 0，最小设为 1，防止除以零异常）。
-*   `k` (弹性系数)：决定价格对库存变化的敏感度，默认 1.0，由 AI 调控。
+其中 $BasePrice$ 为基石价格，$TargetInventory$ 为系统锚定的理想流动性深度，$k$ 为决定价格敏感度的弹性系数。
 
-**2. 批量出售的离散滑点积分公式 (Slippage Math for Bulk Sell)**
-当玩家一次性出售 $N$ 个物品时，绝不能用 $P_{current} \times N$ 算钱。必须使用迭代累加，模拟每卖一个物品库存增加导致的连环跌价：
+在玩家进行批量抛售（Bulk Sell，数量为 $N$）时，严禁使用 $P_{current} \times N$ 进行线性结算，以防范大户利用延迟绕过价格衰减惩罚。系统采用离散迭代累加（模拟微积分下的曲线下面积）精确计算带有滑点（Slippage）的总收益：
 $$ TotalRevenue = \sum_{i=1}^{N} \left[ BasePrice \times \left( \frac{TargetInventory}{CurrentInventory + i} \right)^k \right] $$
 
-**3. AI 奖励函数 (Reward Function for DRL)**
-$$ R = (w_1 \times TransactionVolume) - (w_2 \times \Delta Inflation) - (w_3 \times InventoryImbalance) $$
-*引导 AI 追求高流动性，惩罚通货膨胀，惩罚库存枯竭或爆仓。*
+### 2.3 零配置冷启动与初始流动性注入 (Zero-Config IPO & Initial Liquidity)
+系统无需管理员配置价目表。当接收到未知资产时，自动触发首次公开募股（IPO）建档逻辑。
+为了防范 DeFi 中著名的**“初始流动性陷阱”（Initial Liquidity Trap）**——即新物品因初始库存极小导致价格暴涨数百倍，建档算法遵循以下规则：
+1. 强制设定 $BasePrice$ 为预设拓荒价。
+2. **虚拟流动性注入**：初始化 $CurrentInventory = TargetInventory$，使数学比例强行配平为 $1:1$。
+3. 真实物理库存初始化：$PhysicalStock = 0$。
+4. 随后将玩家本次出售的数量累加至双池中，完美规避开盘暴富漏洞。
 
 ---
 
-# Technical Architecture & Roadmap (5-Phase 开发路线图)
-我们将严格分为 5 个 Phase 进行开发。请仔细阅读全局架构：
+## 3. 人工智能引擎：嵌入式 DRL 调控 (AI Engine Implementation)
 
-## Phase 1: 基础设施、序列化与数据库基建
-- **构建工具**: Maven (`pom.xml`)。依赖: Paper-API (1.17+), Vault API, SQLite JDBC。包含 `maven-shade-plugin`。
-- **序列化引擎 `ItemSerializer.java`**:
-  - 必须使用 `BukkitObjectOutputStream` 将 `ItemStack` 完整序列化为 `Base64` 字符串。
-  - **【资深性能优化点】**: Base64 字符串太长，直接作为 SQLite 的索引极慢。必须写一个方法，对生成的 Base64 字符串进行 **SHA-256 哈希计算**，生成 `item_hash` (String, 64 chars)。
-- **SQLite 数据库管理器**:
-  - 表 `ecobrain_items`: `item_hash` (PRIMARY KEY), `item_base64` (TEXT), `base_price` (DOUBLE), `k_factor` (DOUBLE), `target_inventory` (INT), `current_inventory` (INT).
+EcoBrain 不使用固定死板的参数，而是依靠后台异步运行的轻量级神经网络进行参数的宏观校准。
 
-## Phase 2: Vault 桥梁、AMM 引擎与 IPO 冷启动
-- **定价服务类 `AMMCalculator.java`**: 实现上文提到的基础价格公式和**离散滑点累加公式**。
-- **主指令 `/ecobrain sell <数量>`**:
-  - 检查玩家主手物品。生成 Base64 与 SHA-256 Hash。
-  - **【IPO 智能发现机制】**: 如果数据库查无此 Hash，则为全服首次出现。强行以 `BasePrice = 5000.0` (默认拓荒价), `TargetInventory = 50` 初始化入库，`CurrentInventory = amount`。
-  - **如果存在**: 调用 `AMMCalculator` 计算滑点总价 $\rightarrow$ 扣除玩家物品 $\rightarrow$ Vault 给钱 $\rightarrow$ 异步更新数据库当前库存。
-- **主指令 `/ecobrain buy <数量>`**:
-  - 计算购买滑点总价（库存递减模型） $\rightarrow$ Vault 扣钱 $\rightarrow$ 依靠 `item_base64` 反序列化为 ItemStack 给玩家。若系统库存不足则拒绝交易。
+### 3.1 强化学习三要素构建
+*   **状态空间 (State Space $S$)**：提取归一化后的微观与宏观经济特征，映射至 $[-1, 1]$。包含：单物品库存偏离度、近 24 小时交易频次（流通率）、以及全服 M0 货币增发率。
+*   **动作空间 (Action Space $A$)**：网络输出离散动作，用于微调该物品的 $BasePrice$（例如 $\pm 3\%$）与曲线陡峭度 $k$（$\pm 0.05$）。
+*   **奖励函数 (Reward Function $R$)**：
+    $$ R = \alpha \cdot Vol(Tx) - \beta \cdot \Delta Inflation - \gamma \cdot |Skew(Inv)| $$
+    通过该函数引导 AI 最大化市场交易活跃度，同时严厉惩罚诱发通货膨胀与库存极端枯竭的行为。
 
-## Phase 3: 批量出售舱与市场大盘 GUI (Anti-Exploit GUI)
-- **批量出售垃圾桶 GUI (`BulkSellGUI.java`)**:
-  - 54 格 (6 行) 箱子。0-44 格为空，玩家随意丢入。
-  - 45-53 格为底栏。第 45 格为绿色玻璃板【确认出售】，第 53 格为红色玻璃板【取消并退回】。
-  - **安全防刷事件监听 (`InventoryClickEvent`, `InventoryDragEvent`, `InventoryCloseEvent`)**: 绝对禁止玩家把物品放进底栏；如果玩家直接按 ESC 关闭界面，0-44 格的所有物品必须安全回退给玩家。
-  - **点击【确认出售】的核心逻辑**: 遍历 0-44 格 -> 将所有相同 NBT 的物品合并计数 -> 针对每一种物品计算 AMM 滑点总价 -> Vault 打钱 -> 清空 0-44 格 -> 异步存入数据库。
-- **市场大盘 GUI (`MarketViewGUI.java`)**: 分页显示数据库中所有已收录物品。Lore 必须追加实时价格和当前系统库存。
+### 3.2 权重持久化机制 (Weight Persistence)
+纯 Java 构建的神经网络不依赖外部框架。其权重矩阵（Weights）与偏置（Biases）在每次异步训练（Backpropagation）完成后，必须通过 GSON 或原生序列化技术持久化存储至 `plugins/EcoBrain/ai_model.json`。确保服务端重启后，AI 依然具备历史记忆，防止调控逻辑发生断崖式退化。
 
-## Phase 4: 嵌入式纯 Java DRL 引擎 (The AI Core)
-- **状态收集器 (`StateCollector.java`)**: 异步收集全服宏观特征。
-- **纯 Java 神经网络 (`NeuralNet.java`)**: 
-  - 手写一个简单的多层感知机 (例如 Input -> 16 -> 8 -> 2 输出)。
-  - 包含简单的前向传播算法 (Forward Propagation) 和梯度下降权重更新算法。
-- **AI 定时任务**: 每隔现实时间 2 小时异步运行一次。输出动作 `Action` 用于微调所有活跃物品的 `base_price` (涨跌幅限制在 ±5%) 和 `k_factor`。
+---
 
-## Phase 5: 金融熔断器与服主管理系统
-- **熔断机制 (`CircuitBreaker.java`)**: 在价格变动前拦截。如果单日涨跌超过 ±30%，或库存极度枯竭，强制冻结该物品的买卖。
-- **管理指令**: `/ecobrain admin clear <hash>` 等兜底指令。
+## 4. 核心工程实现与并发控制 (Engineering & Concurrency)
+
+在 Spigot/Paper 高度同步的生态下，系统的工程实现必须在极低延迟与绝对安全之间取得平衡。
+
+### 4.1 全量 NBT 支持与 SHA-256 哈希散列映射
+为支持 MythicMobs 等复杂自定义物品，系统采用 `BukkitObjectOutputStream` 将 `ItemStack` 完全序列化为 `Base64` 文本。
+由于 Base64 字符串过长（可达数 KB），直接作为关系型数据库（SQLite）的主键将导致 B-Tree 索引检索效率灾难性下降。因此，引入 **SHA-256 密码学散列函数**，将长文本压缩为 64 位唯一的十六进制字符串 `item_hash`，以此作为 `ecobrain_items` 表的唯一主键（Primary Key），实现了 $O(1)$ 级时间复杂度的极速检索。
+
+### 4.2 事务原子性流转机制 (Atomic Transaction Pipeline)
+任何一笔交易必须强制遵循“异步计算 $\rightarrow$ 同步交割 $\rightarrow$ 异步固化”的跨线程状态机调度。绝对禁止逆序执行，以杜绝利用网络延迟刷取金币的 Exploit：
+1. **[异步计算]**: 读取 SQLite 获取当前虚拟双池状态，根据滑点公式计算精确总价。
+2. **[同步前置]**: 回到 Bukkit 主线程，校验玩家背包容量与 Vault 余额。
+3. **[同步交割 - 核心]**: 执行 `Vault.withdrawPlayer()` 或清空玩家背包槽位。**必须断言该操作返回 `true`（扣除成功），否则立刻抛出异常并回滚当前事务**。
+4. **[同步发放]**: 发放法币至 Vault 或生成物理实体物品至玩家背包。
+5. **[异步落库]**: 将更新后的 $CurrentInventory$ 与 $PhysicalStock$ 写入 SQLite 持久化。
+
+### 4.3 批量抛售舱的防刷设计 (GUI Anti-Exploit Security)
+54 格交互式 GUI 实现了严格的内存级防护：
+*   **区划隔离**：通过 `InventoryClickEvent` 严格拦截针对底部控制栏的任何拖拽与替换操作。
+*   **强制回退**：监听 `InventoryCloseEvent`。若检测到未发出成交指令的异常关闭（如玩家按 ESC 退出、网络断开），系统将无条件回退 $0 \sim 44$ 格内所有物品至玩家背包；若背包溢出，则在玩家世界坐标生成掉落物（Drop Item）。
+*   **会话幂等性 (Idempotency)**：点击确认交易瞬间生成会话锁（UUID Lock），彻底阻断客户端宏（Macro）连点造成的重入攻击（Re-entrancy Attack）。
+
+---
+
+## 5. 风控与熔断器机制 (Risk Management & Circuit Breakers)
+
+为应对游戏内恶性刷物 Bug（如复制漏洞）对市场系统的冲击，EcoBrain 内置了独立于主逻辑的风控拦截器：
+*   **流动性枯竭硬拦截**：当玩家发起购买请求（Buy）时，若系统中 $PhysicalStock \le 0$，拒绝交易，防范 vAMM 裸空头敞口。
+*   **日内波幅限制 (Daily Limit Price)**：若实时计算得出的 $P_{current}$ 偏离该物品的当日开盘价超过阈值（如 $\pm 30\%$），触发价格熔断，强行冻结（Freeze）该物品的法币交易接口，等待服主通过 `/eb admin info` 提取 Hash 后人工介入审查。
+
+---
+
+## 6. 结论 (Conclusion)
+EcoBrain 架构通过 vAMM 数学底层保障了极端的做市安全性，通过纯 Java 异步 DRL 引擎赋予了系统自我进化的宏观调控能力，并以极度严苛的线程调度约束扼杀了并发漏洞。该系统证明了在计算资源受限的单一 JVM 进程内，依然能够优雅地实现具有高度学术与工程价值的现代分布式金融体系。

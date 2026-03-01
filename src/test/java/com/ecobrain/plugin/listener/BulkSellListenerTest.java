@@ -34,7 +34,8 @@ class BulkSellListenerTest {
             "&2EcoBrain 批量出售舱",
             Material.LIME_STAINED_GLASS_PANE, "&a确认出售", java.util.List.of("&7点击后将结算 0-44 格全部物品"),
             Material.RED_STAINED_GLASS_PANE, "&c取消并退回", java.util.List.of("&7安全退回所有待售物品"),
-            Material.BLACK_STAINED_GLASS_PANE
+            Material.BLACK_STAINED_GLASS_PANE,
+            java.util.List.of("&7实时价格: &e{price}")
         );
         bulkSellGUI = new BulkSellGUI(gui);
         MarketService marketService = Mockito.mock(MarketService.class);

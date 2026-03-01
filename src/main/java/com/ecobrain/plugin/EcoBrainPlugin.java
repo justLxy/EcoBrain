@@ -36,6 +36,7 @@ public class EcoBrainPlugin extends JavaPlugin {
     private CircuitBreaker circuitBreaker;
     private MarketService marketService;
     private BulkSellGUI bulkSellGUI;
+    private MarketViewGUI marketViewGUI;
     private EcoBrainCommand ecoBrainCommand;
     private AIScheduler aiScheduler;
 
@@ -59,7 +60,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.circuitBreaker = new CircuitBreaker(repository, ammCalculator, settings.circuitBreaker());
         this.marketService = new MarketService(this, repository, ammCalculator, circuitBreaker, settings.economy());
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
-        MarketViewGUI marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer);
+        this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui());
         AdminCommand adminCommand = new AdminCommand(this, repository);
 
         this.ecoBrainCommand = new EcoBrainCommand(
@@ -120,6 +121,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         marketService.updateEconomySettings(settings.economy());
         circuitBreaker.updateSettings(settings.circuitBreaker());
         bulkSellGUI.applySettings(settings.gui());
+        marketViewGUI.applySettings(settings.gui());
         ecoBrainCommand.updateCooldown(settings.trade().cooldownMs());
         aiScheduler.updateSettingsAndRestart(settings.ai());
     }

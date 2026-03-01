@@ -87,7 +87,8 @@ public class PluginSettings {
             parseMaterial(c.getString("gui.bulk-sell.cancel-button.material"), Material.RED_STAINED_GLASS_PANE),
             c.getString("gui.bulk-sell.cancel-button.name", "&c取消并退回"),
             c.getStringList("gui.bulk-sell.cancel-button.lore"),
-            parseMaterial(c.getString("gui.bulk-sell.filler.material"), Material.BLACK_STAINED_GLASS_PANE)
+            parseMaterial(c.getString("gui.bulk-sell.filler.material"), Material.BLACK_STAINED_GLASS_PANE),
+            c.getStringList("gui.market.item-lore")
         );
 
         return new PluginSettings(economy, trade, circuitBreaker, ai, gui);
@@ -112,5 +113,6 @@ public class PluginSettings {
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,
                       Material cancelButtonMaterial, String cancelButtonName, List<String> cancelButtonLore,
-                      Material fillerMaterial) {}
+                      Material fillerMaterial,
+                      List<String> marketItemLoreTemplate) {}
 }

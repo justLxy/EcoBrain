@@ -1,5 +1,6 @@
 package com.ecobrain.plugin.gui;
 
+import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.AMMCalculator;
@@ -32,10 +33,32 @@ public class MarketViewGUI {
     private final AMMCalculator ammCalculator;
     private final ItemSerializer itemSerializer;
     private final ConcurrentHashMap<UUID, Session> sessions = new ConcurrentHashMap<>();
+    private volatile List<String> loreTemplate;
 
-    public MarketViewGUI(AMMCalculator ammCalculator, ItemSerializer itemSerializer) {
+    public MarketViewGUI(AMMCalculator ammCalculator, ItemSerializer itemSerializer, PluginSettings.Gui gui) {
         this.ammCalculator = ammCalculator;
         this.itemSerializer = itemSerializer;
+        applySettings(gui);
+    }
+
+    /**
+     * 热更新市场展示配置。
+     */
+    public final void applySettings(PluginSettings.Gui gui) {
+        List<String> configured = gui.marketItemLoreTemplate();
+        if (configured == null || configured.isEmpty()) {
+            this.loreTemplate = List.of(
+                "&7Hash: &f{hash_short}",
+                "&7实时价格: &e{price}",
+                "&7系统物理库存: &b{physical_stock}",
+                "&8(内部虚拟池: {virtual_inventory})",
+                "&a左键: 购买 1 个",
+                "&aShift+左键: 购买 1 组",
+                "&c管理员右键: 删除物品档案"
+            );
+            return;
+        }
+        this.loreTemplate = new ArrayList<>(configured);
     }
 
     /**
@@ -61,17 +84,12 @@ public class MarketViewGUI {
             }
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
-                List<String> lore = new ArrayList<>();
-                lore.add(ChatColor.GRAY + "Hash: " + record.getItemHash().substring(0, 12) + "...");
-                lore.add(ChatColor.YELLOW + "实时价格: " + String.format("%.2f", ammCalculator.calculateCurrentPrice(record)));
-                lore.add(ChatColor.AQUA + "系统物理库存: " + record.getPhysicalStock());
-                lore.add(ChatColor.DARK_GRAY + "(内部虚拟池: " + record.getCurrentInventory() + ")");
-                lore.add(ChatColor.GREEN + "左键: 购买 1 个");
-                lore.add(ChatColor.GREEN + "Shift+左键: 购买 1 组");
-                lore.add(ChatColor.RED + "管理员右键: 删除该物品档案");
+                List<String> lore = renderLore(record);
                 meta.setLore(lore);
                 item.setItemMeta(meta);
             }
+            int visibleAmount = Math.max(1, Math.min(item.getMaxStackSize(), record.getPhysicalStock()));
+            item.setAmount(visibleAmount);
             inventory.setItem(slot, item);
         }
         decorateBottomBar(inventory, safePage, maxPage);
@@ -114,6 +132,22 @@ public class MarketViewGUI {
             stack.setItemMeta(meta);
         }
         return stack;
+    }
+
+    private List<String> renderLore(ItemMarketRecord record) {
+        List<String> lore = new ArrayList<>();
+        String price = String.format("%.2f", ammCalculator.calculateCurrentPrice(record));
+        String hashShort = record.getItemHash().substring(0, Math.min(12, record.getItemHash().length())) + "...";
+        for (String line : loreTemplate) {
+            String rendered = line
+                .replace("{hash}", record.getItemHash())
+                .replace("{hash_short}", hashShort)
+                .replace("{price}", price)
+                .replace("{physical_stock}", String.valueOf(record.getPhysicalStock()))
+                .replace("{virtual_inventory}", String.valueOf(record.getCurrentInventory()));
+            lore.add(ChatColor.translateAlternateColorCodes('&', rendered));
+        }
+        return lore;
     }
 
     public static class Session {

@@ -152,3 +152,20 @@ gui:
     filler:
       # 底栏填充材质（45~53 里除功能按钮外的占位）
       material: BLACK_STAINED_GLASS_PANE
+
+  market:
+    # 市场物品 Lore 模板（支持颜色代码和占位符）
+    # 可用占位符：
+    # {hash}              -> 完整 hash
+    # {hash_short}        -> 缩短 hash
+    # {price}             -> 实时价格（保留两位小数）
+    # {physical_stock}    -> 真实物理库存
+    # {virtual_inventory} -> 虚拟库存（AMM 内部池）
+    item-lore:
+      - ""
+      - "&7实时价格: &e{price}"
+      - "&7系统物理库存: &b{physical_stock}"
+      - "&8(内部虚拟池: {virtual_inventory})"
+      - ""
+      - "&a左键: 购买 1 个"
+      - "&aShift+左键: 购买 1 组"
