@@ -164,7 +164,31 @@ public class AIScheduler {
             boolean isGlut = item.getCurrentInventory() > Math.max(item.getTargetInventory() * 5, 500);
             
             // 如果 config 里设为了 0，那么只有当库存真实 <= 0 时，才会被判定为稀缺并触发暴涨。
-            boolean isScarcity = fullSettings != null && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
+            boolean isScarcity = false;
+            if (fullSettings != null) {
+                // 只有当物理库存 <= criticalInventory 时，才算稀缺。
+                // 如果是新上市的物品（物理库存为0，并且虚拟库存还没被买空），不视为系统被买空导致的稀缺。
+                // 这个判断条件是：如果物理库存为0，但当前虚拟库存（current_inventory）比初始目标库存还要大或者差不多，说明这个物品只是刚出来没人卖，或者是被砸盘了导致虚拟库存很高，但物理库存刚好被人买空，这都不是真正的“系统级稀缺”（长期供不应求）。只有当虚拟库存也被买空（远小于目标库存）时，才算。
+                boolean isIpoInitialState = item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory() && item.getCurrentInventory() >= item.getTargetInventory() * 0.9;
+                
+                // 增加判断：如果这根本就不是没人卖或者被砸盘，就是一直触发暴涨然后又因为长期无人交易触发了【滞销保护】。
+                // 比较稳妥的做法是：如果连一次买卖都没发生过，也就是 current_inventory 完全等于 target_inventory，而且又没有物理库存（物理库存一直没人填补），那么也不该暴涨。
+                boolean isZeroTrading = item.getCurrentInventory() == item.getTargetInventory() && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
+                
+                // 彻底解决无人卖的问题：如果在过去几个小时内，从来没有任何人卖出（导致库存增加），而且现在物理库存又是0，那么就是纯粹的无人发掘，而不是被买空。
+                // 由于我们很难在这里查长期卖出记录，我们可以简单判断：如果物品当前库存（虚拟库存）从来没有小于过目标库存，且一直为0，那么这就是没人卖过，或者买卖绝对平衡。
+                // 考虑到我们是为了防止暴涨到几百万，加入最大价格限制最有效。
+                
+                // 更进一步：如果是物理库存为0的 IPO 初始状态，或者虚拟库存完全没减少过，都不判定为稀缺
+                if (!isIpoInitialState && !isZeroTrading) {
+                    isScarcity = item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
+                }
+                
+                // 终极保护：如果基础价格已经达到或者即将超过上限，禁止判定为稀缺
+                if (item.getBasePrice() >= settings.maxBasePrice() * 0.99) {
+                    isScarcity = false;
+                }
+            }
 
             if (isGlut) {
                 action = AiAction.DOWN_PRICE;
@@ -180,16 +204,22 @@ public class AIScheduler {
             // 6. 应用最终动作
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity);
             
-            if (result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 0.001 && !result.itemName().contains("[过期销毁]")) {
+            // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉
+            // 如果 oldBasePrice 接近 maxBasePrice，并且 newBasePrice 也接近 maxBasePrice，说明其实没涨
+            boolean isAtMax = result != null && result.newBasePrice() >= settings.maxBasePrice() * 0.99 && result.oldBasePrice() >= settings.maxBasePrice() * 0.99;
+            boolean priceChanged = result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 0.001;
+            boolean surgeOrCrash = result != null && (result.surgeType() == SurgeType.SCARCITY_SURGE || result.surgeType() == SurgeType.GLUT_CRASH);
+            
+            if (!isAtMax && (priceChanged || surgeOrCrash)) {
                 if (result.newBasePrice() > result.oldBasePrice()) {
                     upCount++;
-                } else {
+                } else if (result.newBasePrice() < result.oldBasePrice()) {
                     downCount++;
                 }
                 
-                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                if (result.surgeType() == SurgeType.SCARCITY_SURGE && !result.itemName().contains("[过期销毁]")) {
                     surges.add("&f" + result.itemName() + " &c[稀缺暴涨!]");
-                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                } else if (result.surgeType() == SurgeType.GLUT_CRASH && !result.itemName().contains("[过期销毁]")) {
                     surges.add("&f" + result.itemName() + " &a[爆仓暴跌!]");
                 }
             }
