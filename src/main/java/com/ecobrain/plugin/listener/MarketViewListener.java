@@ -195,6 +195,10 @@ public class MarketViewListener implements Listener {
         if (!marketViewGUI.isMarketTitle(event.getView().getTitle())) {
             return;
         }
+        // 刷新/翻页会触发“旧菜单关闭 + 新菜单打开”，此时不应清理会话。
+        if (marketViewGUI.isMarketTitle(player.getOpenInventory().getTitle())) {
+            return;
+        }
         marketViewGUI.closeSession(player.getUniqueId());
     }
 

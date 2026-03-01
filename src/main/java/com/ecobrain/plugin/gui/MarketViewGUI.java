@@ -75,8 +75,8 @@ public class MarketViewGUI {
             inventory.setItem(slot, item);
         }
         decorateBottomBar(inventory, safePage, maxPage);
-        sessions.put(player.getUniqueId(), new Session(safePage, maxPage, slotToHash));
         player.openInventory(inventory);
+        sessions.put(player.getUniqueId(), new Session(safePage, maxPage, slotToHash));
     }
 
     public boolean isMarketTitle(String title) {
