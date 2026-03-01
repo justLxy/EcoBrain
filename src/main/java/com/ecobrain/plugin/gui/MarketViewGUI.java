@@ -70,7 +70,7 @@ public class MarketViewGUI {
         int safePage = Math.max(1, Math.min(page, maxPage));
         Inventory inventory = Bukkit.createInventory(player, 54, TITLE_PREFIX + safePage + "页");
         Map<Integer, String> slotToHash = new HashMap<>();
-        decorateBorder(inventory);
+        decorateBorder(inventory, player);
         List<Integer> contentSlots = getContentSlots();
 
         int start = (safePage - 1) * PAGE_SIZE;
@@ -139,13 +139,30 @@ public class MarketViewGUI {
     /**
      * 将 6x9 菜单外圈全部铺满黑玻璃，形成视觉边框。
      */
-    private void decorateBorder(Inventory inventory) {
+    private void decorateBorder(Inventory inventory, Player player) {
         ItemStack border = namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " ");
         for (int slot = 0; slot < 54; slot++) {
             if (isBorderSlot(slot)) {
                 inventory.setItem(slot, border.clone());
             }
         }
+        
+        // 正中心放置玩家头颅
+        ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta meta = (org.bukkit.inventory.meta.SkullMeta) head.getItemMeta();
+        if (meta != null) {
+            meta.setOwningPlayer(player);
+            meta.setDisplayName(ChatColor.GOLD + "欢迎来到系统市场，" + player.getName());
+            List<String> headLore = new ArrayList<>();
+            headLore.add(ChatColor.GRAY + "基础命令指南:");
+            headLore.add(ChatColor.YELLOW + "/ecobrain sell" + ChatColor.WHITE + " - 出售主手物品");
+            headLore.add(ChatColor.YELLOW + "/ecobrain sell all" + ChatColor.WHITE + " - 出售背包内所有同类物品");
+            headLore.add(ChatColor.YELLOW + "/ecobrain buy <数量>" + ChatColor.WHITE + " - 按指定数量购买");
+            headLore.add(ChatColor.GRAY + "或点击下方漏斗进行批量出售");
+            meta.setLore(headLore);
+            head.setItemMeta(meta);
+        }
+        inventory.setItem(4, head); // 0-8的第一行正中心是第4格
     }
 
     private List<Integer> getContentSlots() {
@@ -161,6 +178,8 @@ public class MarketViewGUI {
     private boolean isBorderSlot(int slot) {
         int row = slot / 9;
         int col = slot % 9;
+        // 第4格(第一行正中心)是玩家头颅，算作边框的一部分，不允许放商品
+        if (slot == 4) return true;
         return row == 0 || row == 5 || col == 0 || col == 8;
     }
 
