@@ -1,3 +1,5 @@
+com/ecobrain/plugin/placeholder/EcoBrainPlaceholderExpansion.class
+com/ecobrain/plugin/placeholder/LeaderboardPlaceholderCache.class
 com/ecobrain/plugin/service/MarketService.class
 com/ecobrain/plugin/persistence/ItemMarketRepository.class
 com/ecobrain/plugin/listener/BulkSellListener$AggregatedItem.class
@@ -27,6 +29,7 @@ com/ecobrain/plugin/ai/TargetInventoryTuner.class
 com/ecobrain/plugin/ai/AIScheduler$AiAction.class
 com/ecobrain/plugin/model/ItemMarketRecord.class
 com/ecobrain/plugin/ai/TargetInventoryTuner$Decision.class
+com/ecobrain/plugin/placeholder/PersonalStatsPlaceholderCache.class
 com/ecobrain/plugin/config/PluginSettings$TargetInventory.class
 com/ecobrain/plugin/EcoBrainPlugin.class
 com/ecobrain/plugin/config/PluginSettings$Economy.class
@@ -37,6 +40,7 @@ com/ecobrain/plugin/serialization/ItemSerializer.class
 com/ecobrain/plugin/gui/MarketViewGUI$Session.class
 com/ecobrain/plugin/ai/AiModelStore$Snapshot.class
 com/ecobrain/plugin/command/AdminCommand.class
+com/ecobrain/plugin/placeholder/PlaceholderApiHook.class
 com/ecobrain/plugin/ai/ReplayBuffer$Transition.class
 com/ecobrain/plugin/service/AMMCalculator.class
 com/ecobrain/plugin/safety/CircuitBreaker.class
@@ -52,4 +56,6 @@ com/ecobrain/plugin/config/PluginSettings$Trade.class
 com/ecobrain/plugin/command/EcoBrainCommand$SellMode.class
 com/ecobrain/plugin/service/MarketService$IpoState.class
 com/ecobrain/plugin/ai/AIScheduler$AgentMemory.class
+com/ecobrain/plugin/placeholder/LeaderboardPlaceholderCache$Snapshot.class
 com/ecobrain/plugin/service/MarketService$TradeQuote.class
+com/ecobrain/plugin/placeholder/PersonalStatsPlaceholderCache$Entry.class

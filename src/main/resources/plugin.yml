@@ -6,6 +6,7 @@ author: EcoBrain
 description: P2S 动态市场经济插件
 softdepend:
   - Vault
+  - PlaceholderAPI
 commands:
   ecobrain:
     description: EcoBrain 主命令

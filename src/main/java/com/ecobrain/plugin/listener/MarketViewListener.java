@@ -95,7 +95,23 @@ public class MarketViewListener implements Listener {
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
                 List<PlayerStat> topSellers = repository.getTopPlayers(TradeType.SELL, 10);
                 List<PlayerStat> topBuyers = repository.getTopPlayers(TradeType.BUY, 10);
-                Bukkit.getScheduler().runTask(plugin, () -> leaderboardGUI.open(player, topSellers, topBuyers));
+                double mySellMoney = repository.getPlayerTotalMoney(player.getUniqueId(), TradeType.SELL);
+                long mySellQty = repository.getPlayerTotalQuantity(player.getUniqueId(), TradeType.SELL);
+                int mySellRank = repository.getPlayerRank(player.getUniqueId(), TradeType.SELL);
+                double myBuyMoney = repository.getPlayerTotalMoney(player.getUniqueId(), TradeType.BUY);
+                long myBuyQty = repository.getPlayerTotalQuantity(player.getUniqueId(), TradeType.BUY);
+                int myBuyRank = repository.getPlayerRank(player.getUniqueId(), TradeType.BUY);
+                Bukkit.getScheduler().runTask(plugin, () -> leaderboardGUI.open(
+                    player,
+                    topSellers,
+                    topBuyers,
+                    mySellMoney,
+                    mySellQty,
+                    mySellRank,
+                    myBuyMoney,
+                    myBuyQty,
+                    myBuyRank
+                ));
             });
             return;
         }

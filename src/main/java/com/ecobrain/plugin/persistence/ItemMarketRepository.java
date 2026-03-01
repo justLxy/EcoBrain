@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 物品市场仓储层。
@@ -311,6 +312,79 @@ public class ItemMarketRepository {
             return stats;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to query top players", e);
+        }
+    }
+
+    public double getPlayerTotalMoney(UUID playerUuid, TradeType tradeType) {
+        String sql = """
+            SELECT COALESCE(SUM(money_amount), 0) AS total_money
+            FROM ecobrain_player_transactions
+            WHERE player_uuid = ? AND trade_type = ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, tradeType.name());
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("total_money") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query player total money", e);
+        }
+    }
+
+    public long getPlayerTotalQuantity(UUID playerUuid, TradeType tradeType) {
+        String sql = """
+            SELECT COALESCE(SUM(quantity), 0) AS total_qty
+            FROM ecobrain_player_transactions
+            WHERE player_uuid = ? AND trade_type = ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, tradeType.name());
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getLong("total_qty") : 0L;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query player total quantity", e);
+        }
+    }
+
+    /**
+     * 玩家在指定交易类型下的“成交额榜位”（按总额降序）。
+     * 并列同额使用相同名次：rank = 1 + 领先于该玩家的“不同玩家数”。
+     *
+     * @return 0 表示该玩家没有任何记录
+     */
+    public int getPlayerRank(UUID playerUuid, TradeType tradeType) {
+        String sql = """
+            WITH totals AS (
+                SELECT player_uuid, SUM(money_amount) AS total_money
+                FROM ecobrain_player_transactions
+                WHERE trade_type = ?
+                GROUP BY player_uuid
+            ),
+            me AS (
+                SELECT total_money AS me_total
+                FROM totals
+                WHERE player_uuid = ?
+            )
+            SELECT
+                CASE
+                    WHEN (SELECT me_total FROM me) IS NULL THEN 0
+                    ELSE 1 + (SELECT COUNT(*) FROM totals WHERE total_money > (SELECT me_total FROM me))
+                END AS rank
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, tradeType.name());
+            statement.setString(2, playerUuid.toString());
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getInt("rank") : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query player rank", e);
         }
     }
 

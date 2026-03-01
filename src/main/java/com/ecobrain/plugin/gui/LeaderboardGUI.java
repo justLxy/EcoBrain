@@ -18,7 +18,15 @@ public class LeaderboardGUI {
     public static final String TITLE = ChatColor.AQUA + "EcoBrain - 交易排行榜";
     public static final int BACK_BUTTON_SLOT = 49;
 
-    public void open(Player player, List<PlayerStat> topSellers, List<PlayerStat> topBuyers) {
+    public void open(Player player,
+                     List<PlayerStat> topSellers,
+                     List<PlayerStat> topBuyers,
+                     double mySellMoney,
+                     long mySellQty,
+                     int mySellRank,
+                     double myBuyMoney,
+                     long myBuyQty,
+                     int myBuyRank) {
         Inventory inventory = Bukkit.createInventory(player, 54, TITLE);
         
         // 装饰边框
@@ -67,6 +75,10 @@ public class LeaderboardGUI {
         inventory.setItem(34, namedItem(Material.DIAMOND, ChatColor.AQUA + "↓ 消费神豪榜 ↓"));
         inventory.setItem(43, namedItem(Material.DIAMOND, ChatColor.AQUA + "↓ 消费神豪榜 ↓"));
 
+        // 我的数据
+        inventory.setItem(47, myStatItem(Material.EMERALD, ChatColor.GREEN + "我的出售", "出售总额", "出售数量", mySellMoney, mySellQty, mySellRank, ChatColor.GREEN));
+        inventory.setItem(51, myStatItem(Material.REDSTONE, ChatColor.RED + "我的消费", "消费总额", "消费数量", myBuyMoney, myBuyQty, myBuyRank, ChatColor.RED));
+
         // 返回按钮
         ItemStack backButton = namedItem(Material.ARROW, ChatColor.YELLOW + "返回市场大盘");
         inventory.setItem(BACK_BUTTON_SLOT, backButton);
@@ -93,6 +105,25 @@ public class LeaderboardGUI {
         ItemMeta meta = stack.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(name);
+            stack.setItemMeta(meta);
+        }
+        return stack;
+    }
+
+    private ItemStack myStatItem(Material material, String title, String moneyName, String qtyName, double money, long qty, int rank, ChatColor moneyColor) {
+        ItemStack stack = new ItemStack(material);
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(title);
+            List<String> lore = new ArrayList<>();
+            lore.add(ChatColor.GRAY + moneyName + ": " + moneyColor + String.format("%.2f", money) + " 金币");
+            lore.add(ChatColor.GRAY + qtyName + ": " + ChatColor.WHITE + qty);
+            if (rank <= 0) {
+                lore.add(ChatColor.GRAY + "榜位: " + ChatColor.DARK_GRAY + "暂无记录");
+            } else {
+                lore.add(ChatColor.GRAY + "榜位: " + ChatColor.GOLD + "第 " + rank + " 名");
+            }
+            meta.setLore(lore);
             stack.setItemMeta(meta);
         }
         return stack;

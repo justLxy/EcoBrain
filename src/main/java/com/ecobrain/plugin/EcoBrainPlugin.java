@@ -31,6 +31,7 @@ public class EcoBrainPlugin extends JavaPlugin {
     private ItemSerializer itemSerializer;
     private DatabaseManager databaseManager;
     private ItemMarketRepository repository;
+    private com.ecobrain.plugin.placeholder.PlaceholderApiHook placeholderApiHook;
     private EconomyService economyService;
     private AMMCalculator ammCalculator;
     private CircuitBreaker circuitBreaker;
@@ -89,6 +90,9 @@ public class EcoBrainPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
 
+        this.placeholderApiHook = new com.ecobrain.plugin.placeholder.PlaceholderApiHook(this, repository);
+        this.placeholderApiHook.registerIfPresent();
+
         com.ecobrain.plugin.ai.AiModelStore store = new com.ecobrain.plugin.ai.AiModelStore();
         java.util.Optional<com.ecobrain.plugin.ai.AiModelStore.Snapshot> snapshotOpt = store.load(this);
         if (snapshotOpt.isPresent()) {
@@ -119,6 +123,9 @@ public class EcoBrainPlugin extends JavaPlugin {
     public void onDisable() {
         if (aiScheduler != null) {
             aiScheduler.stop();
+        }
+        if (placeholderApiHook != null) {
+            placeholderApiHook.shutdown();
         }
         if (neuralNet != null && dqnTrainer != null) {
             com.ecobrain.plugin.ai.AiModelStore store = new com.ecobrain.plugin.ai.AiModelStore();

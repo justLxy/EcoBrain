@@ -179,3 +179,63 @@ EcoBrain 的 DRL 需要依赖“成交反馈”才能学习到动作的长期后
 3. 玩家群体对不同物品展现出“嫌弃”或“狂热”的真实反应。
 4. **AI 神经网络**在后台捕捉这些反应，通过奖惩机制不断微调 AMM 的核心参数（基准价和陡峭度）。
 5. 最终，市场在没有服主人工干预的情况下，自动找到了每一件物品最真实的社会价值。
+
+---
+
+## PlaceholderAPI 占位符（系统商店买卖排行榜 / 个人数据）
+
+EcoBrain 支持将“系统商店交易榜单（卖给系统/从系统购买）”与“玩家个人统计”以 PlaceholderAPI 变量形式暴露，便于在计分板、GUI、聊天、公告等任意支持 PAPI 的地方使用。
+
+- **依赖**：需要服务器安装 `PlaceholderAPI`（EcoBrain 为 `softdepend`，不装不会报错，只是不会注册占位符）
+- **占位符前缀**：`ecobrain`
+- **空值约定**：
+  - **榜单 name**：该名次不存在时返回空字符串
+  - **金额 money**：该名次/该玩家没有记录时返回 `0.00`（`*_raw` 返回 `0`）
+  - **名次 rank**：该玩家没有记录时返回 `0`
+
+### 1) 排行榜 TopN（出售榜/消费榜）
+
+出售榜 = 玩家把物品**卖给系统**（`SELL`）累计成交额排行  
+消费榜 = 玩家从系统**买入物品**（`BUY`）累计成交额排行
+
+- **出售榜 TopN**
+  - `%ecobrain_top_sell_name_<N>%`：第 N 名玩家名
+  - `%ecobrain_top_sell_money_<N>%`：第 N 名出售总额（两位小数）
+  - `%ecobrain_top_sell_money_<N>_raw%`：第 N 名出售总额（原始数值）
+
+- **消费榜 TopN**
+  - `%ecobrain_top_buy_name_<N>%`：第 N 名玩家名
+  - `%ecobrain_top_buy_money_<N>%`：第 N 名消费总额（两位小数）
+  - `%ecobrain_top_buy_money_<N>_raw%`：第 N 名消费总额（原始数值）
+
+示例：
+- `%ecobrain_top_sell_name_1%`
+- `%ecobrain_top_sell_money_1%`
+- `%ecobrain_top_buy_name_3%`
+- `%ecobrain_top_buy_money_3_raw%`
+
+（兼容前缀别名：`top_` / `lb_` / `leaderboard_` 三者都可用，例如 `%ecobrain_lb_sell_money_1%`）
+
+### 2) 玩家个人数据（我的金额/数量/名次）
+
+这些占位符需要有玩家上下文（例如计分板、聊天格式、对玩家打开的 GUI）。  
+个人数据会做缓存：占位符解析时只读缓存，过期后触发异步刷新，避免主线程查库卡顿。
+
+- **我的出售（卖给系统 / SELL）**
+  - `%ecobrain_self_sell_money%`：我的出售总额（两位小数）
+  - `%ecobrain_self_sell_money_raw%`：我的出售总额（原始数值）
+  - `%ecobrain_self_sell_qty%`：我累计卖给系统的物品数量（SUM(quantity)）
+  - `%ecobrain_self_sell_rank%`：我的出售榜位（按总额降序；无记录为 0）
+
+- **我的消费（从系统购买 / BUY）**
+  - `%ecobrain_self_buy_money%`
+  - `%ecobrain_self_buy_money_raw%`
+  - `%ecobrain_self_buy_qty%`：我累计从系统买入的物品数量（SUM(quantity)）
+  - `%ecobrain_self_buy_rank%`
+
+（兼容前缀别名：`self_` 与 `me_` 等价，例如 `%ecobrain_me_sell_rank%`）
+
+### 3) 更新时间（调试/观测用）
+
+- `%ecobrain_leaderboard_updated_ms%`：排行榜 TopN 缓存更新时间（毫秒时间戳）
+- `%ecobrain_self_updated_ms%`：个人缓存更新时间（毫秒时间戳）
