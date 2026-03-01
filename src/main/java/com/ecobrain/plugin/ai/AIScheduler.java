@@ -44,7 +44,7 @@ public class AIScheduler {
 
     public void start() {
         long initialDelay = 20L * 30L;
-        long period = 20L * 60L * 60L * Math.max(1, settings.scheduleHours());
+        long period = 20L * 60L * Math.max(1, settings.scheduleMinutes());
         task = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, this::tick, initialDelay, period);
     }
 
