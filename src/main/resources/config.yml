@@ -24,7 +24,7 @@ economy:
     # 调大：系统更“怕缺货”，低库存时涨价更明显。
     # 调小：系统更“宽松”，库存变化对价格影响变弱。
     # 推荐：30 ~ 200
-    target-inventory: 320
+    target-inventory: 160
 
     # 【价格弹性系数 k】
     # 核心敏感度参数。越大，库存每变一点，价格变化越明显。
@@ -37,7 +37,7 @@ trade:
   # 防止玩家超高速重复触发 buy/sell，降低并发与刷操作风险。
   # 1000 = 1秒，1500 = 1.5秒
   # 推荐：800 ~ 2500
-  cooldown-ms: 1500
+  cooldown-ms: 500
 
 circuit-breaker:
   # 【单日最大涨跌阈值】
@@ -46,7 +46,7 @@ circuit-breaker:
   # 调小：更保守，更容易触发保护。
   # 调大：更激进，允许更大波动。
   # 推荐：0.20 ~ 0.50
-  daily-limit-percent: 0.50
+  daily-limit-percent: 10
 
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
@@ -63,7 +63,7 @@ ai:
   # 每隔多少分钟跑一次 AI 调参。
   # 调小：反应更快，但可能更抖；调大：更平滑，但反应慢。
   # 推荐：30 ~ 360
-  schedule-minutes: 60
+  schedule-minutes: 1
 
   # 【每轮训练批次】
   # DQN 每次训练抽取多少条经验。
@@ -100,18 +100,18 @@ ai:
     # 【上调动作价格倍率】
     # 1.03 表示 AI 选择“涨价”时，基价先乘以 1.03
     # 推荐：1.01 ~ 1.05
-    action-up-price-rate: 1.03
+    action-up-price-rate: 1.30
 
     # 【下调动作价格倍率】
     # 0.97 表示 AI 选择“降价”时，基价先乘以 0.97
     # 推荐：0.95 ~ 0.99
-    action-down-price-rate: 0.97
+    action-down-price-rate: 0.80
 
     # 【单次调控最大限制】
     # 不管 AI 想怎么调，每轮最多只允许 ±该比例，防止失控。
     # 0.05 = 每轮最多涨/跌 5%
     # 推荐：0.02 ~ 0.08
-    per-cycle-max-change-percent: 0.05
+    per-cycle-max-change-percent: 0.50
 
     # 【k 系数步进】
     # AI 每次调控 k 的步长。实际会根据动作取 +k-delta 或 -k-delta。
@@ -128,7 +128,7 @@ ai:
     # 用于计算 InflationDelta 的参考价格。
     # 若你的服整体物价水平较高，可适当调大这个值。
     # 推荐：与 economy.ipo.base-price 同量级
-    inflation-baseline-price: 50.0
+    inflation-baseline-price: 100.0
 
 gui:
   bulk-sell:
