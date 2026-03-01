@@ -164,6 +164,55 @@ public class ItemMarketRepository {
         }
     }
 
+    /**
+     * 查询单个物品在时间窗口内的成交额。
+     */
+    public double queryItemVolumeSince(String itemHash, long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(SUM(total_price),0) AS volume
+            FROM ecobrain_trade_stats
+            WHERE item_hash = ? AND created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setLong(2, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("volume") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query item volume", e);
+        }
+    }
+
+    /**
+     * 查询单个物品在时间窗口内的净流速：
+     * BUY 记为正，SELL 记为负，结果越大表示买压越强。
+     */
+    public double queryItemNetFlowSince(String itemHash, long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN trade_type = 'BUY' THEN quantity
+                    WHEN trade_type = 'SELL' THEN -quantity
+                    ELSE 0
+                END
+            ),0) AS net_flow
+            FROM ecobrain_trade_stats
+            WHERE item_hash = ? AND created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setLong(2, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("net_flow") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query item net flow", e);
+        }
+    }
+
     public boolean isFrozen(String itemHash) {
         String sql = "SELECT is_frozen FROM ecobrain_risk WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();

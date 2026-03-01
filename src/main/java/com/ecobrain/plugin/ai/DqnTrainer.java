@@ -7,30 +7,40 @@ import java.util.Random;
 
 /**
  * 简化版 DQN 训练器：
- * - 动作空间 2 维（下调/上调）
+ * - 动作空间可配置（例如 下调/上调/保持）
  * - epsilon-greedy 探索
  * - 使用经验回放稳定训练
  */
 public class DqnTrainer {
     private final NeuralNet onlineNet;
     private final ReplayBuffer replayBuffer;
+    private final int actionSize;
     private final Random random = new Random();
 
     private double epsilon = 0.15D;
     private final double gamma = 0.95D;
     private final double learningRate = 0.0008D;
 
-    public DqnTrainer(NeuralNet onlineNet, ReplayBuffer replayBuffer) {
+    public DqnTrainer(NeuralNet onlineNet, ReplayBuffer replayBuffer, int actionSize) {
         this.onlineNet = onlineNet;
         this.replayBuffer = replayBuffer;
+        this.actionSize = Math.max(2, actionSize);
     }
 
     public int chooseAction(double[] state) {
         if (random.nextDouble() < epsilon) {
-            return random.nextInt(2);
+            return random.nextInt(actionSize);
         }
         double[] q = onlineNet.predict(state);
-        return q[0] >= q[1] ? 0 : 1;
+        int best = 0;
+        double bestQ = q[0];
+        for (int i = 1; i < Math.min(q.length, actionSize); i++) {
+            if (q[i] > bestQ) {
+                bestQ = q[i];
+                best = i;
+            }
+        }
+        return best;
     }
 
     public void observe(double[] state, int action, double reward, double[] nextState) {
@@ -49,9 +59,12 @@ public class DqnTrainer {
         for (Transition transition : batch) {
             double[] currentQ = onlineNet.predict(transition.state());
             double[] nextQ = onlineNet.predict(transition.nextState());
-            double maxNextQ = Math.max(nextQ[0], nextQ[1]);
+            double maxNextQ = nextQ[0];
+            for (int i = 1; i < Math.min(nextQ.length, actionSize); i++) {
+                maxNextQ = Math.max(maxNextQ, nextQ[i]);
+            }
 
-            double[] target = new double[] {currentQ[0], currentQ[1]};
+            double[] target = currentQ.clone();
             target[transition.action()] = transition.reward() + gamma * maxNextQ;
             onlineNet.trainSingle(transition.state(), target, learningRate);
         }

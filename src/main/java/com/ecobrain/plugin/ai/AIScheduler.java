@@ -15,7 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * AI 调度器：每 2 小时运行一次状态采样、奖励评估、经验回放训练与参数微调。
+ * AI 调度器：
+ * 以“单个物品”为粒度执行状态提取、动作决策、奖励回传和参数微调，
+ * 避免全市场“一刀切”导致健康物品被连坐调价。
  */
 public class AIScheduler {
     private enum AiAction {
@@ -25,17 +27,15 @@ public class AIScheduler {
     }
 
     private final JavaPlugin plugin;
-    private final StateCollector stateCollector;
     private final DqnTrainer dqnTrainer;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
 
-    public AIScheduler(JavaPlugin plugin, StateCollector stateCollector, DqnTrainer dqnTrainer,
+    public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
                        ItemMarketRepository repository, PluginSettings.AI settings, ItemSerializer itemSerializer) {
         this.plugin = plugin;
-        this.stateCollector = stateCollector;
         this.dqnTrainer = dqnTrainer;
         this.repository = repository;
         this.settings = settings;
@@ -71,63 +71,96 @@ public class AIScheduler {
      * 4) 训练网络并更新所有活跃物品参数
      */
     private void tick() {
-        double[] beforeState = stateCollector.collectState();
-        int action = dqnTrainer.chooseAction(beforeState);
-        AiAction aiAction = resolveAction(action);
-
         List<ItemMarketRecord> items = repository.findAll();
-        MacroState macroBefore = collectMacroState(items, beforeState[4]);
-        double inventoryImbalance = beforeState[2];
-        double transactionVolume = beforeState[4];
-        double inflationDelta = estimateInflation(beforeState);
-        double reward = (settings.rewardW1() * transactionVolume)
-            - (settings.rewardW2() * inflationDelta)
-            - (settings.rewardW3() * inventoryImbalance);
+        if (items.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long windowMs = Math.max(1, settings.scheduleMinutes()) * 60L * 1000L;
+        long since = now - windowMs;
+        double windowMinutes = Math.max(1, settings.scheduleMinutes());
 
-        List<TuningResult> tuningResults = applyActionToMarket(items, aiAction);
+        double globalInflationRate = estimateGlobalInflation(items);
+        List<ItemCycleLog> cycleLogs = new ArrayList<>();
 
-        double[] afterState = stateCollector.collectState();
-        dqnTrainer.observe(beforeState, action, reward, afterState);
+        for (ItemMarketRecord item : items) {
+            double saturation = calculateSaturation(item);
+            double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
+            double[] state = new double[] {saturation, recentFlow, globalInflationRate};
+
+            int actionIndex = dqnTrainer.chooseAction(state);
+            AiAction action = resolveAction(actionIndex);
+
+            double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
+            double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
+                / (double) Math.max(1, item.getTargetInventory());
+            double reward = (settings.rewardW1() * recentVolume)
+                - (settings.rewardW2() * Math.abs(globalInflationRate))
+                - (settings.rewardW3() * imbalance);
+
+            TuningResult result = applyActionToItem(item, action);
+            ItemMarketRecord latest = repository.findByHash(item.getItemHash()).orElse(item);
+            double nextSaturation = calculateSaturation(latest);
+            double[] nextState = new double[] {nextSaturation, recentFlow, globalInflationRate};
+
+            dqnTrainer.observe(state, actionIndex, reward, nextState);
+
+            if (settings.debugLog()) {
+                cycleLogs.add(new ItemCycleLog(
+                    readableItemName(item),
+                    item.getItemHash(),
+                    saturation,
+                    recentFlow,
+                    globalInflationRate,
+                    action,
+                    reward,
+                    result
+                ));
+            }
+        }
+
         dqnTrainer.trainBatch(settings.trainBatchSize());
 
         if (settings.debugLog()) {
-            logExplainableCycle(macroBefore, aiAction, reward, tuningResults);
+            logExplainableCycle(cycleLogs);
         }
     }
 
-    private List<TuningResult> applyActionToMarket(List<ItemMarketRecord> items, AiAction action) {
-        List<TuningResult> results = new ArrayList<>();
-        if (items.isEmpty()) {
-            return results;
-        }
+    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action) {
         if (action == AiAction.HOLD) {
-            return results;
+            return null;
         }
         double priceRate = action == AiAction.UP_PRICE ? settings.actionUpPriceRate() : settings.actionDownPriceRate();
         double kDelta = action == AiAction.UP_PRICE ? settings.kDelta() : -settings.kDelta();
-        for (ItemMarketRecord record : items) {
-            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double oldBase = record.getBasePrice();
-            double oldK = record.getKFactor();
-            double newBasePrice = clamp(record.getBasePrice() * priceRate,
-                record.getBasePrice() * (1.0D - limit),
-                record.getBasePrice() * (1.0D + limit));
-            double newK = clamp(record.getKFactor() + kDelta, settings.kMin(), settings.kMax());
-            repository.updateTuning(record.getItemHash(), newBasePrice, newK);
-            results.add(new TuningResult(
-                readableItemName(record),
-                record.getItemHash(),
-                oldBase,
-                newBasePrice,
-                oldK,
-                newK
-            ));
-        }
-        return results;
+        double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+        double oldBase = item.getBasePrice();
+        double oldK = item.getKFactor();
+        double newBasePrice = clamp(item.getBasePrice() * priceRate,
+            item.getBasePrice() * (1.0D - limit),
+            item.getBasePrice() * (1.0D + limit));
+        double newK = clamp(item.getKFactor() + kDelta, settings.kMin(), settings.kMax());
+        repository.updateTuning(item.getItemHash(), newBasePrice, newK);
+        return new TuningResult(
+            readableItemName(item),
+            item.getItemHash(),
+            oldBase,
+            newBasePrice,
+            oldK,
+            newK
+        );
     }
 
-    private double estimateInflation(double[] state) {
-        double averagePrice = state[3];
+    private double estimateGlobalInflation(List<ItemMarketRecord> items) {
+        if (items.isEmpty()) {
+            return 0.0D;
+        }
+        double totalCurrentPrice = 0.0D;
+        for (ItemMarketRecord item : items) {
+            int currentInventory = Math.max(1, item.getCurrentInventory());
+            totalCurrentPrice += item.getBasePrice()
+                * Math.pow((double) item.getTargetInventory() / currentInventory, item.getKFactor());
+        }
+        double averagePrice = totalCurrentPrice / items.size();
         double baseline = Math.max(1.0D, settings.inflationBaselinePrice());
         return Math.max(0.0D, (averagePrice - baseline) / baseline);
     }
@@ -144,18 +177,8 @@ public class AIScheduler {
         };
     }
 
-    private MacroState collectMacroState(List<ItemMarketRecord> records, double recentVolume2h) {
-        if (records.isEmpty()) {
-            return new MacroState(0, 0, 0.0D, recentVolume2h);
-        }
-        long totalPhysical = 0L;
-        long totalTarget = 0L;
-        for (ItemMarketRecord record : records) {
-            totalPhysical += Math.max(0, record.getPhysicalStock());
-            totalTarget += Math.max(1, record.getTargetInventory());
-        }
-        double ratio = totalTarget <= 0 ? 0.0D : (double) totalPhysical / totalTarget;
-        return new MacroState(totalPhysical, totalTarget, ratio, recentVolume2h);
+    private double calculateSaturation(ItemMarketRecord item) {
+        return item.getCurrentInventory() / (double) Math.max(1, item.getTargetInventory());
     }
 
     /**
@@ -179,38 +202,43 @@ public class AIScheduler {
         return "Unknown Item";
     }
 
-    private void logExplainableCycle(MacroState state, AiAction action, double reward, List<TuningResult> results) {
+    private void logExplainableCycle(List<ItemCycleLog> logs) {
         plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告开始 =====");
-        plugin.getLogger().info(String.format(
-            "[EcoBrain-AI] State: physical_stock_total=%d, target_inventory_total=%d, stock_target_ratio=%.4f, volume_2h=%.2f",
-            state.totalPhysicalStock(),
-            state.totalTargetInventory(),
-            state.stockTargetRatio(),
-            state.recentVolume2h()
-        ));
-        plugin.getLogger().info(String.format("[EcoBrain-AI] Action: %s", action.name()));
-        plugin.getLogger().info(String.format("[EcoBrain-AI] Reward: %.6f", reward));
-        if (results.isEmpty()) {
-            plugin.getLogger().info("[EcoBrain-AI] Result: 无活跃物品或动作为 HOLD，本轮无调参。");
-        } else {
-            for (TuningResult result : results) {
-                String hashShort = result.hash().substring(0, Math.min(8, result.hash().length()));
+        if (logs.isEmpty()) {
+            plugin.getLogger().info("[EcoBrain-AI] 本轮无活跃商品。");
+            plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告结束 =====");
+            return;
+        }
+        for (ItemCycleLog log : logs) {
+            String hashShort = log.hash().substring(0, Math.min(8, log.hash().length()));
+            plugin.getLogger().info(String.format(
+                "[EcoBrain-AI] Item: [%s] (Hash: %s...)",
+                log.itemName(), hashShort
+            ));
+            plugin.getLogger().info(String.format(
+                "[EcoBrain-AI] State: saturation=%.4f, recent_flow=%.4f, global_inflation=%.6f",
+                log.saturation(), log.recentFlow(), log.globalInflationRate()
+            ));
+            plugin.getLogger().info(String.format("[EcoBrain-AI] Action: %s", log.action().name()));
+            plugin.getLogger().info(String.format("[EcoBrain-AI] Reward: %.6f", log.reward()));
+            if (log.result() == null) {
+                plugin.getLogger().info("[EcoBrain-AI] Result: HOLD，本轮参数不变。");
+            } else {
                 plugin.getLogger().info(String.format(
-                    "[EcoBrain-AI] Result: [%s] (Hash: %s...) base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]",
-                    result.itemName(),
-                    hashShort,
-                    result.oldBasePrice(),
-                    result.newBasePrice(),
-                    result.oldKFactor(),
-                    result.newKFactor()
+                    "[EcoBrain-AI] Result: base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]",
+                    log.result().oldBasePrice(),
+                    log.result().newBasePrice(),
+                    log.result().oldKFactor(),
+                    log.result().newKFactor()
                 ));
             }
         }
         plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告结束 =====");
     }
 
-    private record MacroState(long totalPhysicalStock, long totalTargetInventory, double stockTargetRatio,
-                              double recentVolume2h) {}
+    private record ItemCycleLog(String itemName, String hash, double saturation, double recentFlow,
+                                double globalInflationRate, AiAction action, double reward,
+                                TuningResult result) {}
     private record TuningResult(String itemName, String hash, double oldBasePrice, double newBasePrice,
                                 double oldKFactor, double newKFactor) {}
 }
