@@ -48,11 +48,6 @@
             <version>3.50.3.0</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-math3</artifactId>
-            <version>3.6.1</version>
-        </dependency>
-        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>5.10.2</version>
@@ -92,7 +87,6 @@
                             <artifactSet>
                                 <includes>
                                     <include>org.xerial:sqlite-jdbc</include>
-                                    <include>org.apache.commons:commons-math3</include>
                                 </includes>
                             </artifactSet>
                         </configuration>
