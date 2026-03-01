@@ -99,37 +99,6 @@ public class AIScheduler {
         if (items.isEmpty()) {
             return;
         }
-        
-        // --- 全局自动清理不合规商品（不可堆叠的物品） ---
-        // 应对之前遗留的不规范数据，或者配置热更新前漏网的不可堆叠物品（如剑、附魔书等）。
-        List<ItemMarketRecord> validItems = new ArrayList<>();
-        int cleanedCount = 0;
-        for (ItemMarketRecord item : items) {
-            try {
-                ItemStack stack = itemSerializer.deserializeFromBase64(item.getItemBase64());
-                if (stack.getMaxStackSize() == 1) {
-                    repository.deleteByHash(item.getItemHash());
-                    cleanedCount++;
-                    continue; // 抛弃这个物品，不进入本轮AI训练和调控
-                }
-            } catch (Exception e) {
-                // 如果反序列化失败（可能由于材质不存在或版本升级报错），也顺便清理掉这种死档
-                repository.deleteByHash(item.getItemHash());
-                cleanedCount++;
-                continue;
-            }
-            validItems.add(item);
-        }
-        
-        if (cleanedCount > 0) {
-            plugin.getLogger().info("[EcoBrain] 自动清理拦截器: 发现了 " + cleanedCount + " 个不可堆叠或已损坏的违规市场商品，已自动销毁其市场档案。");
-        }
-        
-        // 接下来只对合法的 validItems 进行处理
-        items = validItems;
-        if (items.isEmpty()) {
-            return;
-        }
 
         long now = System.currentTimeMillis();
         long windowMs = Math.max(1, settings.scheduleMinutes()) * 60L * 1000L;
@@ -284,8 +253,8 @@ public class AIScheduler {
         // 解释：如果有玩家随便附魔了一把木剑（物理库存=1）卖给系统，但之后根本没人买（交易量为0）。
         // 这种东西如果不处理，就会永远卡在 GUI 里。
         // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
-        // 并且它在系统里只有少量的库存（<= 3），我们就判定它是“滞销垃圾”，自动销毁档案。
-        if (item.getPhysicalStock() > 0 && item.getPhysicalStock() <= 3) {
+        // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
+        if (item.getPhysicalStock() <= 1) {
             long lastTrade = repository.queryLastTradeTime(item.getItemHash());
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
             if (daysSinceLastTrade >= 7) {
