@@ -17,9 +17,17 @@ public class DqnTrainer {
     private final int actionSize;
     private final Random random = new Random();
 
+    // ================== Q-Learning 核心超参数 ==================
+    // 初始探索率：允许 15% 的概率随机瞎蒙
+    // 正式服上线前几天，如果是全新档可以保持 0.15 甚至 0.2
     private double epsilon = 0.15D;
+    
+    // 折扣因子：看重长期回报
     private final double gamma = 0.95D;
-    private final double learningRate = 0.0008D;
+    
+    // 学习率。想让 AI 在开服初期学得“极度暴力”，可以把它提高到 0.005D
+    // 目前保持一个比较折中的稍快学习率 (其实这不需要改，因为DQN是自适应收敛的)
+    private final double learningRate = 0.002D;
 
     public DqnTrainer(NeuralNet onlineNet, ReplayBuffer replayBuffer, int actionSize) {
         this.onlineNet = onlineNet;
