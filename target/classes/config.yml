@@ -46,18 +46,18 @@ circuit-breaker:
   # 调小：更保守，更容易触发保护。
   # 调大：更激进，允许更大波动。
     # 推荐：0.20 ~ 0.50
-  daily-limit-percent: 0.5
+  daily-limit-percent: 2
 
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
   # 推荐：1 ~ 5
-  critical-inventory: 3
+  critical-inventory: 1
 
 ai:
   # 【AI 调试日志开关】
   # true  = 每轮 AI 调参后输出可解释日志（状态/动作/奖励/具体调参）
   # false = 仅运行 AI，不打印调参明细
-  debug-log: false
+  debug-log: true
 
   # 【AI 调控周期（分钟）】
   # 每隔多少分钟跑一次 AI 调参。
@@ -124,28 +124,28 @@ ai:
     # 【上调动作价格倍率】
     # 若你的服务器物品价值跨度极大（比如有 5,000,000 金币的物品）
     # 可以设置为极度激进的值，例如 1.50（每次 AI 决定涨价时，底价直接涨 50%）
-    action-up-price-rate: 1.03
+    action-up-price-rate: 1.08
 
     # 【下调动作价格倍率】
     # 若想快速把毫无价值的垃圾（例如倾销的泥土）打压到 10 金币
     # 可设为 0.70（每次降价，底价直接打 7 折）甚至 0.50（直接腰斩）
-    action-down-price-rate: 0.97
+    action-down-price-rate: 0.92
 
     # 【单次调控最大限制】
     # 这是防止 AI 暴走的“安全锁”。如果你上面填了 1.50 和 0.50
     # 这里必须相应地放宽，比如填 0.50，允许单次最大涨跌幅为 50%。
-    per-cycle-max-change-percent: 0.1
+    per-cycle-max-change-percent: 0.2
 
     # 【k 系数步进】
     # AI 每次调控 k 的步长。k 值决定了玩家买卖时价格暴涨/暴跌的“陡峭程度”。
     # 对于跨度极大的服，建议调大以拉开高低价值物品的价格敏感度。
-    k-delta: 0.05
+    k-delta: 0.02
 
     # 【k 的硬边界】
     # 无论 AI 如何训练，k 都不会超出这个区间。
     # 建议保持 min < max，且不要设得过窄。
     k-min: 0.2
-    k-max: 3.0
+    k-max: 2.0
 
 gui:
   bulk-sell:

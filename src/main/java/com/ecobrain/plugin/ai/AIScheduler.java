@@ -141,6 +141,7 @@ public class AIScheduler {
             // 2. 获取针对【上一个周期】的反馈 (Reward Rt)
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
             double normalizedVolume = recentVolume / Math.max(1.0, dynamicAov);
+            boolean hasRecentTrade = recentVolume > 0.0D;
 
             double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
                 / (double) Math.max(1, item.getTargetInventory());
@@ -156,8 +157,13 @@ public class AIScheduler {
             }
 
             // 4. 为【当前周期】做决策 At
-            int actionIndex = dqnTrainer.chooseAction(currentState);
-            AiAction action = resolveAction(actionIndex);
+            // 重要：只对“最近窗口有成交”的物品做 AI_ACTION，避免对无成交反馈的物品盲调导致参数漂移。
+            int actionIndex = 2; // default HOLD
+            AiAction action = AiAction.HOLD;
+            if (hasRecentTrade) {
+                actionIndex = dqnTrainer.chooseAction(currentState);
+                action = resolveAction(actionIndex);
+            }
 
             // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
             // 修正判定：只有当 target_inventory 足够大时，才用 5 倍。如果 target 只有几十，很容易超过。
@@ -174,6 +180,9 @@ public class AIScheduler {
             boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
 
             String tuningReason = "AI_ACTION";
+            if (!hasRecentTrade) {
+                tuningReason = "NO_RECENT_TRADE";
+            }
 
             if (isGlut) {
                 action = AiAction.DOWN_PRICE;
@@ -190,7 +199,11 @@ public class AIScheduler {
             }
 
             // 5. 记忆本次决策，留给下个周期作为 A_{t-1} 评估
-            memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
+            // 只有当本轮确实执行了调参（或触发风控动作）时才写入记忆；否则不写，避免无意义经验污染训练。
+            boolean willTune = !(action == AiAction.HOLD && !isGlut && !isScarcity && !noSupplyDecay);
+            if (willTune) {
+                memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
+            }
 
             // 6. 应用最终动作
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
@@ -222,10 +235,16 @@ public class AIScheduler {
                     downCount++;
                 }
                 
-                if (result.surgeType() == SurgeType.SCARCITY_SURGE && !result.itemName().contains("[过期销毁]")) {
-                    surges.add("&f" + result.itemName() + " &c[稀缺暴涨!]");
-                } else if (result.surgeType() == SurgeType.GLUT_CRASH && !result.itemName().contains("[过期销毁]")) {
-                    surges.add("&f" + result.itemName() + " &a[爆仓暴跌!]");
+                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                    String surgeName = readableItemName(item);
+                    if (!surgeName.contains("[过期销毁]")) {
+                        surges.add("&f" + surgeName + " &c[稀缺暴涨!]");
+                    }
+                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                    String surgeName = readableItemName(item);
+                    if (!surgeName.contains("[过期销毁]")) {
+                        surges.add("&f" + surgeName + " &a[爆仓暴跌!]");
+                    }
                 }
             }
             
@@ -343,8 +362,9 @@ public class AIScheduler {
         // 这种东西如果不处理，就会永远卡在 GUI 里。
         // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
         // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
-        ItemNameInfo nameInfo = itemNameInfo(item);
-        if (item.getPhysicalStock() <= 1 && nameInfo.hasCustomDisplayName()) {
+        if (item.getPhysicalStock() <= 1) {
+            ItemNameInfo nameInfo = itemNameInfo(item);
+            if (nameInfo.hasCustomDisplayName()) {
             long lastTrade = repository.queryLastTradeTime(item.getItemHash());
             if (lastTrade <= 0L) {
                 // 无任何交易记录时，绝不自动销毁（避免正常物品被误删）
@@ -356,13 +376,13 @@ public class AIScheduler {
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
             if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
                 repository.deleteByHash(item.getItemHash());
-                return new TuningResult(nameInfo.name() + " [过期销毁]", item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
+                return new TuningResult(item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
+            }
             }
         }
 
         repository.updateTuning(item.getItemHash(), newBasePrice, newK);
         return new TuningResult(
-            nameInfo.name(),
             item.getItemHash(),
             oldBase,
             newBasePrice,
@@ -419,6 +439,6 @@ public class AIScheduler {
         // Obsolete, replaced by inline logging in tick()
     }
 
-    private record TuningResult(String itemName, String hash, double oldBasePrice, double newBasePrice,
+    private record TuningResult(String hash, double oldBasePrice, double newBasePrice,
                                 double oldKFactor, double newKFactor, SurgeType surgeType) {}
 }
