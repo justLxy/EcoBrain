@@ -126,7 +126,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             try {
                 String base64 = itemSerializer.serializeToBase64(snapshot.asOne());
                 String hash = itemSerializer.sha256(base64);
-                ItemMarketRecord record = marketService.ensureIpoAsync(hash, base64, amount).join();
+                ItemMarketRecord record = marketService.ensureIpoAsync(hash, base64).join();
                 MarketService.TradeQuote quote = marketService.quoteSell(record, amount);
 
                 Bukkit.getScheduler().runTask(plugin, () -> {

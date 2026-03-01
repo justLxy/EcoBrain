@@ -41,18 +41,20 @@ public class MarketService {
     }
 
     /**
-     * 异步 IPO 保证：
-     * 如果 hash 不存在，按默认拓荒参数创建；存在则直接返回已有记录。
+     * 异步 IPO 保证（带初始虚拟流动性）：
+     * - 若物品不存在，先以 target_inventory 作为初始 current_inventory 建档
+     * - 这样首次交易的价格锚点接近 base_price，不会因为库存=1导致首单爆价
      */
-    public CompletableFuture<ItemMarketRecord> ensureIpoAsync(String hash, String base64, int initialInventory) {
+    public CompletableFuture<ItemMarketRecord> ensureIpoAsync(String hash, String base64) {
         return CompletableFuture.supplyAsync(() -> {
             Optional<ItemMarketRecord> existing = repository.findByHash(hash);
             if (existing.isPresent()) {
                 return existing.get();
             }
+            int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
             repository.upsertIpo(hash, base64, economySettings.ipoBasePrice(), economySettings.ipoKFactor(),
                 economySettings.ipoTargetInventory(),
-                Math.max(1, initialInventory));
+                virtualInitialInventory);
             return repository.findByHash(hash).orElseThrow(() -> new IllegalStateException("IPO insert failed"));
         }, runnable -> plugin.getServer().getScheduler().runTaskAsynchronously(plugin, runnable));
     }
