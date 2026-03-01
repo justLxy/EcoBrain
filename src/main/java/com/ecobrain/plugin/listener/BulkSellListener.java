@@ -140,10 +140,13 @@ public class BulkSellListener implements Listener {
                 for (Map.Entry<String, AggregatedItem> entry : grouped.entrySet()) {
                     String hash = entry.getKey();
                     AggregatedItem aggregatedItem = entry.getValue();
-                    ItemMarketRecord record = marketService.ensureIpoAsync(hash, aggregatedItem.base64).join();
+                    MarketService.IpoState ipoState = marketService
+                        .ensureIpoForSellAsync(hash, aggregatedItem.base64, aggregatedItem.amount).join();
+                    ItemMarketRecord record = ipoState.record();
                     MarketService.TradeQuote quote = marketService.quoteSell(record, aggregatedItem.amount);
                     total += quote.totalPrice();
-                    settleActions.add(() -> marketService.settle(hash, quote, aggregatedItem.amount));
+                    settleActions.add(() -> marketService.settleSell(
+                        hash, record, quote, aggregatedItem.amount, ipoState.createdNow()));
                 }
 
                 double finalTotal = total;

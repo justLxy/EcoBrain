@@ -1,258 +1,127 @@
-# EcoBrain 插件说明（给未来的自己）
+# EcoBrain (生态脑) - 核心技术架构与维护手册
 
-这份文档不是“营销文案”，是给你以后回头维护项目时看的。  
-重点是：**插件到底怎么跑、为什么这么设计、改参数会发生什么**。
-
----
-
-## 1. 这个插件在做什么
-
-EcoBrain 是一个动态市场插件，不是固定价格商店。  
-核心思路：
-
-- 玩家把物品卖给系统，系统记录库存
-- 系统根据库存变化自动调整价格（AMM 曲线）
-- 玩家买卖行为反过来影响库存和价格
-- AI 定时微调参数，让市场不要长期失衡
-- 熔断机制在极端行情时直接冻结交易，防止崩盘/被刷
-
-一句话：它更像“交易所做市池”，不是传统 `items.yml` 价目表。
+> **致未来的维护者（你自己）：**
+> EcoBrain 并非传统的“死板商店”，而是一个融合了 **DeFi 去中心化金融 (vAMM)** 与 **深度强化学习 (DRL)** 的自适应虚拟微观经济体。
+> 任何对核心交易类、AI 训练类或并发控制的修改，必须严格遵循本文档的约束，否则将导致毁灭性的刷钱漏洞或服务器 TPS 暴跌！
 
 ---
 
-## 2. 你最关心的定价公式
-
-### 当前价格
-
-`P_current = BasePrice * (TargetInventory / CurrentInventory)^k`
-
-- `BasePrice`：基准价（IPO 或 AI 调整后）
-- `TargetInventory`：库存平衡点（价格锚点，不是硬上限）
-- `CurrentInventory`：当前库存（代码中至少按 1 计算，防止除零）
-- `k`：价格敏感度（越大越“陡”）
-
-### 批量卖出（有滑点）
-
-玩家一次卖 `N` 个，系统不是 `当前价 * N`，而是逐个累加：
-
-`Sum(i=1..N) BasePrice * (TargetInventory / (CurrentInventory + i))^k`
-
-含义：每卖进来一个，库存都会增大，后面的单价会继续下降。
-
-### 批量买入（镜像滑点）
-
-玩家一次买 `N` 个时，库存逐步减少，价格逐步提高。
+## 0. 硬性前置依赖 (Hard Dependencies)
+本插件的经济流转必须依赖 **Vault** 及其底层经济核心（如 EssentialsX / CMI 等）。
+- **启动检查**：插件 `onEnable()` 阶段会强制检测 Vault。若未检测到，会抛出 `Severe` 级警告并主动 `disablePlugin()`，**严禁带病运行**。
 
 ---
 
-## 3. 物品是怎么识别的（NBT 兼容）
+## 1. 核心金融模型：vAMM（虚拟自动做市商）与滑点
 
-插件没有用 `Material` 当主键。  
-识别链路是：
+传统商店是“挂单交易”，EcoBrain 是“资金池交易”。为了防刷且符合数学逻辑，这里使用了极度硬核的 **vAMM (Virtual AMM) 物理与虚拟分离架构**。
 
-1. `ItemStack` 完整序列化成 Base64（保留 NBT/元数据）
-2. 对 Base64 做 SHA-256
-3. 用 `item_hash` 作为数据库主键
+### 1.1 联合曲线定价公式
+基础的瞬时价格计算依赖反比例恒定乘积变种：
+$$ P_{current} = BasePrice \times \left( \frac{TargetInventory}{CurrentInventory} \right)^k $$
+- `BasePrice`：基准价（由 AI 或初始 IPO 决定）。
+- `TargetInventory`：理想库存平衡点（锚点）。
+- `CurrentInventory`：**虚拟数学库存**（参与计算，绝不等于 0）。
+- `k`：弹性系数（曲线陡峭度）。
 
-这套方案能区分带复杂 NBT 的物品（比如 RPGItems / MythicMobs 自定义物品）。
+### 1.2 物理库存与虚拟库存的隔离 (The vAMM Architecture)
+**【历史惨痛教训】**：曾发生过玩家卖 1 个沙子，系统却因注入了 320 个初始库存导致玩家可以反向买出 320 个沙子的“无中生有”恶性 Bug。因此，必须将数学计算和物理交割分离：
+- **`current_inventory` (虚拟数学池)**：专门用于套入上述公式算价格。
+- **`physical_stock` (物理实体库)**：记录系统真正持有的玩家卖给它的物品数量。
+- **交易法则**：
+  - **Sell（卖给系统）**：`current_inventory` += N，且 `physical_stock` += N。
+  - **Buy（从系统买）**：**必须优先校验 `physical_stock >= N`**，若物理库存不足直接拒绝交易！若充足，则两者同时 -= N。
 
----
-
-## 4. IPO 机制（零配置上架）
-
-没有 `items.yml` 手动录入。  
-某个物品第一次被玩家卖出时会触发 IPO：
-
-- 写入 `ecobrain_items`
-- 使用 `config.yml` 里的 `economy.ipo.*` 作为初始参数
-- **先注入虚拟初始流动性**：`current_inventory = target_inventory`
-- 再按玩家本次卖出数量走正常滑点结算并累加库存
-
-为什么这样做：
-
-- 如果首次库存直接从 `1` 起步，而 `target_inventory` 很大（比如 320），
-  会触发 AMM 的“冷启动爆价”（首单价格异常高）。
-- 先注入虚拟流动性后，首单价格会贴近 `base_price`，不会离谱。
-
-所以你只要正常运营，市场会自动“学会”有哪些物品。
+### 1.3 离散迭代滑点计算 (Slippage)
+绝对禁止使用 `总价 = P_current * 数量`！必须使用迭代累加（或积分），模拟每成交 1 个物品导致的库存变化连环跌价/涨价。
+- **批量出售逻辑**： `Sum(i=1..N) [ BasePrice * (Target / (Current + i))^k ]`
 
 ---
 
-## 5. 玩家命令与行为
+## 2. 物品唯一身份识别 (Identity & NBT)
+
+EcoBrain **抛弃了 `Material` 枚举**，实现了对全 NBT/MythicMobs 自定义物品的完美支持。
+
+- **序列化机制**：利用 `BukkitObjectOutputStream` 将玩家手中的 `ItemStack` 完全序列化为 `Base64` 字符串。
+- **哈希索引 (极速检索)**：Base64 字符串过长，直接做 SQLite 主键会导致查询极慢。系统会对 Base64 进行 **SHA-256 哈希计算**，生成唯一的 64 位字符串 `item_hash`，作为所有数据库表的核心主键 (Primary Key)。
+
+---
+
+## 3. IPO 智能冷启动与初始流动性
+
+本插件**无 `items.yml`**，所有物品档案均由玩家首次交易触发建档。
+
+**【初始流动性陷阱 (Initial Liquidity Trap) 防御】**：
+如果未知物品首次建档时虚拟库存为 1，会导致价格暴涨数百倍（触发 16000 金币买泥土漏洞）。
+- **IPO 正确流转**：当检测到未知的 `item_hash` 时：
+  1. 强行设定 `BasePrice` = config 的拓荒价。
+  2. **注入虚拟初始流动性**：初始化 `current_inventory = target_inventory`（让比例为 1:1，维持原始基准价）。
+  3. 真实物理库存初始化：`physical_stock = 0`。
+  4. 走正常的滑点 Sell 流程，把玩家卖的 N 个物品累加进去。
+
+---
+
+## 4. 线程模型与原子性交易 (Concurrency & Atomicity)
+
+**【极度危险警告】**：任何交易流转如果顺序错乱，必出刷钱/吞物 Bug。
+原则：**重计算与 IO 走异步，Bukkit 背包与 Vault 交互走主线程同步。**
+
+一次完整的交易必须严格遵守以下 **5 步原子性顺序**：
+1. **[Async]** 数学计算：查询 SQLite 获取当前状态，并根据 AMM 计算出精准的总价/滑点。
+2. **[Sync]** 验证前置：返回主线程（Server Thread），检查玩家背包空间/物品是否还在，或 Vault 余额是否足够。
+3. **[Sync]** 实际扣除：扣除玩家物品 / 扣除 Vault 余额（**必须获取扣除成功的 boolean 返回值，否则终止抛错**）。
+4. **[Sync]** 实际给予：打款到 Vault / 发放 ItemStack 到背包。
+5. **[Async]** 落库固化：异步将更新后的 `current_inventory` 与 `physical_stock` 写入 SQLite。
+
+---
+
+## 5. DRL 嵌入式人工智能引擎 (The AI Core)
+
+为了实现单文件交付并避免阻塞服务器，AI 模型被硬编码为纯 Java 轻量级实现。
+
+- **状态空间 (State)**：特征包含特定物品库存偏离度 `(Target/Current)`、流通率（交易频次）、全服 M0 货币增发量（防通胀）。特征均归一化到 `[-1, 1]`。
+- **动作空间 (Action)**：多层感知机 (MLP) 的输出，用于调整对应物品的 `base_price`（例如 ±3%）和 `k_factor`。
+- **奖励函数 (Reward)**：`R = (w1 * 成交量) - (w2 * 通胀率差值) - (w3 * 库存严重失衡惩罚)`。
+- **【极其重要的持久化机制】**：AI 训练的权重矩阵（Weights & Biases）**必须序列化保存在本地**（如 `plugins/EcoBrain/ai_weights.json` 或专属表中）。每次启动必须 `Load`，每次训练结束必须立刻 `Save`。一旦丢失，AI 将被“洗脑”重置！
+
+---
+
+## 6. GUI 防刷机制 (Anti-Exploit)
+
+54 格批量出售舱 (`BulkSellGUI`) 的安全设计底线：
+1. **隔离区划**：`0~44` 为操作区，`45~53` 包含确认/取消按键与占位玻璃板。禁止任何拖拽 (`InventoryDragEvent`) 和点击 (`InventoryClickEvent`) 将物品放入底栏。
+2. **退回机制**：监听 `InventoryCloseEvent`。如果玩家强行按 ESC 关掉界面，必须将 `0~44` 的物品完整安全退回玩家背包，满包则掉落脚下。
+3. **会话幂等 (Idempotency)**：点击【确认出售】时，立刻给该玩家生成一个 `UUID Token` 或上锁，阻断网速卡顿导致的连点重复结算。
+
+---
+
+## 7. 数据库架构 (SQLite)
+
+核心库位于 `plugins/EcoBrain/ecobrain.db`。
+
+**表：`ecobrain_items`**
+- `item_hash` (PK, String) - SHA-256 唯一标志
+- `item_base64` (TEXT) - 用于发货时反序列化
+- `base_price` (DOUBLE) - 基准价
+- `k_factor` (DOUBLE) - 陡峭度
+- `target_inventory` (INT) - 虚拟库存锚点
+- `current_inventory` (INT) - 虚拟池库存 (用于算价)
+- `physical_stock` (INT) - **物理实体库存 (用于发货)**
+
+---
+
+## 8. 指令与管理员风控抓手
 
 主命令：`/ecobrain`（别名 `/eb`）
 
-- `sell <数量>`：卖主手物品
-- `buy <数量>`：按主手模板买同类物品
-- `bulk`：打开批量出售 GUI
-- `market [页码]`：查看市场大盘
-- `reload`：热更新 `config.yml`（需要 `ecobrain.admin`）
-- `admin <clear|freeze|unfreeze> <hash>`：管理操作（需要 `ecobrain.admin`）
+- `sell <数量>` / `buy <数量>` ：玩家常规指令。
 
-> 注意：`buy` 目前是“主手模板匹配”模式，不是按 hash 参数购买。
+> **关于自动熔断 (Circuit Breaker)**：系统熔断通常只拦截【买入】（因为怕库存抽干），默认放行【卖出】以允许玩家补库存恢复市场流动性。
 
 ---
 
-## 6. 批量出售 GUI 防刷逻辑
+## 9. 维护与重构指北
 
-界面规则：
-
-- 大小 54 格
-- `0~44`：玩家可放待售物品
-- `45`：确认出售
-- `53`：取消并退回
-- `45~53` 底栏有占位物
-
-防刷点：
-
-- 禁止往底栏放物品（点击/拖拽都拦截）
-- ESC 或关闭界面时，`0~44` 物品会退回
-- 结算使用会话幂等标记，防止重复点击重入
-- 批量结算在异步线程计算与落库，主线程只做背包/经济操作
-
----
-
-## 7. 熔断器怎么工作
-
-交易前会做风控检查：
-
-### 买入风控（会拦）
-
-1. 该物品是否已冻结（`is_frozen=1`）
-2. 库存是否低于 `critical-inventory`
-3. 当前价相对“当日开盘价”涨跌是否超过 `daily-limit-percent`
-
-### 卖出风控（默认不拦）
-
-- 卖出路径默认放行（允许玩家向系统补库存）
-- 这么做是为了避免市场被“历史冻结标记”卡死，无法通过卖出恢复流动性
-
-说明：
-
-- 价格异常触发熔断后会写冻结标记，主要限制买入侧风险。
-- 低库存本质是“缺货风险”，因此优先限制买入而不是卖出。
-
----
-
-## 8. AI 在做什么（简化版）
-
-AI 每隔 `ai.schedule-hours` 小时跑一次：
-
-1. 收集市场状态（物品数量、总库存、库存失衡、均价、成交量）
-2. DQN 选择动作（涨/跌）
-3. 用奖励函数评估：  
-   `R = w1*TransactionVolume - w2*InflationDelta - w3*InventoryImbalance`
-4. 训练网络并调整 `base_price` 与 `k_factor`
-
-为了防止 AI 乱调，参数调整有硬限制（比如每轮最大 ±5%、k 的上下限）。
-
----
-
-## 9. 线程模型（为什么不卡主线程）
-
-原则：**重计算和 IO 放异步，Bukkit 强相关操作留主线程**。
-
-- 异步：SQLite、批量滑点计算、AI 训练、统计查询
-- 主线程：背包扣发、GUI 打开关闭、Vault 实际扣款发款调用点
-
-这块是插件稳定性的基础，后续改代码不要破坏这个边界。
-
----
-
-## 10. 数据库结构（SQLite）
-
-数据库文件：`plugins/EcoBrain/ecobrain.db`
-
-### `ecobrain_items`
-
-- `item_hash`（主键）
-- `item_base64`
-- `base_price`
-- `k_factor`
-- `target_inventory`
-- `current_inventory`
-
-### `ecobrain_risk`
-
-- `item_hash`（主键）
-- `day_open_price`
-- `day_key`
-- `is_frozen`
-
-### `ecobrain_trade_stats`
-
-- `id`
-- `item_hash`
-- `trade_type`
-- `quantity`
-- `total_price`
-- `created_at`
-
----
-
-## 11. 配置文件怎么用（重点）
-
-配置路径：`plugins/EcoBrain/config.yml`  
-改完执行：`/ecobrain reload`
-
-调参建议（统一一套参数，不分层）：
-
-- 想让价格更稳：降低 `k-factor`、降低 `target-inventory`
-- 想让稀有物更贵：提高 `k-factor` 或提高 `target-inventory`
-- 想减少误触发熔断：提高 `daily-limit-percent`
-- 想让交易更顺滑：适当降低 `trade.cooldown-ms`
-
-别一次改太多，推荐每次改 1~2 个参数，观察半天到一天。
-
----
-
-## 12. 热更新范围（`/ecobrain reload`）
-
-当前支持热更新：
-
-- IPO 参数（`base-price` / `target-inventory` / `k-factor`）
-- 交易冷却时间
-- 熔断阈值
-- 批量出售 GUI 样式（标题、材质、名字、lore）
-- AI 调度参数（会重启 AI 定时任务）
-
-说明：
-
-- 经验回放池容量配置会在下次完整重启时最干净地应用。
-- reload 失败会返回错误消息，不会静默吞掉。
-
----
-
-## 13. 常见问题
-
-### Q1：为什么有些物品特别贵？
-
-通常是库存太低，而 `target-inventory` 或 `k-factor` 偏高。  
-先把 `k-factor` 降到 `0.6~0.8` 再观察。
-
-### Q2：为什么很多东西都不值钱？
-
-通常是库存长期远高于目标库存。  
-要么降低该类物品输入速度，要么调低 `target-inventory`。
-
-### Q3：管理员 `clear` 是干嘛的？
-
-`/ecobrain admin clear <hash>` 会删除该物品的市场档案（含统计/风控记录），相当于重置这件物品。
-
-### Q4：为什么首单卖出以前会异常高，现在正常了？
-
-这是 IPO 冷启动机制升级后的结果。  
-现在首次建档会先注入虚拟流动性（`current_inventory = target_inventory`），
-再按本次卖出做滑点结算，首单价格会更接近 `base_price`。
-
----
-
-## 14. 维护提醒（给未来自己）
-
-- 任何“看起来方便”的同步数据库操作，都要先想想 TPS
-- 改交易流程时，优先保证“扣物品/扣钱/落库”的顺序一致性
-- GUI 相关改动一定要回归“关闭退回”和“重入防刷”
-- 新增命令尽量走统一权限：`ecobrain.admin`
-
-如果以后想扩展成多市场、多币种，优先重构 `repository + service` 边界，不要直接在命令里堆逻辑。
-
+1. **热更新的边界**：`/eb reload` 会重载参数并重启 AI 调度器任务，但 AI 经验回放池（Replay Buffer）容量和 SQLite 连接池变动需整服重启。
+2. **切勿瞎改 K 值**：如果物品价格极度失真，请手动调整 `k_factor` 趋近 `0.6 ~ 1.0`，并检查 `physical_stock` 是否严重枯竭。
+3. **未来的扩展性**：如果后期准备做跨服集群市场（Redis/MySQL同步），必须在 `Repository` 数据层抽象出接口，切勿直接在业务 Service 或指令层拼接 SQL 语句。

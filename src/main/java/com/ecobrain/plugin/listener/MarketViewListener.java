@@ -127,9 +127,9 @@ public class MarketViewListener implements Listener {
                 ItemStack template = itemSerializer.deserializeFromBase64(record.getItemBase64());
                 int amount = shiftClick ? Math.max(1, template.getMaxStackSize()) : 1;
 
-                if (record.getCurrentInventory() <= amount) {
+                if (record.getPhysicalStock() < amount) {
                     Bukkit.getScheduler().runTask(plugin, () -> {
-                        player.sendMessage(ChatColor.RED + "系统库存不足。当前库存: " + record.getCurrentInventory());
+                        player.sendMessage(ChatColor.RED + "系统真实库存不足，无法出售！");
                         releaseLock(player);
                     });
                     return;
@@ -156,8 +156,11 @@ public class MarketViewListener implements Listener {
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settle(itemHash, quote, amount));
-                        openPageAsync(player, session.page());
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                            marketService.settleBuy(itemHash, record, quote, amount);
+                            List<ItemMarketRecord> refreshed = repository.findAll();
+                            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, refreshed, session.page()));
+                        });
                     } finally {
                         releaseLock(player);
                     }

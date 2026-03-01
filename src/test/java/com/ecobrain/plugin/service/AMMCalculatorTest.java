@@ -10,7 +10,7 @@ class AMMCalculatorTest {
     @Test
     void shouldCalculateCurrentPriceByExactFormula() {
         AMMCalculator calculator = new AMMCalculator();
-        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 25);
+        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 25, 25);
 
         double price = calculator.calculateCurrentPrice(record);
 
@@ -20,7 +20,7 @@ class AMMCalculatorTest {
     @Test
     void shouldCalculateSellTotalByDiscreteSummation() {
         AMMCalculator calculator = new AMMCalculator();
-        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 50);
+        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 50, 50);
 
         TradeResult result = calculator.calculateSellTotal(record, 2);
 
@@ -32,7 +32,7 @@ class AMMCalculatorTest {
     @Test
     void shouldCalculateBuyTotalByDiscreteSummation() {
         AMMCalculator calculator = new AMMCalculator();
-        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 60);
+        ItemMarketRecord record = new ItemMarketRecord("hash", "base64", 5000.0D, 1.0D, 50, 60, 60);
 
         TradeResult result = calculator.calculateBuyTotal(record, 2);
 

@@ -25,7 +25,7 @@ public class ItemMarketRepository {
 
     public Optional<ItemMarketRecord> findByHash(String itemHash) {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory
+            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock
             FROM ecobrain_items WHERE item_hash = ?
             """;
         try (Connection connection = databaseManager.getConnection();
@@ -44,7 +44,7 @@ public class ItemMarketRepository {
 
     public List<ItemMarketRecord> findAll() {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory
+            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock
             FROM ecobrain_items
             ORDER BY item_hash ASC
             """;
@@ -64,10 +64,11 @@ public class ItemMarketRepository {
     /**
      * IPO 冷启动写入。若已存在则保持原记录不变。
      */
-    public void upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor, int targetInventory, int currentInventory) {
+    public void upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor,
+                          int targetInventory, int currentInventory, int physicalStock) {
         String sql = """
-            INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory)
-            VALUES(?, ?, ?, ?, ?, ?)
+            INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_hash) DO NOTHING
             """;
         try (Connection connection = databaseManager.getConnection();
@@ -78,6 +79,7 @@ public class ItemMarketRepository {
             statement.setDouble(4, kFactor);
             statement.setInt(5, targetInventory);
             statement.setInt(6, Math.max(1, currentInventory));
+            statement.setInt(7, Math.max(0, physicalStock));
             statement.executeUpdate();
             initializeRiskIfMissing(itemHash, basePrice, connection);
         } catch (SQLException e) {
@@ -85,15 +87,16 @@ public class ItemMarketRepository {
         }
     }
 
-    public void updateInventory(String itemHash, int newInventory) {
-        String sql = "UPDATE ecobrain_items SET current_inventory = ? WHERE item_hash = ?";
+    public void updateStocks(String itemHash, int newVirtualInventory, int newPhysicalStock) {
+        String sql = "UPDATE ecobrain_items SET current_inventory = ?, physical_stock = ? WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setInt(1, Math.max(1, newInventory));
-            statement.setString(2, itemHash);
+            statement.setInt(1, Math.max(1, newVirtualInventory));
+            statement.setInt(2, Math.max(0, newPhysicalStock));
+            statement.setString(3, itemHash);
             statement.executeUpdate();
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to update inventory", e);
+            throw new IllegalStateException("Failed to update stocks", e);
         }
     }
 
@@ -262,7 +265,8 @@ public class ItemMarketRepository {
             rs.getDouble("base_price"),
             rs.getDouble("k_factor"),
             rs.getInt("target_inventory"),
-            rs.getInt("current_inventory")
+            rs.getInt("current_inventory"),
+            rs.getInt("physical_stock")
         );
     }
 }

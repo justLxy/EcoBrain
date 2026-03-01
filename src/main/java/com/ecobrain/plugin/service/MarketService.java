@@ -41,21 +41,24 @@ public class MarketService {
     }
 
     /**
-     * 异步 IPO 保证（带初始虚拟流动性）：
-     * - 若物品不存在，先以 target_inventory 作为初始 current_inventory 建档
-     * - 这样首次交易的价格锚点接近 base_price，不会因为库存=1导致首单爆价
+     * 卖出场景下的 IPO 保证：
+     * - 首次发现物品时，注入虚拟流动性（current_inventory = target_inventory）
+     * - physical_stock 仅记录玩家真实卖入数量，不凭空增发实体库存
      */
-    public CompletableFuture<ItemMarketRecord> ensureIpoAsync(String hash, String base64) {
+    public CompletableFuture<IpoState> ensureIpoForSellAsync(String hash, String base64, int firstSellQuantity) {
         return CompletableFuture.supplyAsync(() -> {
             Optional<ItemMarketRecord> existing = repository.findByHash(hash);
             if (existing.isPresent()) {
-                return existing.get();
+                return new IpoState(existing.get(), false);
             }
             int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
             repository.upsertIpo(hash, base64, economySettings.ipoBasePrice(), economySettings.ipoKFactor(),
                 economySettings.ipoTargetInventory(),
-                virtualInitialInventory);
-            return repository.findByHash(hash).orElseThrow(() -> new IllegalStateException("IPO insert failed"));
+                virtualInitialInventory,
+                Math.max(0, firstSellQuantity));
+            ItemMarketRecord inserted = repository.findByHash(hash)
+                .orElseThrow(() -> new IllegalStateException("IPO insert failed"));
+            return new IpoState(inserted, true);
         }, runnable -> plugin.getServer().getScheduler().runTaskAsynchronously(plugin, runnable));
     }
 
@@ -71,14 +74,33 @@ public class MarketService {
         if (!circuitBreaker.allowBuy(record)) {
             throw new IllegalStateException("This item is temporarily unavailable for buy");
         }
+        if (record.getPhysicalStock() < amount) {
+            throw new IllegalStateException("系统真实库存不足，无法出售！");
+        }
         TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);
     }
 
-    public void settle(String itemHash, TradeQuote quote, int amount) {
-        repository.updateInventory(itemHash, quote.postInventory());
+    /**
+     * 卖出结算：
+     * - 虚拟库存始终按 AMM 结算后库存写入
+     * - 真实库存仅在非 IPO 建档首单时再追加数量（首单数量已在建档时入 physical_stock）
+     */
+    public void settleSell(String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
+        int newPhysical = ipoCreatedNow ? record.getPhysicalStock() : record.getPhysicalStock() + amount;
+        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
+        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), System.currentTimeMillis());
+    }
+
+    /**
+     * 买入结算：虚拟库存与真实库存同步扣减。
+     */
+    public void settleBuy(String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
+        int newPhysical = record.getPhysicalStock() - amount;
+        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), System.currentTimeMillis());
     }
 
     public record TradeQuote(double totalPrice, int postInventory, TradeType type) {}
+    public record IpoState(ItemMarketRecord record, boolean createdNow) {}
 }

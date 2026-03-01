@@ -64,7 +64,8 @@ public class MarketViewGUI {
                 List<String> lore = new ArrayList<>();
                 lore.add(ChatColor.GRAY + "Hash: " + record.getItemHash().substring(0, 12) + "...");
                 lore.add(ChatColor.YELLOW + "实时价格: " + String.format("%.2f", ammCalculator.calculateCurrentPrice(record)));
-                lore.add(ChatColor.AQUA + "系统库存: " + record.getCurrentInventory());
+                lore.add(ChatColor.AQUA + "系统物理库存: " + record.getPhysicalStock());
+                lore.add(ChatColor.DARK_GRAY + "(内部虚拟池: " + record.getCurrentInventory() + ")");
                 lore.add(ChatColor.GREEN + "左键: 购买 1 个");
                 lore.add(ChatColor.GREEN + "Shift+左键: 购买 1 组");
                 lore.add(ChatColor.RED + "管理员右键: 删除该物品档案");

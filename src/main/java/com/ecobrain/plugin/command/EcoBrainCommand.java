@@ -127,7 +127,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             try {
                 String base64 = itemSerializer.serializeToBase64(snapshot.asOne());
                 String hash = itemSerializer.sha256(base64);
-                ItemMarketRecord record = marketService.ensureIpoAsync(hash, base64).join();
+                MarketService.IpoState ipoState = marketService.ensureIpoForSellAsync(hash, base64, amount).join();
+                ItemMarketRecord record = ipoState.record();
                 MarketService.TradeQuote quote = marketService.quoteSell(record, amount);
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
@@ -150,7 +151,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
 
                         player.sendMessage(ChatColor.GREEN + "出售成功，获得 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
                         Bukkit.getScheduler().runTaskAsynchronously(plugin,
-                            () -> marketService.settle(hash, quote, amount));
+                            () -> marketService.settleSell(hash, record, quote, amount, ipoState.createdNow()));
                     } finally {
                         releaseLock(player);
                     }
@@ -201,8 +202,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
                 ItemMarketRecord record = optionalRecord.get();
-                if (record.getCurrentInventory() <= amount) {
-                    player.sendMessage(ChatColor.RED + "系统库存不足。当前库存: " + record.getCurrentInventory());
+                if (record.getPhysicalStock() < amount) {
+                    player.sendMessage(ChatColor.RED + "系统真实库存不足，无法出售！");
                     releaseLock(player);
                     return;
                 }
@@ -231,7 +232,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settle(hash, quote, amount));
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuy(hash, record, quote, amount));
                     } finally {
                         releaseLock(player);
                     }
