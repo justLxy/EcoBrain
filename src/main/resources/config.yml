@@ -17,7 +17,7 @@ economy:
     # 调大：新物品更值钱，玩家首卖收益更高。
     # 调小：新物品更便宜，经济更保守。
     # 推荐：1000 ~ 10000
-    base-price: 5000.0
+    base-price: 100.0
 
     # 【理想库存目标】
     # AMM 定价的库存锚点。当前库存接近这个值时，价格趋近 base-price。
@@ -123,7 +123,7 @@ ai:
     # 用于计算 InflationDelta 的参考价格。
     # 若你的服整体物价水平较高，可适当调大这个值。
     # 推荐：与 economy.ipo.base-price 同量级
-    inflation-baseline-price: 5000.0
+    inflation-baseline-price: 50.0
 
 gui:
   bulk-sell:

@@ -17,14 +17,14 @@ economy:
     # 调大：新物品更值钱，玩家首卖收益更高。
     # 调小：新物品更便宜，经济更保守。
     # 推荐：1000 ~ 10000
-    base-price: 5000.0
+    base-price: 100.0
 
     # 【理想库存目标】
     # AMM 定价的库存锚点。当前库存接近这个值时，价格趋近 base-price。
     # 调大：系统更“怕缺货”，低库存时涨价更明显。
     # 调小：系统更“宽松”，库存变化对价格影响变弱。
     # 推荐：30 ~ 200
-    target-inventory: 50
+    target-inventory: 320
 
     # 【价格弹性系数 k】
     # 核心敏感度参数。越大，库存每变一点，价格变化越明显。
@@ -46,7 +46,7 @@ circuit-breaker:
   # 调小：更保守，更容易触发保护。
   # 调大：更激进，允许更大波动。
   # 推荐：0.20 ~ 0.50
-  daily-limit-percent: 0.30
+  daily-limit-percent: 0.50
 
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
@@ -123,7 +123,7 @@ ai:
     # 用于计算 InflationDelta 的参考价格。
     # 若你的服整体物价水平较高，可适当调大这个值。
     # 推荐：与 economy.ipo.base-price 同量级
-    inflation-baseline-price: 5000.0
+    inflation-baseline-price: 50.0
 
 gui:
   bulk-sell:
