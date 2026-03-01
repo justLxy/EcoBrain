@@ -1,2 +1,3 @@
 com/ecobrain/plugin/listener/BulkSellListenerTest.class
+com/ecobrain/plugin/EdgeCaseSimulationTest.class
 com/ecobrain/plugin/service/AMMCalculatorTest.class
