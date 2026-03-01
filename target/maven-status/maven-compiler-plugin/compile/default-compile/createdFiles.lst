@@ -32,6 +32,7 @@ com/ecobrain/plugin/listener/BulkSellListener.class
 com/ecobrain/plugin/config/PluginSettings$Trade.class
 com/ecobrain/plugin/command/EcoBrainCommand$SellMode.class
 com/ecobrain/plugin/service/MarketService$IpoState.class
+com/ecobrain/plugin/ai/AIScheduler$AgentMemory.class
 com/ecobrain/plugin/gui/MarketViewGUI.class
 com/ecobrain/plugin/ai/AIScheduler$TuningResult.class
 com/ecobrain/plugin/ai/StateCollector.class

@@ -41,6 +41,17 @@ public class AIScheduler {
 
     private volatile PluginSettings fullSettings;
 
+    private static class AgentMemory {
+        final double[] state;
+        final int actionIndex;
+
+        AgentMemory(double[] state, int actionIndex) {
+            this.state = state;
+            this.actionIndex = actionIndex;
+        }
+    }
+    private final java.util.concurrent.ConcurrentHashMap<String, AgentMemory> memoryBank = new java.util.concurrent.ConcurrentHashMap<>();
+
     public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
                        ItemMarketRepository repository, PluginSettings.AI settings, ItemSerializer itemSerializer) {
         this.plugin = plugin;
@@ -116,18 +127,13 @@ public class AIScheduler {
         }
 
         for (ItemMarketRecord item : items) {
-            // 1. State 的颗粒度降维：单品特征
+            // 1. 获取当前状态 St
             double saturation = calculateSaturation(item);
             double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
-            double[] state = new double[] {saturation, recentFlow, globalInflationRate};
+            double[] currentState = new double[] {saturation, recentFlow, globalInflationRate};
 
-            // 2. Action 的独立计算
-            int actionIndex = dqnTrainer.chooseAction(state);
-            AiAction action = resolveAction(actionIndex);
-
-            // 3. 计算专属 Reward
+            // 2. 获取针对【上一个周期】的反馈 (Reward Rt)
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
-            // 维度对齐：将绝对金币额除以动态客单价，将其转化为一个比例乘数（否则金币额太大将彻底吞噬另外两个百分比指标）
             double normalizedVolume = recentVolume / Math.max(1.0, dynamicAov);
 
             double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
@@ -137,17 +143,35 @@ public class AIScheduler {
                 - (settings.rewardW2() * Math.abs(globalInflationRate))
                 - (settings.rewardW3() * imbalance);
 
-            // 4. 应用独立调控结果
-            TuningResult result = applyActionToItem(item, action);
+            // 3. 闭环：将 (S_{t-1}, A_{t-1}, R_t, S_t) 存入经验池
+            AgentMemory lastMemory = memoryBank.get(item.getItemHash());
+            if (lastMemory != null) {
+                dqnTrainer.observe(lastMemory.state, lastMemory.actionIndex, reward, currentState);
+            }
+
+            // 4. 为【当前周期】做决策 At
+            int actionIndex = dqnTrainer.chooseAction(currentState);
+            AiAction action = resolveAction(actionIndex);
+
+            // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
+            boolean isGlut = item.getCurrentInventory() > item.getTargetInventory() * 5;
+            boolean isScarcity = fullSettings != null && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
+
+            if (isGlut) {
+                action = AiAction.DOWN_PRICE;
+                actionIndex = 0; // DOWN_PRICE index
+            } else if (isScarcity) {
+                action = AiAction.UP_PRICE;
+                actionIndex = 1; // UP_PRICE index
+            }
+
+            // 5. 记忆本次决策，留给下个周期作为 A_{t-1} 评估
+            memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
+
+            // 6. 应用最终动作
+            TuningResult result = applyActionToItem(item, action, isGlut, isScarcity);
             
-            // 5. 获取 nextState 并存入经验池
-            ItemMarketRecord latest = repository.findByHash(item.getItemHash()).orElse(item);
-            double nextSaturation = calculateSaturation(latest);
-            double[] nextState = new double[] {nextSaturation, recentFlow, globalInflationRate};
-
-            dqnTrainer.observe(state, actionIndex, reward, nextState);
-
-            // 6. 日志输出规范：在 for 循环内部，分别打印每个物品独有的调控信息
+            // 7. 日志输出规范：在 for 循环内部，分别打印每个物品独有的调控信息
             if (settings.debugLog()) {
                 String hashShort = item.getItemHash().substring(0, Math.min(8, item.getItemHash().length()));
                 String itemName = readableItemName(item);
@@ -186,8 +210,8 @@ public class AIScheduler {
         dqnTrainer.trainBatch(settings.trainBatchSize());
     }
 
-    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action) {
-        if (action == AiAction.HOLD) {
+    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action, boolean isGlut, boolean isScarcity) {
+        if (action == AiAction.HOLD && !isGlut && !isScarcity) {
             return null;
         }
 
@@ -197,26 +221,25 @@ public class AIScheduler {
         double newBasePrice = oldBase;
         double newK = oldK;
 
-        if (action == AiAction.UP_PRICE) {
-            if (fullSettings != null && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory()) {
-                surgeType = SurgeType.SCARCITY_SURGE;
-                newBasePrice = oldBase * 2.0D;
-                newK = clamp(oldK + 0.2D, settings.kMin(), settings.kMax());
-            } else {
+        if (isGlut) {
+            surgeType = SurgeType.GLUT_CRASH;
+            newBasePrice = Math.max(0.01, oldBase * 0.5D);
+            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+        } else if (isScarcity) {
+            surgeType = SurgeType.SCARCITY_SURGE;
+            newBasePrice = oldBase * 2.0D;
+            newK = clamp(oldK + 0.2D, settings.kMin(), settings.kMax());
+        } else {
+            if (action == AiAction.UP_PRICE) {
                 double priceRate = settings.actionUpPriceRate();
                 double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
                 newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
                 newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
-            }
-        } else if (action == AiAction.DOWN_PRICE) {
-            if (item.getCurrentInventory() > item.getTargetInventory() * 5) {
-                surgeType = SurgeType.GLUT_CRASH;
-                newBasePrice = oldBase * 0.5D;
-                newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
-            } else {
+            } else if (action == AiAction.DOWN_PRICE) {
                 double priceRate = settings.actionDownPriceRate();
                 double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
                 newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+                newBasePrice = Math.max(0.01, newBasePrice);
                 newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
             }
         }
