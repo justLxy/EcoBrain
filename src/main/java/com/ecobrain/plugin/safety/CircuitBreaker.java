@@ -36,14 +36,12 @@ public class CircuitBreaker {
 
     /**
      * 卖出前风控：
-     * - 若已被价格熔断冻结，则禁止卖出
-     * - 低库存不会禁止卖出（卖出本身会补库存）
+     * - 卖出始终放行，用于补库存、恢复流动性
+     * - 即使物品处于冻结状态，也允许玩家继续向系统卖出
+     *   （这样可以避免市场因为历史冻结标记而永久卡死）
      */
     public boolean allowSell(ItemMarketRecord record) {
-        if (repository.isFrozen(record.getItemHash())) {
-            return false;
-        }
-        return checkDailyPriceLimit(record);
+        return true;
     }
 
     /**
