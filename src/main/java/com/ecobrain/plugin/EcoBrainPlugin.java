@@ -86,7 +86,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         StateCollector stateCollector = new StateCollector(repository, ammCalculator);
         NeuralNet neuralNet = new NeuralNet(6, 16, 8, 2, System.currentTimeMillis());
         DqnTrainer dqnTrainer = new DqnTrainer(neuralNet, new ReplayBuffer(settings.ai().replayBufferCapacity()));
-        this.aiScheduler = new AIScheduler(this, stateCollector, dqnTrainer, repository, settings.ai());
+        this.aiScheduler = new AIScheduler(this, stateCollector, dqnTrainer, repository, settings.ai(), itemSerializer);
         this.aiScheduler.start();
 
         getLogger().info("EcoBrain 已启用。");

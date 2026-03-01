@@ -54,6 +54,11 @@ circuit-breaker:
   critical-inventory: 2
 
 ai:
+  # 【AI 调试日志开关】
+  # true  = 每轮 AI 调参后输出可解释日志（状态/动作/奖励/具体调参）
+  # false = 仅运行 AI，不打印调参明细
+  debug-log: true
+
   # 【AI 调控周期（小时）】
   # 每隔多少小时跑一次 AI 调参。
   # 调小：反应更快，但可能更抖；调大：更平滑，但反应慢。

@@ -64,6 +64,7 @@ public class PluginSettings {
         );
 
         AI ai = new AI(
+            c.getBoolean("ai.debug-log", true),
             c.getInt("ai.schedule-hours", 2),
             c.getInt("ai.train-batch-size", 32),
             c.getInt("ai.replay-buffer-capacity", 4096),
@@ -105,7 +106,7 @@ public class PluginSettings {
     public record Economy(double ipoBasePrice, int ipoTargetInventory, double ipoKFactor) {}
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
-    public record AI(int scheduleHours, int trainBatchSize, int replayBufferCapacity,
+    public record AI(boolean debugLog, int scheduleHours, int trainBatchSize, int replayBufferCapacity,
                      double rewardW1, double rewardW2, double rewardW3,
                      double actionUpPriceRate, double actionDownPriceRate,
                      double perCycleMaxChangePercent, double kDelta, double kMin, double kMax,
