@@ -297,6 +297,8 @@ public class MarketViewGUI {
             headLore.add(ChatColor.YELLOW + "/ecobrain sell all" + ChatColor.WHITE + " - 出售背包内所有同类物品");
             headLore.add(ChatColor.YELLOW + "/ecobrain buy <数量>" + ChatColor.WHITE + " - 按指定数量购买");
             headLore.add(ChatColor.GRAY + "或点击下方漏斗进行批量出售");
+            headLore.add("");
+            headLore.add(ChatColor.AQUA + "▶ 点击查看交易排行榜");
             meta.setLore(headLore);
             head.setItemMeta(meta);
         }

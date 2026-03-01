@@ -176,6 +176,26 @@ public class AIScheduler {
             // 6. 应用最终动作
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity);
             
+            if (result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 0.001 && !result.itemName().contains("[过期销毁]")) {
+                String direction = result.newBasePrice() > result.oldBasePrice() ? "上涨" : "下跌";
+                String itemName = result.itemName();
+                double newPrice = result.newBasePrice();
+                
+                String surgeTag = "";
+                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                    surgeTag = " &c[稀缺暴涨!]";
+                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                    surgeTag = " &a[爆仓暴跌!]";
+                }
+                
+                String command = String.format("bc &8[&6EcoBrain&8] &b市场调控&7: &f%s &7的基准价格已%s至 &e%.2f &7金币%s", 
+                        itemName, direction, newPrice, surgeTag);
+                        
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
+                });
+            }
+            
             // 7. 日志输出规范：在 for 循环内部，分别打印每个物品独有的调控信息
             if (settings.debugLog()) {
                 String hashShort = item.getItemHash().substring(0, Math.min(8, item.getItemHash().length()));
