@@ -10,6 +10,7 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/gui/BulkSellGUI.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/gui/MarketViewGUI.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/listener/BulkSellListener.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/listener/MarketViewListener.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/ItemMarketRecord.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/TradeResult.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/TradeType.java

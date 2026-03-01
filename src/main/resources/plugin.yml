@@ -9,7 +9,7 @@ softdepend:
 commands:
   ecobrain:
     description: EcoBrain 主命令
-    usage: /ecobrain <sell|buy|bulk|market|reload|admin>
+    usage: /ecobrain <sell|buy|market|reload|admin>
     aliases: [eb]
 permissions:
   ecobrain.admin:

@@ -11,6 +11,7 @@ import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
 import com.ecobrain.plugin.listener.BulkSellListener;
+import com.ecobrain.plugin.listener.MarketViewListener;
 import com.ecobrain.plugin.persistence.DatabaseManager;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
@@ -78,6 +79,8 @@ public class EcoBrainPlugin extends JavaPlugin {
         }
         Bukkit.getPluginManager().registerEvents(
             new BulkSellListener(this, bulkSellGUI, itemSerializer, marketService, economyService), this);
+        Bukkit.getPluginManager().registerEvents(
+            new MarketViewListener(this, marketViewGUI, bulkSellGUI, repository, marketService, economyService, itemSerializer), this);
 
         StateCollector stateCollector = new StateCollector(repository, ammCalculator);
         NeuralNet neuralNet = new NeuralNet(6, 16, 8, 2, System.currentTimeMillis());

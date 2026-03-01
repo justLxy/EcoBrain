@@ -64,11 +64,17 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label,
                              @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain <sell|buy|bulk|market|reload|admin>");
-            return true;
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain <sell|buy|market|reload|admin>");
+                return true;
+            }
+            return handleMarket(player, new String[] {"market", "1"});
         }
         if ("reload".equalsIgnoreCase(args[0])) {
             return handleReload(sender);
+        }
+        if ("admin".equalsIgnoreCase(args[0])) {
+            return adminCommand.handle(sender, args);
         }
         if (!(sender instanceof Player player)) {
             sender.sendMessage("Only players can use this command.");
@@ -81,12 +87,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         return switch (args[0].toLowerCase()) {
             case "sell" -> handleSell(player, args);
             case "buy" -> handleBuy(player, args);
-            case "bulk" -> {
-                bulkSellGUI.open(player);
-                yield true;
-            }
             case "market" -> handleMarket(player, args);
-            case "admin" -> adminCommand.handle(sender, args);
             default -> {
                 player.sendMessage(ChatColor.YELLOW + "未知子命令。");
                 yield true;
@@ -299,7 +300,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("sell", "buy", "bulk", "market", "reload", "admin");
+            return List.of("sell", "buy", "market", "reload", "admin");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
             return List.of("clear", "freeze", "unfreeze");
