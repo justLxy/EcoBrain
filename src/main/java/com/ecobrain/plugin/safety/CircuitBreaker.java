@@ -35,17 +35,36 @@ public class CircuitBreaker {
     }
 
     /**
-     * 交易前风险校验。若触发熔断会写入冻结标记并返回 false。
+     * 卖出前风控：
+     * - 若已被价格熔断冻结，则禁止卖出
+     * - 低库存不会禁止卖出（卖出本身会补库存）
      */
-    public boolean allowTrade(ItemMarketRecord record) {
+    public boolean allowSell(ItemMarketRecord record) {
+        if (repository.isFrozen(record.getItemHash())) {
+            return false;
+        }
+        return checkDailyPriceLimit(record);
+    }
+
+    /**
+     * 买入前风控：
+     * - 若已被冻结，禁止买入
+     * - 若库存过低，直接拒绝买入（但不写永久冻结，避免无法通过卖出恢复）
+     */
+    public boolean allowBuy(ItemMarketRecord record) {
         if (repository.isFrozen(record.getItemHash())) {
             return false;
         }
         if (record.getCurrentInventory() <= criticalInventory) {
-            repository.setFrozen(record.getItemHash(), true);
             return false;
         }
+        return checkDailyPriceLimit(record);
+    }
 
+    /**
+     * 价格熔断检查：单日涨跌超过阈值时写冻结标记。
+     */
+    private boolean checkDailyPriceLimit(ItemMarketRecord record) {
         double currentPrice = ammCalculator.calculateCurrentPrice(record);
         String dayKey = LocalDate.now().toString();
         double dayOpenPrice = repository.upsertAndGetDayOpenPrice(record.getItemHash(), currentPrice, dayKey);

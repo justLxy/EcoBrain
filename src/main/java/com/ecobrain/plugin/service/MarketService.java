@@ -58,7 +58,7 @@ public class MarketService {
     }
 
     public TradeQuote quoteSell(ItemMarketRecord record, int amount) {
-        if (!circuitBreaker.allowTrade(record)) {
+        if (!circuitBreaker.allowSell(record)) {
             throw new IllegalStateException("This item is frozen by circuit breaker");
         }
         TradeResult result = ammCalculator.calculateSellTotal(record, amount);
@@ -66,8 +66,8 @@ public class MarketService {
     }
 
     public TradeQuote quoteBuy(ItemMarketRecord record, int amount) {
-        if (!circuitBreaker.allowTrade(record)) {
-            throw new IllegalStateException("This item is frozen by circuit breaker");
+        if (!circuitBreaker.allowBuy(record)) {
+            throw new IllegalStateException("This item is temporarily unavailable for buy");
         }
         TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);
