@@ -127,6 +127,10 @@ public class AIScheduler {
             plugin.getLogger().info(String.format("[EcoBrain-AI] 全局特征提取 -> 周期净印发=%.2f, global_inflation=%.6f", cycleNetEmission, globalInflationRate));
         }
 
+        int upCount = 0;
+        int downCount = 0;
+        List<String> surges = new ArrayList<>();
+
         for (ItemMarketRecord item : items) {
             // 1. 获取当前状态 St
             double saturation = calculateSaturation(item);
@@ -177,23 +181,17 @@ public class AIScheduler {
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity);
             
             if (result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 0.001 && !result.itemName().contains("[过期销毁]")) {
-                String direction = result.newBasePrice() > result.oldBasePrice() ? "上涨" : "下跌";
-                String itemName = result.itemName();
-                double newPrice = result.newBasePrice();
-                
-                String surgeTag = "";
-                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
-                    surgeTag = " &c[稀缺暴涨!]";
-                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
-                    surgeTag = " &a[爆仓暴跌!]";
+                if (result.newBasePrice() > result.oldBasePrice()) {
+                    upCount++;
+                } else {
+                    downCount++;
                 }
                 
-                String command = String.format("bc &8[&6EcoBrain&8] &b市场调控&7: &f%s &7的基准价格已%s至 &e%.2f &7金币%s", 
-                        itemName, direction, newPrice, surgeTag);
-                        
-                Bukkit.getScheduler().runTask(plugin, () -> {
-                    Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
-                });
+                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                    surges.add("&f" + result.itemName() + " &c[稀缺暴涨!]");
+                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                    surges.add("&f" + result.itemName() + " &a[爆仓暴跌!]");
+                }
             }
             
             // 7. 日志输出规范：在 for 循环内部，分别打印每个物品独有的调控信息
@@ -231,6 +229,24 @@ public class AIScheduler {
             plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告结束 =====");
         }
 
+        if (upCount > 0 || downCount > 0) {
+            StringBuilder command = new StringBuilder();
+            command.append("bc &8[&6EcoBrain&8] &b市场调控完毕&7: &a").append(upCount).append("&7 个物品价格上涨，&c").append(downCount).append("&7 个物品价格下跌。&e(输入 /ecobrain 查看)");
+            if (!surges.isEmpty()) {
+                command.append(" 异动: ");
+                if (surges.size() > 5) {
+                    command.append(String.join("&7, ", surges.subList(0, 5))).append(" &7等");
+                } else {
+                    command.append(String.join("&7, ", surges));
+                }
+            }
+            
+            String finalCommand = command.toString();
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), finalCommand);
+            });
+        }
+
         // 统一在周期末尾训练本批次收集的独立经验
         dqnTrainer.trainBatch(settings.trainBatchSize());
     }
@@ -252,13 +268,14 @@ public class AIScheduler {
             newK = clamp(oldK - 0.1D, settings.kMin(), settings.kMax());
         } else if (isScarcity) {
             surgeType = SurgeType.SCARCITY_SURGE;
-            newBasePrice = oldBase * 2.0D;
+            newBasePrice = Math.min(settings.maxBasePrice(), oldBase * 1.5D);
             newK = clamp(oldK + 0.1D, settings.kMin(), settings.kMax());
         } else {
             if (action == AiAction.UP_PRICE) {
                 double priceRate = settings.actionUpPriceRate();
                 double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
                 newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+                newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
                 newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
             } else if (action == AiAction.DOWN_PRICE) {
                 double priceRate = settings.actionDownPriceRate();

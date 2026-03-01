@@ -78,7 +78,8 @@ public class PluginSettings {
             c.getDouble("ai.tuning.per-cycle-max-change-percent", 0.05D),
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
-            c.getDouble("ai.tuning.k-max", 3.0D)
+            c.getDouble("ai.tuning.k-max", 3.0D),
+            c.getDouble("ai.tuning.max-base-price", 5000000.0D)
         );
 
         Gui gui = new Gui(
@@ -110,7 +111,7 @@ public class PluginSettings {
     public record AI(boolean debugLog, int scheduleMinutes, int trainBatchSize, int replayBufferCapacity, int aovWindowHours,
                      double rewardW1, double rewardW2, double rewardW3,
                      double actionUpPriceRate, double actionDownPriceRate,
-                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax) {}
+                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax, double maxBasePrice) {}
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,
                       Material cancelButtonMaterial, String cancelButtonName, List<String> cancelButtonLore,
