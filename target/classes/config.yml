@@ -51,7 +51,7 @@ circuit-breaker:
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
   # 推荐：1 ~ 5
-  critical-inventory: 1
+  critical-inventory: 0
 
 ai:
   # 【AI 调试日志开关】
@@ -81,7 +81,7 @@ ai:
   # AI 会统计过去 X 小时内的全服平均客单价作为通胀惩罚的基准。
   # 推荐：12 ~ 48
   # 正式服推荐：24 或者 48（根据你玩家平均在线时长决定）
-  aov-window-hours: 6
+  aov-window-hours: 1
 
   reward:
     # 奖励函数：

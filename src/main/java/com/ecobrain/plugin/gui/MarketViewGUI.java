@@ -67,9 +67,11 @@ public class MarketViewGUI {
     }
 
     public enum SortMode {
-        DEFAULT("默认排序", Material.COMPARATOR),
+        DEFAULT("默认排序(库存降序)", Material.COMPARATOR),
         STOCK_ASC("库存升序", Material.STONE_SLAB),
-        STOCK_DESC("库存降序", Material.STONE);
+        STOCK_DESC("库存降序", Material.STONE),
+        PRICE_DESC("价格降序", Material.GOLD_INGOT),
+        PRICE_ASC("价格升序", Material.GOLD_NUGGET);
 
         private final String displayName;
         private final Material icon;
@@ -226,9 +228,17 @@ public class MarketViewGUI {
             }
         }
 
-        if (state.sortMode != SortMode.DEFAULT) {
+        if (state.sortMode == SortMode.PRICE_DESC || state.sortMode == SortMode.PRICE_ASC) {
+            result.sort((a, b) -> {
+                double priceA = ammCalculator.calculateCurrentPrice(a);
+                double priceB = ammCalculator.calculateCurrentPrice(b);
+                int cmp = Double.compare(priceA, priceB);
+                return state.sortMode == SortMode.PRICE_ASC ? cmp : -cmp;
+            });
+        } else {
             result.sort((a, b) -> {
                 int cmp = Integer.compare(a.getPhysicalStock(), b.getPhysicalStock());
+                // DEFAULT 和 STOCK_DESC 都是降序（由多到少）
                 return state.sortMode == SortMode.STOCK_ASC ? cmp : -cmp;
             });
         }
