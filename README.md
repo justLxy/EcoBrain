@@ -124,4 +124,3 @@ EcoBrain **抛弃了 `Material` 枚举**，实现了对全 NBT/MythicMobs 自定
 
 1. **热更新的边界**：`/eb reload` 会重载参数并重启 AI 调度器任务，但 AI 经验回放池（Replay Buffer）容量和 SQLite 连接池变动需整服重启。
 2. **切勿瞎改 K 值**：如果物品价格极度失真，请手动调整 `k_factor` 趋近 `0.6 ~ 1.0`，并检查 `physical_stock` 是否严重枯竭。
-3. **未来的扩展性**：如果后期准备做跨服集群市场（Redis/MySQL同步），必须在 `Repository` 数据层抽象出接口，切勿直接在业务 Service 或指令层拼接 SQL 语句。

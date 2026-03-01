@@ -37,7 +37,7 @@ public class MarketViewListener implements Listener {
     private final MarketService marketService;
     private final EconomyService economyService;
     private final ItemSerializer itemSerializer;
-    private final ConcurrentHashMap<String, Long> actionLock = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> actionInFlight = new ConcurrentHashMap<>();
 
     public MarketViewListener(Plugin plugin, MarketViewGUI marketViewGUI, BulkSellGUI bulkSellGUI,
                               ItemMarketRepository repository, MarketService marketService,
@@ -206,13 +206,11 @@ public class MarketViewListener implements Listener {
     }
 
     private boolean tryAcquireLock(Player player) {
-        long now = System.currentTimeMillis();
-        long cooldown = plugin.getConfig().getLong("trade.cooldown-ms", 1500L);
-        Long old = actionLock.put(player.getUniqueId().toString(), now);
-        return old == null || now - old > cooldown;
+        String key = player.getUniqueId().toString();
+        return actionInFlight.putIfAbsent(key, true) == null;
     }
 
     private void releaseLock(Player player) {
-        actionLock.remove(player.getUniqueId().toString());
+        actionInFlight.remove(player.getUniqueId().toString());
     }
 }
