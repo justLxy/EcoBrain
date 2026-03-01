@@ -35,6 +35,7 @@ public class BulkSellListener implements Listener {
     private final ItemSerializer serializer;
     private final MarketService marketService;
     private final EconomyService economyService;
+    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> clickCooldown = new java.util.concurrent.ConcurrentHashMap<>();
 
     public BulkSellListener(Plugin plugin, BulkSellGUI bulkSellGUI, ItemSerializer serializer,
                             MarketService marketService, EconomyService economyService) {
@@ -53,6 +54,19 @@ public class BulkSellListener implements Listener {
         if (!bulkSellGUI.getTitle().equals(event.getView().getTitle())) {
             return;
         }
+        
+        long now = System.currentTimeMillis();
+        Long lastClick = clickCooldown.get(player.getUniqueId());
+        if (lastClick != null && now - lastClick < 200) {
+            event.setCancelled(true);
+            return;
+        }
+        clickCooldown.put(player.getUniqueId(), now);
+        
+        if (event.getAction() == org.bukkit.event.inventory.InventoryAction.COLLECT_TO_CURSOR) {
+            event.setCancelled(true);
+        }
+
         int rawSlot = event.getRawSlot();
         if (rawSlot >= BulkSellGUI.SELL_BUTTON_SLOT && rawSlot <= 53) {
             event.setCancelled(true);
@@ -92,6 +106,7 @@ public class BulkSellListener implements Listener {
         }
         safeReturnAll(player, event.getInventory());
         bulkSellGUI.closeSession(player.getUniqueId());
+        clickCooldown.remove(player.getUniqueId());
     }
 
     /**
@@ -153,7 +168,12 @@ public class BulkSellListener implements Listener {
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     if (!economyService.deposit(player, finalTotal)) {
                         for (ItemStack item : snapshot) {
-                            player.getInventory().addItem(item);
+                            java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
+                            if (!leftover.isEmpty()) {
+                                for (ItemStack drop : leftover.values()) {
+                                    player.getWorld().dropItem(player.getLocation(), drop);
+                                }
+                            }
                         }
                         player.sendMessage(ChatColor.RED + "批量出售失败，物品已退回。");
                         session.setSettled(false);
@@ -165,7 +185,12 @@ public class BulkSellListener implements Listener {
             } catch (Exception e) {
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     for (ItemStack item : snapshot) {
-                        player.getInventory().addItem(item);
+                        java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
+                        if (!leftover.isEmpty()) {
+                            for (ItemStack drop : leftover.values()) {
+                                player.getWorld().dropItem(player.getLocation(), drop);
+                            }
+                        }
                     }
                     session.setSettled(false);
                     player.sendMessage(ChatColor.RED + "结算异常，物品已退回: " + e.getMessage());
@@ -178,7 +203,12 @@ public class BulkSellListener implements Listener {
         for (int slot = 0; slot <= BulkSellGUI.INPUT_MAX_SLOT; slot++) {
             ItemStack item = inventory.getItem(slot);
             if (item != null && item.getType() != Material.AIR) {
-                player.getInventory().addItem(item.clone());
+                java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item.clone());
+                if (!leftover.isEmpty()) {
+                    for (ItemStack drop : leftover.values()) {
+                        player.getWorld().dropItem(player.getLocation(), drop);
+                    }
+                }
                 inventory.setItem(slot, null);
             }
         }

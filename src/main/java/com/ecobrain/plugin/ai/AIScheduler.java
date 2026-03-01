@@ -93,13 +93,16 @@ public class AIScheduler {
         long since = now - windowMs;
         double windowMinutes = Math.max(1, settings.scheduleMinutes());
 
-        long oneDaySince = now - 24L * 60L * 60L * 1000L;
-        double dynamicAov = repository.queryDynamicAovSince(oneDaySince);
+        long aovWindowMs = Math.max(1, settings.aovWindowHours()) * 60L * 60L * 1000L;
+        long aovSince = now - aovWindowMs;
+        double dynamicAov = repository.queryDynamicAovSince(aovSince);
         if (dynamicAov <= 0.0D) {
             if (fullSettings != null) {
-                dynamicAov = fullSettings.economy().ipoBasePrice() * 10.0D;
+                // 回退机制：如果过去没有任何一笔交易，则使用 IPO 基础底价的 20 倍作为假定客单价
+                dynamicAov = fullSettings.economy().ipoBasePrice() * 20.0D;
             } else {
-                dynamicAov = 50000.0D;
+                // 极端容错：如果连 fullSettings 都没加载出来，给一个绝对安全的低倍率值防崩溃
+                dynamicAov = 1000.0D;
             }
         }
 
@@ -108,7 +111,7 @@ public class AIScheduler {
 
         if (settings.debugLog()) {
             plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告开始 =====");
-            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局宏观状态: 24h动态客单价(基准) = %.2f 金币", dynamicAov));
+            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局宏观状态: %dh动态客单价(基准) = %.2f 金币", settings.aovWindowHours(), dynamicAov));
             plugin.getLogger().info(String.format("[EcoBrain-AI] 全局特征提取 -> 周期净印发=%.2f, global_inflation=%.6f", cycleNetEmission, globalInflationRate));
         }
 

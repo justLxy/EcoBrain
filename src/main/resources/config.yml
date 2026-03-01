@@ -17,7 +17,7 @@ economy:
     # 调大：新物品更值钱，玩家首卖收益更高。
     # 调小：新物品更便宜，经济更保守。
     # 推荐：1000 ~ 10000
-    base-price: 100.0
+    base-price: 500.0
 
     # 【理想库存目标】
     # AMM 定价的库存锚点。当前库存接近这个值时，价格趋近 base-price。
@@ -66,20 +66,23 @@ ai:
   schedule-minutes: 1
 
   # 【每轮训练批次】
-  # DQN 每次训练抽取多少条经验。
+  # DQN 每次训练抽取多少条“经验”。
+  # 经验(Transition) = [当时的行情状态, AI做的决定, 事后拿到的评分, 调控后的新行情]
   # 调大：学习更稳但更吃性能；调小：更轻量但噪声更大。
   # 推荐：16 / 32 / 64
   train-batch-size: 32
 
   # 【经验回放池容量】
   # 记录历史市场状态用于训练。越大记忆越多，但占用更多内存。
+  # 【注：所谓经验（Transition）指的是 AI 在每一次调控中收集到的因果关系数据包。】
+  # 【一条经验包含 4 个元素：当时的行情(State) + 做的决定(Action) + 事后拿到的分数(Reward) + 调控后变成的新行情(NextState)】
   # 推荐：2048 ~ 16384
   replay-buffer-capacity: 4096
 
   # 【动态客单价(AOV)统计窗口（小时）】
   # AI 会统计过去 X 小时内的全服平均客单价作为通胀惩罚的基准。
   # 推荐：12 ~ 48
-  aov-window-hours: 24
+  aov-window-hours: 12
 
   reward:
     # 奖励函数：
@@ -106,23 +109,23 @@ ai:
     # 【上调动作价格倍率】
     # 1.03 表示 AI 选择“涨价”时，基价先乘以 1.03
     # 推荐：1.01 ~ 1.05
-    action-up-price-rate: 1.30
+    action-up-price-rate: 2.0
 
     # 【下调动作价格倍率】
     # 0.97 表示 AI 选择“降价”时，基价先乘以 0.97
     # 推荐：0.95 ~ 0.99
-    action-down-price-rate: 0.80
+    action-down-price-rate: 0.5
 
     # 【单次调控最大限制】
     # 不管 AI 想怎么调，每轮最多只允许 ±该比例，防止失控。
     # 0.05 = 每轮最多涨/跌 5%
     # 推荐：0.02 ~ 0.08
-    per-cycle-max-change-percent: 0.50
+    per-cycle-max-change-percent: 1.0
 
     # 【k 系数步进】
     # AI 每次调控 k 的步长。实际会根据动作取 +k-delta 或 -k-delta。
     # 推荐：0.01 ~ 0.08
-    k-delta: 0.03
+    k-delta: 0.05
 
     # 【k 的硬边界】
     # 无论 AI 如何训练，k 都不会超出这个区间。
@@ -134,7 +137,7 @@ gui:
   bulk-sell:
     # 支持颜色代码：&0~&f, &l, &o, &n 等
     # 例如：&2深绿、&a浅绿、&c红色、&7灰色
-    title: "&2EcoBrain 批量出售舱"
+    title: "&2EcoBrain 批量出售界面"
 
     sell-button:
       # 确认按钮材质（Bukkit Material 枚举名）

@@ -38,6 +38,7 @@ public class MarketViewListener implements Listener {
     private final EconomyService economyService;
     private final ItemSerializer itemSerializer;
     private final ConcurrentHashMap<String, Boolean> actionInFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<java.util.UUID, Long> clickCooldown = new ConcurrentHashMap<>();
 
     public MarketViewListener(Plugin plugin, MarketViewGUI marketViewGUI, BulkSellGUI bulkSellGUI,
                               ItemMarketRepository repository, MarketService marketService,
@@ -59,7 +60,21 @@ public class MarketViewListener implements Listener {
         if (!marketViewGUI.isMarketTitle(event.getView().getTitle())) {
             return;
         }
+        
+        // Simple anti-spam for all clicks in this GUI
+        long now = System.currentTimeMillis();
+        Long lastClick = clickCooldown.get(player.getUniqueId());
+        if (lastClick != null && now - lastClick < 200) {
+            event.setCancelled(true);
+            return;
+        }
+        clickCooldown.put(player.getUniqueId(), now);
+        
         int rawSlot = event.getRawSlot();
+        if (event.getAction() == org.bukkit.event.inventory.InventoryAction.MOVE_TO_OTHER_INVENTORY ||
+            event.getAction() == org.bukkit.event.inventory.InventoryAction.COLLECT_TO_CURSOR) {
+            event.setCancelled(true);
+        }
         if (rawSlot < 54) {
             event.setCancelled(true);
         } else {
@@ -167,7 +182,12 @@ public class MarketViewListener implements Listener {
                             ItemStack part = template.clone();
                             int stack = Math.min(part.getMaxStackSize(), rest);
                             part.setAmount(stack);
-                            player.getInventory().addItem(part);
+                            java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(part);
+                            if (!leftover.isEmpty()) {
+                                for (ItemStack drop : leftover.values()) {
+                                    player.getWorld().dropItem(player.getLocation(), drop);
+                                }
+                            }
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
@@ -215,6 +235,7 @@ public class MarketViewListener implements Listener {
             return;
         }
         marketViewGUI.closeSession(player.getUniqueId());
+        clickCooldown.remove(player.getUniqueId());
     }
 
     private void openPageAsync(Player player, int page) {

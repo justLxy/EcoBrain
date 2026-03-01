@@ -51,6 +51,7 @@ class BulkSellListenerTest {
         Player player = Mockito.mock(Player.class);
 
         Mockito.when(event.getWhoClicked()).thenReturn(player);
+        Mockito.when(player.getUniqueId()).thenReturn(UUID.randomUUID());
         Mockito.when(event.getView()).thenReturn(view);
         Mockito.when(view.getTitle()).thenReturn(bulkSellGUI.getTitle());
         Mockito.when(event.getRawSlot()).thenReturn(46);
@@ -70,6 +71,7 @@ class BulkSellListenerTest {
         ItemStack stack = new ItemStack(Material.DIAMOND, 8);
 
         Mockito.when(event.getWhoClicked()).thenReturn(player);
+        Mockito.when(player.getUniqueId()).thenReturn(UUID.randomUUID());
         Mockito.when(event.getView()).thenReturn(view);
         Mockito.when(view.getTitle()).thenReturn(bulkSellGUI.getTitle());
         Mockito.when(event.getRawSlot()).thenReturn(BulkSellGUI.CANCEL_BUTTON_SLOT);

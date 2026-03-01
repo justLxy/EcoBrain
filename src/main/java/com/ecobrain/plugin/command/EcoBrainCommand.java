@@ -127,8 +127,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             amount = countSimilarInStorage(player.getInventory(), template);
         } else {
             amount = parsePositiveInt(args[1]);
-            if (amount <= 0) {
-                player.sendMessage(ChatColor.RED + "数量必须是正整数，或使用 /ecobrain sell all。");
+            if (amount <= 0 || amount > 10000) {
+                player.sendMessage(ChatColor.RED + "数量必须是 1~10000 之间的正整数，或使用 /ecobrain sell all。");
                 return true;
             }
         }
@@ -214,8 +214,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         int amount = parsePositiveInt(args[1]);
-        if (amount <= 0) {
-            player.sendMessage(ChatColor.RED + "数量必须是正整数。");
+        if (amount <= 0 || amount > 10000) {
+            player.sendMessage(ChatColor.RED + "单次购买数量必须在 1 ~ 10000 之间。");
             return true;
         }
         ItemStack hand = player.getInventory().getItemInMainHand();
@@ -279,7 +279,12 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             ItemStack part = item.clone();
                             int stack = Math.min(part.getMaxStackSize(), rest);
                             part.setAmount(stack);
-                            player.getInventory().addItem(part);
+                            java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(part);
+                            if (!leftover.isEmpty()) {
+                                for (ItemStack drop : leftover.values()) {
+                                    player.getWorld().dropItem(player.getLocation(), drop);
+                                }
+                            }
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
@@ -297,10 +302,18 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handleMarket(Player player, String[] args) {
+        if (!tryAcquireLock(player)) {
+            player.sendMessage(ChatColor.RED + "你操作太快了，请稍后再试。");
+            return true;
+        }
         int page = args.length >= 2 ? Math.max(1, parsePositiveInt(args[1])) : 1;
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            List<ItemMarketRecord> records = repository.findAll();
-            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, records, page));
+            try {
+                List<ItemMarketRecord> records = repository.findAll();
+                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, records, page));
+            } finally {
+                releaseLock(player);
+            }
         });
         return true;
     }
@@ -377,9 +390,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean tryAcquireLock(Player player) {
-        long now = System.currentTimeMillis();
-        Long old = playerActionLock.put(player.getUniqueId().toString(), now);
-        return old == null || now - old > cooldownMs;
+        String key = player.getUniqueId().toString();
+        return playerActionLock.putIfAbsent(key, System.currentTimeMillis()) == null;
     }
 
     private void releaseLock(Player player) {
