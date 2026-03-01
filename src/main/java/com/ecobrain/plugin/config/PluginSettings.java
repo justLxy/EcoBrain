@@ -70,6 +70,7 @@ public class PluginSettings {
             c.getInt("ai.train-batch-size", 32),
             c.getInt("ai.replay-buffer-capacity", 4096),
             c.getInt("ai.aov-window-hours", 24),
+            c.getInt("ai.garbage-collection-days", 7),
             c.getDouble("ai.reward.w1-transaction-volume", 1.0D),
             c.getDouble("ai.reward.w2-inflation-delta", 0.6D),
             c.getDouble("ai.reward.w3-inventory-imbalance", 0.8D),
@@ -109,6 +110,7 @@ public class PluginSettings {
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
     public record AI(boolean debugLog, int scheduleMinutes, int trainBatchSize, int replayBufferCapacity, int aovWindowHours,
+                     int garbageCollectionDays,
                      double rewardW1, double rewardW2, double rewardW3,
                      double actionUpPriceRate, double actionDownPriceRate,
                      double perCycleMaxChangePercent, double kDelta, double kMin, double kMax, double maxBasePrice) {}

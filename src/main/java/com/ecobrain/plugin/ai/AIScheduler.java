@@ -294,7 +294,7 @@ public class AIScheduler {
         if (item.getPhysicalStock() <= 1) {
             long lastTrade = repository.queryLastTradeTime(item.getItemHash());
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
-            if (daysSinceLastTrade >= 7) {
+            if (daysSinceLastTrade >= settings.garbageCollectionDays()) {
                 repository.deleteByHash(item.getItemHash());
                 return new TuningResult(readableItemName(item) + " [过期销毁]", item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
             }
