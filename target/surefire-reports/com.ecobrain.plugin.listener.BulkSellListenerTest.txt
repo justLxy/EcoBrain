@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.ecobrain.plugin.listener.BulkSellListenerTest
 -------------------------------------------------------------------------------
-Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.836 s -- in com.ecobrain.plugin.listener.BulkSellListenerTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.071 s -- in com.ecobrain.plugin.listener.BulkSellListenerTest

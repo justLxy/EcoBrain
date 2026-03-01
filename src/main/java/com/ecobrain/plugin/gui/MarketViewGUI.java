@@ -173,7 +173,7 @@ public class MarketViewGUI {
             }
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
-                List<String> lore = renderLore(record);
+                List<String> lore = renderLore(record, meta);
                 meta.setLore(lore);
                 item.setItemMeta(meta);
             }
@@ -336,8 +336,15 @@ public class MarketViewGUI {
         return row == 0 || row == 5 || col == 0 || col == 8;
     }
 
-    private List<String> renderLore(ItemMarketRecord record) {
+    private List<String> renderLore(ItemMarketRecord record, ItemMeta originalMeta) {
         List<String> lore = new ArrayList<>();
+        
+        // Preserve original item's lore if it exists
+        if (originalMeta != null && originalMeta.hasLore()) {
+            lore.addAll(originalMeta.getLore());
+            lore.add(""); // Empty line to separate original lore from market info
+        }
+        
         String price = String.format("%.2f", ammCalculator.calculateCurrentPrice(record));
         String hashShort = record.getItemHash().substring(0, Math.min(12, record.getItemHash().length())) + "...";
         for (String line : loreTemplate) {
