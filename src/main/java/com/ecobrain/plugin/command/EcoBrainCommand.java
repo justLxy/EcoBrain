@@ -116,6 +116,11 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         }
         ItemStack template = hand.clone();
 
+        if (template.getMaxStackSize() == 1) {
+            player.sendMessage(ChatColor.RED + "系统市场只回收可堆叠的材料，不可出售不可堆叠的物品！");
+            return true;
+        }
+
         SellMode mode = SellMode.MAIN_HAND_ONLY;
         int amount;
         if (args.length < 2) {

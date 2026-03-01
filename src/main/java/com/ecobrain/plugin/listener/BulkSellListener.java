@@ -122,16 +122,36 @@ public class BulkSellListener implements Listener {
         session.setSettled(true);
 
         List<ItemStack> snapshot = new ArrayList<>();
+        boolean returnedSome = false;
         for (int slot = 0; slot <= BulkSellGUI.INPUT_MAX_SLOT; slot++) {
             ItemStack item = inventory.getItem(slot);
             if (item != null && item.getType() != Material.AIR) {
+                if (item.getMaxStackSize() == 1) {
+                    // 退回不可堆叠的物品
+                    java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item.clone());
+                    if (!leftover.isEmpty()) {
+                        for (ItemStack drop : leftover.values()) {
+                            player.getWorld().dropItem(player.getLocation(), drop);
+                        }
+                    }
+                    inventory.setItem(slot, null);
+                    returnedSome = true;
+                    continue;
+                }
                 snapshot.add(item.clone());
                 inventory.setItem(slot, null);
             }
         }
+        
+        if (returnedSome) {
+            player.sendMessage(ChatColor.YELLOW + "批量出售系统自动退回了不可堆叠的物品。");
+        }
+
         if (snapshot.isEmpty()) {
             session.setSettled(false);
-            player.sendMessage(ChatColor.YELLOW + "没有可出售物品。");
+            if (!returnedSome) {
+                player.sendMessage(ChatColor.YELLOW + "没有可出售物品。");
+            }
             return;
         }
 

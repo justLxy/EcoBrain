@@ -40,13 +40,8 @@ public class MarketViewGUI {
 
     public enum ItemCategory {
         ALL("全部物品", Material.NETHER_STAR),
-        ARMOR("装备类", Material.DIAMOND_CHESTPLATE),
-        WEAPONS("武器类", Material.DIAMOND_SWORD),
-        TOOLS("工具类", Material.IRON_PICKAXE),
         BLOCKS("方块类", Material.GRASS_BLOCK),
-        RECORDS("唱片类", Material.MUSIC_DISC_13),
         RESOURCES("资源类", Material.DIAMOND),
-        POTIONS("药水类", Material.POTION),
         FOOD("食物类", Material.APPLE),
         OTHERS("其他类", Material.STICK);
 

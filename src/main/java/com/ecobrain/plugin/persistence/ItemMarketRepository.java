@@ -151,6 +151,19 @@ public class ItemMarketRepository {
         }
     }
 
+    public long queryLastTradeTime(String itemHash) {
+        String sql = "SELECT MAX(created_at) AS last_time FROM ecobrain_trade_stats WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getLong("last_time") : 0L;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query last trade time", e);
+        }
+    }
+
     public double queryVolumeSince(long sinceMillis) {
         String sql = "SELECT COALESCE(SUM(total_price),0) AS volume FROM ecobrain_trade_stats WHERE created_at >= ?";
         try (Connection connection = databaseManager.getConnection();
