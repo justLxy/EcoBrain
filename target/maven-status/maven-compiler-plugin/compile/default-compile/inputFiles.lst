@@ -8,10 +8,13 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/command/EcoBrainCommand.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/config/PluginSettings.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/gui/BulkSellGUI.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/gui/LeaderboardGUI.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/gui/MarketViewGUI.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/listener/BulkSellListener.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/listener/LeaderboardListener.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/listener/MarketViewListener.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/ItemMarketRecord.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/PlayerStat.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/TradeResult.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/model/TradeType.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/persistence/DatabaseManager.java

@@ -9,6 +9,7 @@ import com.ecobrain.plugin.command.EcoBrainCommand;
 import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
+import com.ecobrain.plugin.gui.LeaderboardGUI;
 import com.ecobrain.plugin.listener.BulkSellListener;
 import com.ecobrain.plugin.listener.MarketViewListener;
 import com.ecobrain.plugin.persistence.DatabaseManager;
@@ -36,6 +37,7 @@ public class EcoBrainPlugin extends JavaPlugin {
     private MarketService marketService;
     private BulkSellGUI bulkSellGUI;
     private MarketViewGUI marketViewGUI;
+    private LeaderboardGUI leaderboardGUI;
     private EcoBrainCommand ecoBrainCommand;
     private AIScheduler aiScheduler;
 
@@ -60,6 +62,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.marketService = new MarketService(this, repository, ammCalculator, circuitBreaker, settings.economy());
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
         this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui());
+        this.leaderboardGUI = new LeaderboardGUI();
         AdminCommand adminCommand = new AdminCommand(this, repository);
 
         this.ecoBrainCommand = new EcoBrainCommand(
@@ -80,7 +83,9 @@ public class EcoBrainPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(
             new BulkSellListener(this, bulkSellGUI, itemSerializer, marketService, economyService), this);
         Bukkit.getPluginManager().registerEvents(
-            new MarketViewListener(this, marketViewGUI, bulkSellGUI, repository, marketService, economyService, itemSerializer), this);
+            new MarketViewListener(this, marketViewGUI, bulkSellGUI, leaderboardGUI, repository, marketService, economyService, itemSerializer), this);
+        Bukkit.getPluginManager().registerEvents(
+            new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
 
         NeuralNet neuralNet = new NeuralNet(3, 16, 8, 3, System.currentTimeMillis());
         DqnTrainer dqnTrainer = new DqnTrainer(neuralNet, new ReplayBuffer(settings.ai().replayBufferCapacity()), 3);

@@ -7,6 +7,9 @@ import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.EconomyService;
 import com.ecobrain.plugin.service.MarketService;
+import com.ecobrain.plugin.gui.LeaderboardGUI;
+import com.ecobrain.plugin.model.PlayerStat;
+import com.ecobrain.plugin.model.TradeType;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
@@ -33,6 +36,7 @@ public class MarketViewListener implements Listener {
     private final Plugin plugin;
     private final MarketViewGUI marketViewGUI;
     private final BulkSellGUI bulkSellGUI;
+    private final LeaderboardGUI leaderboardGUI;
     private final ItemMarketRepository repository;
     private final MarketService marketService;
     private final EconomyService economyService;
@@ -41,11 +45,12 @@ public class MarketViewListener implements Listener {
     private final ConcurrentHashMap<java.util.UUID, Long> clickCooldown = new ConcurrentHashMap<>();
 
     public MarketViewListener(Plugin plugin, MarketViewGUI marketViewGUI, BulkSellGUI bulkSellGUI,
-                              ItemMarketRepository repository, MarketService marketService,
+                              LeaderboardGUI leaderboardGUI, ItemMarketRepository repository, MarketService marketService,
                               EconomyService economyService, ItemSerializer itemSerializer) {
         this.plugin = plugin;
         this.marketViewGUI = marketViewGUI;
         this.bulkSellGUI = bulkSellGUI;
+        this.leaderboardGUI = leaderboardGUI;
         this.repository = repository;
         this.marketService = marketService;
         this.economyService = economyService;
@@ -83,6 +88,15 @@ public class MarketViewListener implements Listener {
 
         MarketViewGUI.Session session = marketViewGUI.getSession(player.getUniqueId());
         if (session == null) {
+            return;
+        }
+
+        if (rawSlot == 4) {
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                List<PlayerStat> topSellers = repository.getTopPlayers(TradeType.SELL, 10);
+                List<PlayerStat> topBuyers = repository.getTopPlayers(TradeType.BUY, 10);
+                Bukkit.getScheduler().runTask(plugin, () -> leaderboardGUI.open(player, topSellers, topBuyers));
+            });
             return;
         }
 

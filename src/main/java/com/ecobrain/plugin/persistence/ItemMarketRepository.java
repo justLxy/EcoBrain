@@ -171,6 +171,34 @@ public class ItemMarketRepository {
         }
     }
 
+    public List<com.ecobrain.plugin.model.PlayerStat> getTopPlayers(TradeType tradeType, int limit) {
+        String sql = """
+            SELECT player_name, SUM(money_amount) as total_money
+            FROM ecobrain_player_transactions
+            WHERE trade_type = ?
+            GROUP BY player_uuid, player_name
+            ORDER BY total_money DESC
+            LIMIT ?
+            """;
+        List<com.ecobrain.plugin.model.PlayerStat> stats = new ArrayList<>();
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, tradeType.name());
+            statement.setInt(2, limit);
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    stats.add(new com.ecobrain.plugin.model.PlayerStat(
+                        rs.getString("player_name"),
+                        rs.getDouble("total_money")
+                    ));
+                }
+            }
+            return stats;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query top players", e);
+        }
+    }
+
     public long queryLastTradeTime(String itemHash) {
         String sql = "SELECT MAX(created_at) AS last_time FROM ecobrain_trade_stats WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();
