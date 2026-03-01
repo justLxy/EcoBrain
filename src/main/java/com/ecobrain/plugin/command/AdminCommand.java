@@ -22,12 +22,26 @@ public class AdminCommand {
             sender.sendMessage(ChatColor.RED + "你没有权限执行管理命令。");
             return true;
         }
-        if (args.length < 3) {
-            sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin <clear|freeze|unfreeze> <hash>");
+        String action = args[1].toLowerCase();
+        if ("clearleaderboard".equalsIgnoreCase(action) || "resetleaderboard".equalsIgnoreCase(action)
+            || "clear-ranking".equalsIgnoreCase(action) || "clearranking".equalsIgnoreCase(action)) {
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    int rows = repository.clearLeaderboard();
+                    sender.sendMessage(ChatColor.GREEN + "已清空交易排行榜数据。" + (rows > 0 ? (" 删除行数=" + rows) : ""));
+                } catch (Exception e) {
+                    sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                }
+            });
             return true;
         }
 
-        String action = args[1].toLowerCase();
+        if (args.length < 3) {
+            sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin <clear|freeze|unfreeze> <hash>");
+            sender.sendMessage(ChatColor.YELLOW + "或: /ecobrain admin clearleaderboard");
+            return true;
+        }
+
         String hash = args[2];
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {

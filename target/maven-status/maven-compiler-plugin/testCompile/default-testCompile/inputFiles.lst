@@ -3,4 +3,5 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/test/java/com/ecobrain/plugin/ai/TargetInventoryTunerTest.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/test/java/com/ecobrain/plugin/listener/BulkSellListenerTest.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/test/java/com/ecobrain/plugin/persistence/ItemMarketRepositoryTargetScalingTest.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/test/java/com/ecobrain/plugin/persistence/LeaderboardClearTest.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/test/java/com/ecobrain/plugin/service/AMMCalculatorTest.java

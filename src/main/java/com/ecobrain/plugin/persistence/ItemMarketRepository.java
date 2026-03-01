@@ -216,6 +216,22 @@ public class ItemMarketRepository {
     }
 
     /**
+     * 清空交易排行榜数据源（玩家交易统计表）。
+     * 仅影响排行榜展示，不影响市场物品库存/价格等核心状态。
+     *
+     * @return 被删除的行数（SQLite 可能返回 0 表示未知）
+     */
+    public int clearLeaderboard() {
+        String sql = "DELETE FROM ecobrain_player_transactions";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear leaderboard", e);
+        }
+    }
+
+    /**
      * 记录 AI 每次对单个物品的调参事件，用于审计与回放分析。
      */
     public void recordAiTuningEvent(String itemHash, String action, String reason,
