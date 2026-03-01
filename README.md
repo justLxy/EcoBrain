@@ -79,6 +79,17 @@ AI 决定涨价还是降价，并不是简单的随机数或者 `if-else` 条件
 
 2. **多层感知机 (MLP) 的矩阵计算**：
    AI 内部有一个包含隐藏层的人工神经网络。当 AI 拿到一个物品的三个特征（如 `[饱和度0.8, 流速-20, 通胀率0.05]`）后，这三个数字会经过网络中错综复杂的权重矩阵相乘（前向传播）。
+   
+   这三个特征在代码里的计算方式如下（也对应控制台日志 `单品状态 (State)` 的三个字段）：
+   - **饱和度 (Saturation)**：\(\text{saturation}=\frac{\text{current\_inventory}}{\max(1,\text{target\_inventory})}\)  
+     其中 `current_inventory` 是 vAMM 的**虚拟库存**（不是 `physical_stock` 真实库存）。
+   - **近期流速 (Recent Flow)**：\(\text{recentFlow}=\frac{\text{netFlow}}{\max(1,\text{scheduleMinutes})}\)，单位：**件/分钟**  
+     \(\text{netFlow}=\sum(\text{BUY.quantity})-\sum(\text{SELL.quantity})\)，统计窗口为最近 `ai.schedule-minutes` 分钟。  
+     约定：**正数 = 买压更强（玩家从系统买走更多）**；**负数 = 卖压更强（玩家卖给系统更多）**。
+   - **全局通胀率 (Global Inflation Rate)**：\(\text{globalInflation}=\frac{\text{cycleNetEmission}}{\max(1,\text{dynamicAov})}\)  
+     \(\text{cycleNetEmission}=\sum(\text{SELL.total\_price})-\sum(\text{BUY.total\_price})\)，统计窗口为最近 `ai.schedule-minutes` 分钟。  
+     `dynamicAov` 是过去 `ai.aov-window-hours` 小时的**平均订单总价**；若该窗口内没有任何交易，则回退为 `economy.ipo.base-price × 20`（避免除以 0）。
+   
    最终网络会吐出一个数组，包含三个具体的分数（也就是**预期回报值 Q-Value**）。
    例如网络输出：`[Q(涨价)=15.2, Q(降价)=-5.8, Q(不动)=2.1]`。这表示 AI 预测如果选择“涨价”，未来能获得的综合评分最高。于是 AI 就会毫不犹豫地选择执行涨价。
 

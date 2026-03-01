@@ -57,7 +57,7 @@ ai:
   # 【AI 调试日志开关】
   # true  = 每轮 AI 调参后输出可解释日志（状态/动作/奖励/具体调参）
   # false = 仅运行 AI，不打印调参明细
-  debug-log: false
+  debug-log: true
 
   # 【AI 调控周期（分钟）】
   # 每隔多少分钟跑一次 AI 调参。
