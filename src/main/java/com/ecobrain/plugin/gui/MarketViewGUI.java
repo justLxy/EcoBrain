@@ -25,6 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MarketViewGUI {
     public static final String TITLE_PREFIX = ChatColor.GOLD + "EcoBrain 市场大盘 - 第";
     public static final int BULK_BUTTON_SLOT = 45;
+    public static final int CATEGORY_BUTTON_SLOT = 46;
+    public static final int SORT_BUTTON_SLOT = 47;
     public static final int PREV_PAGE_SLOT = 52;
     public static final int NEXT_PAGE_SLOT = 53;
     public static final int INFO_SLOT = 49;
@@ -33,7 +35,90 @@ public class MarketViewGUI {
     private final AMMCalculator ammCalculator;
     private final ItemSerializer itemSerializer;
     private final ConcurrentHashMap<UUID, Session> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, FilterState> playerFilters = new ConcurrentHashMap<>();
     private volatile List<String> loreTemplate;
+
+    public enum ItemCategory {
+        ALL("全部物品", Material.NETHER_STAR),
+        ARMOR("装备类", Material.DIAMOND_CHESTPLATE),
+        WEAPONS("武器类", Material.DIAMOND_SWORD),
+        TOOLS("工具类", Material.IRON_PICKAXE),
+        BLOCKS("方块类", Material.GRASS_BLOCK),
+        RECORDS("唱片类", Material.MUSIC_DISC_13),
+        RESOURCES("资源类", Material.DIAMOND),
+        POTIONS("药水类", Material.POTION),
+        FOOD("食物类", Material.APPLE),
+        OTHERS("其他类", Material.STICK);
+
+        private final String displayName;
+        private final Material icon;
+
+        ItemCategory(String displayName, Material icon) {
+            this.displayName = displayName;
+            this.icon = icon;
+        }
+
+        public String getDisplayName() { return displayName; }
+        public Material getIcon() { return icon; }
+        
+        public ItemCategory next() {
+            return values()[(this.ordinal() + 1) % values().length];
+        }
+    }
+
+    public enum SortMode {
+        DEFAULT("默认排序", Material.COMPARATOR),
+        STOCK_ASC("库存升序", Material.STONE_SLAB),
+        STOCK_DESC("库存降序", Material.STONE);
+
+        private final String displayName;
+        private final Material icon;
+
+        SortMode(String displayName, Material icon) {
+            this.displayName = displayName;
+            this.icon = icon;
+        }
+
+        public String getDisplayName() { return displayName; }
+        public Material getIcon() { return icon; }
+        
+        public SortMode next() {
+            return values()[(this.ordinal() + 1) % values().length];
+        }
+    }
+
+    public static ItemCategory getCategory(Material material) {
+        String name = material.name();
+        
+        if (name.endsWith("_HELMET") || name.endsWith("_CHESTPLATE") || name.endsWith("_LEGGINGS") || name.endsWith("_BOOTS") || name.equals("SHIELD") || name.equals("ELYTRA")) {
+            return ItemCategory.ARMOR;
+        } else if (name.endsWith("_SWORD") || name.endsWith("_BOW") || name.equals("TRIDENT") || name.equals("CROSSBOW") || name.equals("MACE")) {
+            return ItemCategory.WEAPONS;
+        } else if (name.endsWith("_PICKAXE") || name.endsWith("_AXE") || name.endsWith("_SHOVEL") || name.endsWith("_HOE") || name.equals("FISHING_ROD") || name.equals("SHEARS") || name.equals("FLINT_AND_STEEL") || name.equals("BRUSH") || name.endsWith("COMPASS") || name.equals("LEAD") || name.equals("SPYGLASS") || name.equals("CLOCK")) {
+            return ItemCategory.TOOLS;
+        } else if (name.startsWith("MUSIC_DISC")) {
+            return ItemCategory.RECORDS;
+        } else if (name.contains("POTION") || name.equals("EXPERIENCE_BOTTLE") || name.equals("HONEY_BOTTLE") || name.equals("OMINOUS_BOTTLE")) {
+            return ItemCategory.POTIONS;
+        } else if (material.isEdible() || name.equals("MILK_BUCKET")) {
+            return ItemCategory.FOOD;
+        } else if (material.isBlock()) {
+            return ItemCategory.BLOCKS;
+        } else if (name.endsWith("_INGOT") || name.endsWith("_NUGGET") || name.startsWith("RAW_") || name.endsWith("_SHARD") || name.endsWith("_CRYSTAL") || name.equals("DIAMOND") || name.equals("EMERALD") || name.equals("COAL") || name.equals("CHARCOAL") || name.equals("REDSTONE") || name.equals("LAPIS_LAZULI") || name.equals("QUARTZ") || name.equals("NETHERITE_SCRAP") || name.equals("STICK") || name.equals("STRING") || name.equals("FEATHER") || name.equals("GUNPOWDER") || name.equals("LEATHER") || name.equals("BONE") || name.equals("PAPER") || name.equals("BOOK") || name.equals("SUGAR_CANE") || name.equals("SLIME_BALL") || name.equals("MAGMA_CREAM") || name.equals("BLAZE_ROD") || name.equals("ENDER_PEARL") || name.equals("ENDER_EYE") || name.equals("GHAST_TEAR") || name.equals("PHANTOM_MEMBRANE") || name.equals("SHULKER_SHELL") || name.equals("FLINT") || name.equals("CLAY_BALL") || name.equals("BRICK") || name.equals("NETHER_BRICK") || name.equals("RABBIT_HIDE") || name.equals("SCUTE") || name.equals("NAUTILUS_SHELL") || name.equals("HEART_OF_THE_SEA") || name.equals("NAME_TAG") || name.equals("SADDLE") || name.equals("HONEYCOMB") || name.endsWith("_DYE") || name.equals("INK_SAC") || name.equals("GLOW_INK_SAC") || name.equals("BONE_MEAL")) {
+            return ItemCategory.RESOURCES;
+        } else {
+            return ItemCategory.OTHERS;
+        }
+    }
+
+    public static class FilterState {
+        public ItemCategory category = ItemCategory.ALL;
+        public SortMode sortMode = SortMode.DEFAULT;
+    }
+
+    public FilterState getFilterState(UUID playerId) {
+        return playerFilters.computeIfAbsent(playerId, k -> new FilterState());
+    }
 
     public MarketViewGUI(AMMCalculator ammCalculator, ItemSerializer itemSerializer, PluginSettings.Gui gui) {
         this.ammCalculator = ammCalculator;
@@ -94,7 +179,7 @@ public class MarketViewGUI {
             item.setAmount(visibleAmount);
             inventory.setItem(slot, item);
         }
-        decorateBottomBar(inventory, safePage, maxPage);
+        decorateBottomBar(inventory, safePage, maxPage, player.getUniqueId());
         player.openInventory(inventory);
         sessions.put(player.getUniqueId(), new Session(safePage, maxPage, slotToHash));
     }
@@ -111,12 +196,70 @@ public class MarketViewGUI {
         sessions.remove(playerId);
     }
 
-    private void decorateBottomBar(Inventory inventory, int page, int maxPage) {
+    /**
+     * 根据玩家的筛选和排序状态处理记录。
+     * 此方法应在异步线程调用以避免反序列化造成的卡顿。
+     */
+    public List<ItemMarketRecord> filterAndSort(List<ItemMarketRecord> records, UUID playerId) {
+        FilterState state = getFilterState(playerId);
+        
+        List<ItemMarketRecord> result = new ArrayList<>();
+        for (ItemMarketRecord record : records) {
+            // 不在 GUI 中展示库存小于等于 0 的物品（它们已经断货）
+            if (record.getPhysicalStock() <= 0) {
+                continue;
+            }
+
+            boolean keep = true;
+            if (state.category != ItemCategory.ALL) {
+                try {
+                    ItemStack item = itemSerializer.deserializeFromBase64(record.getItemBase64());
+                    if (getCategory(item.getType()) != state.category) {
+                        keep = false;
+                    }
+                } catch (Exception e) {
+                    keep = false;
+                }
+            }
+            if (keep) {
+                result.add(record);
+            }
+        }
+
+        if (state.sortMode != SortMode.DEFAULT) {
+            result.sort((a, b) -> {
+                int cmp = Integer.compare(a.getPhysicalStock(), b.getPhysicalStock());
+                return state.sortMode == SortMode.STOCK_ASC ? cmp : -cmp;
+            });
+        }
+
+        return result;
+    }
+
+    private void decorateBottomBar(Inventory inventory, int page, int maxPage, UUID playerId) {
         for (int i = 45; i <= 53; i++) {
             inventory.setItem(i, namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " "));
         }
         inventory.setItem(BULK_BUTTON_SLOT, namedItem(Material.HOPPER, ChatColor.GREEN + "打开批量出售"));
         inventory.setItem(INFO_SLOT, namedItem(Material.BOOK, ChatColor.GOLD + "第 " + page + " / " + maxPage + " 页"));
+
+        FilterState filterState = getFilterState(playerId);
+        
+        ItemStack categoryItem = namedItem(filterState.category.getIcon(), ChatColor.AQUA + "筛选分类: " + filterState.category.getDisplayName());
+        ItemMeta catMeta = categoryItem.getItemMeta();
+        if (catMeta != null) {
+            catMeta.setLore(List.of(ChatColor.GRAY + "点击切换物品分类"));
+            categoryItem.setItemMeta(catMeta);
+        }
+        inventory.setItem(CATEGORY_BUTTON_SLOT, categoryItem);
+
+        ItemStack sortItem = namedItem(filterState.sortMode.getIcon(), ChatColor.AQUA + "排序方式: " + filterState.sortMode.getDisplayName());
+        ItemMeta sortMeta = sortItem.getItemMeta();
+        if (sortMeta != null) {
+            sortMeta.setLore(List.of(ChatColor.GRAY + "点击切换排序方式"));
+            sortItem.setItemMeta(sortMeta);
+        }
+        inventory.setItem(SORT_BUTTON_SLOT, sortItem);
 
         if (page > 1) {
             inventory.setItem(PREV_PAGE_SLOT, namedItem(Material.ARROW, ChatColor.YELLOW + "上一页"));

@@ -90,6 +90,18 @@ public class MarketViewListener implements Listener {
             bulkSellGUI.open(player);
             return;
         }
+        if (rawSlot == MarketViewGUI.CATEGORY_BUTTON_SLOT) {
+            MarketViewGUI.FilterState state = marketViewGUI.getFilterState(player.getUniqueId());
+            state.category = state.category.next();
+            openPageAsync(player, 1); // Reset to page 1 on filter change
+            return;
+        }
+        if (rawSlot == MarketViewGUI.SORT_BUTTON_SLOT) {
+            MarketViewGUI.FilterState state = marketViewGUI.getFilterState(player.getUniqueId());
+            state.sortMode = state.sortMode.next();
+            openPageAsync(player, 1); // Reset to page 1 on sort change
+            return;
+        }
         if (rawSlot == MarketViewGUI.PREV_PAGE_SLOT && session.page() > 1) {
             openPageAsync(player, session.page() - 1);
             return;
@@ -194,7 +206,8 @@ public class MarketViewListener implements Listener {
                         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
                             marketService.settleBuy(itemHash, record, quote, amount);
                             List<ItemMarketRecord> refreshed = repository.findAll();
-                            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, refreshed, session.page()));
+                            List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(refreshed, player.getUniqueId());
+                            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, session.page()));
                         });
                     } finally {
                         releaseLock(player);
@@ -241,7 +254,8 @@ public class MarketViewListener implements Listener {
     private void openPageAsync(Player player, int page) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             List<ItemMarketRecord> records = repository.findAll();
-            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, records, page));
+            List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page));
         });
     }
 

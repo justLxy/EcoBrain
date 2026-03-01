@@ -310,7 +310,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 List<ItemMarketRecord> records = repository.findAll();
-                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, records, page));
+                List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page));
             } finally {
                 releaseLock(player);
             }

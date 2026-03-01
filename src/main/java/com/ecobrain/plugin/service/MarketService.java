@@ -8,6 +8,8 @@ import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.safety.CircuitBreaker;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import org.bukkit.plugin.java.JavaPlugin;
+
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
