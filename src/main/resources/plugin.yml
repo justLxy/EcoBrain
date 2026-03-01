@@ -1,0 +1,17 @@
+name: EcoBrain
+main: com.ecobrain.plugin.EcoBrainPlugin
+version: 1.0.0-SNAPSHOT
+api-version: "1.20"
+author: EcoBrain
+description: P2S 动态市场经济插件
+softdepend:
+  - Vault
+commands:
+  ecobrain:
+    description: EcoBrain 主命令
+    usage: /ecobrain <sell|buy|bulk|market|reload|admin>
+    aliases: [eb]
+permissions:
+  ecobrain.admin:
+    description: EcoBrain 管理权限
+    default: op
