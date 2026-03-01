@@ -71,11 +71,18 @@ public class MarketService {
     }
 
     public TradeQuote quoteBuy(ItemMarketRecord record, int amount) {
-        if (!circuitBreaker.allowBuy(record)) {
-            throw new IllegalStateException("This item is temporarily unavailable for buy");
-        }
         if (record.getPhysicalStock() < amount) {
             throw new IllegalStateException("系统真实库存不足，无法出售！");
+        }
+        CircuitBreaker.BuyCheckResult check = circuitBreaker.checkBuy(record, amount);
+        if (check != CircuitBreaker.BuyCheckResult.ALLOW) {
+            String message = switch (check) {
+                case FROZEN_BY_RISK -> "该物品当前处于风控冻结状态，暂不可买入。";
+                case LOW_VIRTUAL_INVENTORY -> "该物品虚拟库存过低，暂不可买入。";
+                case POST_BUY_STOCK_PROTECTED -> "该数量会触发库存保护，暂不可买入。";
+                case ALLOW -> "系统繁忙，请稍后重试。";
+            };
+            throw new IllegalStateException(message);
         }
         TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);

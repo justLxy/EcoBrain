@@ -16,8 +16,10 @@ com/ecobrain/plugin/ai/ReplayBuffer$Transition.class
 com/ecobrain/plugin/service/AMMCalculator.class
 com/ecobrain/plugin/safety/CircuitBreaker.class
 com/ecobrain/plugin/ai/ReplayBuffer.class
+com/ecobrain/plugin/service/MarketService$1.class
 com/ecobrain/plugin/model/TradeResult.class
 com/ecobrain/plugin/service/EconomyService.class
+com/ecobrain/plugin/safety/CircuitBreaker$BuyCheckResult.class
 com/ecobrain/plugin/config/PluginSettings$AI.class
 com/ecobrain/plugin/persistence/DatabaseManager.class
 com/ecobrain/plugin/ai/NeuralNet$ForwardCache.class
@@ -27,6 +29,7 @@ com/ecobrain/plugin/listener/MarketViewListener.class
 com/ecobrain/plugin/ai/AIScheduler.class
 com/ecobrain/plugin/listener/BulkSellListener.class
 com/ecobrain/plugin/config/PluginSettings$Trade.class
+com/ecobrain/plugin/command/EcoBrainCommand$SellMode.class
 com/ecobrain/plugin/service/MarketService$IpoState.class
 com/ecobrain/plugin/gui/MarketViewGUI.class
 com/ecobrain/plugin/ai/StateCollector.class

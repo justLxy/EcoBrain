@@ -16,6 +16,7 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
@@ -35,6 +36,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * - admin ...
  */
 public class EcoBrainCommand implements CommandExecutor, TabCompleter {
+    private enum SellMode {
+        MAIN_HAND_ONLY,
+        INVENTORY_ALL_SIMILAR
+    }
+
     private final JavaPlugin plugin;
     private final ItemSerializer itemSerializer;
     private final ItemMarketRepository repository;
@@ -103,17 +109,34 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
      * 4) 再次异步持久化库存变更与成交记录
      */
     private boolean handleSell(Player player, String[] args) {
-        if (args.length < 2) {
-            player.sendMessage(ChatColor.YELLOW + "用法: /ecobrain sell <数量>");
-            return true;
-        }
-        int amount = parsePositiveInt(args[1]);
-        if (amount <= 0) {
-            player.sendMessage(ChatColor.RED + "数量必须是正整数。");
-            return true;
-        }
         ItemStack hand = player.getInventory().getItemInMainHand();
-        if (hand.getType() == Material.AIR || hand.getAmount() < amount) {
+        if (hand.getType() == Material.AIR) {
+            player.sendMessage(ChatColor.RED + "请先手持要出售的物品。");
+            return true;
+        }
+        ItemStack template = hand.clone();
+
+        SellMode mode = SellMode.MAIN_HAND_ONLY;
+        int amount;
+        if (args.length < 2) {
+            // /ecobrain sell -> 默认卖主手整组
+            amount = hand.getAmount();
+        } else if ("all".equalsIgnoreCase(args[1])) {
+            // /ecobrain sell all -> 卖背包内所有与主手同 NBT 的物品
+            mode = SellMode.INVENTORY_ALL_SIMILAR;
+            amount = countSimilarInStorage(player.getInventory(), template);
+        } else {
+            amount = parsePositiveInt(args[1]);
+            if (amount <= 0) {
+                player.sendMessage(ChatColor.RED + "数量必须是正整数，或使用 /ecobrain sell all。");
+                return true;
+            }
+        }
+        if (amount <= 0) {
+            player.sendMessage(ChatColor.RED + "没有可出售的同类物品。");
+            return true;
+        }
+        if (mode == SellMode.MAIN_HAND_ONLY && hand.getAmount() < amount) {
             player.sendMessage(ChatColor.RED + "主手物品数量不足。");
             return true;
         }
@@ -122,36 +145,51 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.RED + "你操作太快了，请稍后再试。");
             return true;
         }
-        ItemStack snapshot = hand.clone();
+        int finalAmount = amount;
+        SellMode finalMode = mode;
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                String base64 = itemSerializer.serializeToBase64(snapshot.asOne());
+                String base64 = itemSerializer.serializeToBase64(template.asOne());
                 String hash = itemSerializer.sha256(base64);
-                MarketService.IpoState ipoState = marketService.ensureIpoForSellAsync(hash, base64, amount).join();
+                MarketService.IpoState ipoState = marketService.ensureIpoForSellAsync(hash, base64, finalAmount).join();
                 ItemMarketRecord record = ipoState.record();
-                MarketService.TradeQuote quote = marketService.quoteSell(record, amount);
+                MarketService.TradeQuote quote = marketService.quoteSell(record, finalAmount);
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
-                        ItemStack latest = player.getInventory().getItemInMainHand();
-                        if (latest.getType() == Material.AIR || latest.getAmount() < amount || !latest.isSimilar(snapshot)) {
-                            player.sendMessage(ChatColor.RED + "你的主手物品已变化，交易已取消。");
-                            releaseLock(player);
-                            return;
+                        PlayerInventory inventory = player.getInventory();
+                        ItemStack[] storageBefore = cloneStorage(inventory.getStorageContents());
+
+                        if (finalMode == SellMode.MAIN_HAND_ONLY) {
+                            ItemStack latest = inventory.getItemInMainHand();
+                            if (latest.getType() == Material.AIR || latest.getAmount() < finalAmount || !latest.isSimilar(template)) {
+                                player.sendMessage(ChatColor.RED + "你的主手物品已变化，交易已取消。");
+                                releaseLock(player);
+                                return;
+                            }
+                            latest.setAmount(latest.getAmount() - finalAmount);
+                            inventory.setItemInMainHand(latest.getAmount() <= 0 ? new ItemStack(Material.AIR) : latest);
+                        } else {
+                            int available = countSimilarInStorage(inventory, template);
+                            if (available < finalAmount) {
+                                player.sendMessage(ChatColor.RED + "背包同类物品不足，交易已取消。");
+                                releaseLock(player);
+                                return;
+                            }
+                            removeSimilarFromStorage(inventory, template, finalAmount);
                         }
-                        latest.setAmount(latest.getAmount() - amount);
-                        player.getInventory().setItemInMainHand(latest.getAmount() <= 0 ? new ItemStack(Material.AIR) : latest);
+
                         if (!economyService.deposit(player, quote.totalPrice())) {
-                            latest.setAmount(latest.getAmount() + amount);
-                            player.getInventory().setItemInMainHand(latest);
+                            inventory.setStorageContents(storageBefore);
                             player.sendMessage(ChatColor.RED + "发放金币失败，交易已回滚。");
                             releaseLock(player);
                             return;
                         }
 
-                        player.sendMessage(ChatColor.GREEN + "出售成功，获得 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
+                        player.sendMessage(ChatColor.GREEN + "出售成功，共出售 " + finalAmount + " 个，获得 "
+                            + String.format("%.2f", quote.totalPrice()) + " 金币。");
                         Bukkit.getScheduler().runTaskAsynchronously(plugin,
-                            () -> marketService.settleSell(hash, record, quote, amount, ipoState.createdNow()));
+                            () -> marketService.settleSell(hash, record, quote, finalAmount, ipoState.createdNow()));
                     } finally {
                         releaseLock(player);
                     }
@@ -262,6 +300,44 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private int countSimilarInStorage(PlayerInventory inventory, ItemStack template) {
+        int total = 0;
+        for (ItemStack item : inventory.getStorageContents()) {
+            if (item != null && item.getType() != Material.AIR && item.isSimilar(template)) {
+                total += item.getAmount();
+            }
+        }
+        return total;
+    }
+
+    private void removeSimilarFromStorage(PlayerInventory inventory, ItemStack template, int amount) {
+        int remaining = amount;
+        ItemStack[] storage = inventory.getStorageContents();
+        for (int i = 0; i < storage.length && remaining > 0; i++) {
+            ItemStack item = storage[i];
+            if (item == null || item.getType() == Material.AIR || !item.isSimilar(template)) {
+                continue;
+            }
+            int take = Math.min(item.getAmount(), remaining);
+            item.setAmount(item.getAmount() - take);
+            remaining -= take;
+            if (item.getAmount() <= 0) {
+                storage[i] = null;
+            } else {
+                storage[i] = item;
+            }
+        }
+        inventory.setStorageContents(storage);
+    }
+
+    private ItemStack[] cloneStorage(ItemStack[] source) {
+        ItemStack[] copy = new ItemStack[source.length];
+        for (int i = 0; i < source.length; i++) {
+            copy[i] = source[i] == null ? null : source[i].clone();
+        }
+        return copy;
+    }
+
     /**
      * 主命令热更新入口：重新加载 config.yml 并下发到运行时组件。
      */
@@ -302,6 +378,9 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                                                 @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
             return List.of("sell", "buy", "market", "reload", "admin");
+        }
+        if (args.length == 2 && "sell".equalsIgnoreCase(args[0])) {
+            return List.of("all", "1", "16", "64");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
             return List.of("clear", "freeze", "unfreeze");

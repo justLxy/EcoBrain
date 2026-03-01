@@ -28,7 +28,7 @@ public class MarketViewGUI {
     public static final int PREV_PAGE_SLOT = 52;
     public static final int NEXT_PAGE_SLOT = 53;
     public static final int INFO_SLOT = 49;
-    private static final int PAGE_SIZE = 45;
+    private static final int PAGE_SIZE = 28;
 
     private final AMMCalculator ammCalculator;
     private final ItemSerializer itemSerializer;
@@ -70,12 +70,14 @@ public class MarketViewGUI {
         int safePage = Math.max(1, Math.min(page, maxPage));
         Inventory inventory = Bukkit.createInventory(player, 54, TITLE_PREFIX + safePage + "页");
         Map<Integer, String> slotToHash = new HashMap<>();
+        decorateBorder(inventory);
+        List<Integer> contentSlots = getContentSlots();
 
         int start = (safePage - 1) * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, allRecords.size());
         for (int i = start; i < end; i++) {
             ItemMarketRecord record = allRecords.get(i);
-            int slot = i - start;
+            int slot = contentSlots.get(i - start);
             slotToHash.put(slot, record.getItemHash());
             ItemStack item = new ItemStack(org.bukkit.Material.PAPER);
             try {
@@ -132,6 +134,34 @@ public class MarketViewGUI {
             stack.setItemMeta(meta);
         }
         return stack;
+    }
+
+    /**
+     * 将 6x9 菜单外圈全部铺满黑玻璃，形成视觉边框。
+     */
+    private void decorateBorder(Inventory inventory) {
+        ItemStack border = namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " ");
+        for (int slot = 0; slot < 54; slot++) {
+            if (isBorderSlot(slot)) {
+                inventory.setItem(slot, border.clone());
+            }
+        }
+    }
+
+    private List<Integer> getContentSlots() {
+        List<Integer> slots = new ArrayList<>();
+        for (int slot = 0; slot < 54; slot++) {
+            if (!isBorderSlot(slot)) {
+                slots.add(slot);
+            }
+        }
+        return slots;
+    }
+
+    private boolean isBorderSlot(int slot) {
+        int row = slot / 9;
+        int col = slot % 9;
+        return row == 0 || row == 5 || col == 0 || col == 8;
     }
 
     private List<String> renderLore(ItemMarketRecord record) {

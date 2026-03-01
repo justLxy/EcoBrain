@@ -13,6 +13,13 @@ import java.time.LocalDate;
  * - 库存极度枯竭时冻结
  */
 public class CircuitBreaker {
+    public enum BuyCheckResult {
+        ALLOW,
+        FROZEN_BY_RISK,
+        LOW_VIRTUAL_INVENTORY,
+        POST_BUY_STOCK_PROTECTED
+    }
+
     private final ItemMarketRepository repository;
     private final AMMCalculator ammCalculator;
     private volatile double dailyLimit;
@@ -49,14 +56,38 @@ public class CircuitBreaker {
      * - 若已被冻结，禁止买入
      * - 若库存过低，直接拒绝买入（但不写永久冻结，避免无法通过卖出恢复）
      */
-    public boolean allowBuy(ItemMarketRecord record) {
-        if (repository.isFrozen(record.getItemHash())) {
-            return false;
+    public BuyCheckResult checkBuy(ItemMarketRecord record, int amount) {
+        if (isFrozenAfterDailyRefresh(record)) {
+            return BuyCheckResult.FROZEN_BY_RISK;
         }
         if (record.getCurrentInventory() <= criticalInventory) {
-            return false;
+            return BuyCheckResult.LOW_VIRTUAL_INVENTORY;
         }
-        return checkDailyPriceLimit(record);
+        // 预检查：若本次买入会把真实库存打到熔断线及以下，则拒绝交易。
+        int postPhysicalStock = record.getPhysicalStock() - amount;
+        if (postPhysicalStock <= criticalInventory) {
+            return BuyCheckResult.POST_BUY_STOCK_PROTECTED;
+        }
+        if (!checkDailyPriceLimit(record)) {
+            return BuyCheckResult.FROZEN_BY_RISK;
+        }
+        return BuyCheckResult.ALLOW;
+    }
+
+    public boolean allowBuy(ItemMarketRecord record, int amount) {
+        return checkBuy(record, amount) == BuyCheckResult.ALLOW;
+    }
+
+    /**
+     * 先执行“跨天刷新”，再判断冻结状态。
+     * 这样当日期切换后，旧的冻结标记会在 upsertAndGetDayOpenPrice 内被自动清除，
+     * 避免出现“库存已经恢复但一直买不了”的永久冻结现象。
+     */
+    private boolean isFrozenAfterDailyRefresh(ItemMarketRecord record) {
+        double currentPrice = ammCalculator.calculateCurrentPrice(record);
+        String dayKey = LocalDate.now().toString();
+        repository.upsertAndGetDayOpenPrice(record.getItemHash(), currentPrice, dayKey);
+        return repository.isFrozen(record.getItemHash());
     }
 
     /**
