@@ -31,7 +31,9 @@ public class AMMCalculator {
             totalRevenue += record.getBasePrice()
                 * Math.pow((double) record.getTargetInventory() / Math.max(1, stepInventory), record.getKFactor());
         }
-        return new TradeResult(Math.max(0.0D, totalRevenue), initialInventory + amount);
+        // 卖出时系统扣除 5% 的手续费（即玩家只能获得 95% 的滑点总价）
+        // 这就导致了天然的买卖差价（Spread），防止玩家利用原价无损来回倒腾（无风险套利）
+        return new TradeResult(Math.max(0.0D, totalRevenue * 0.95D), initialInventory + amount);
     }
 
     /**

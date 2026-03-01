@@ -24,7 +24,7 @@ class AMMCalculatorTest {
 
         TradeResult result = calculator.calculateSellTotal(record, 2);
 
-        double expected = 5000.0D * (50.0D / 51.0D) + 5000.0D * (50.0D / 52.0D);
+        double expected = (5000.0D * (50.0D / 51.0D) + 5000.0D * (50.0D / 52.0D)) * 0.95D;
         Assertions.assertEquals(expected, result.getTotalPrice(), 1.0e-6);
         Assertions.assertEquals(52, result.getPostInventory());
     }

@@ -154,7 +154,9 @@ public class AIScheduler {
             AiAction action = resolveAction(actionIndex);
 
             // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
-            boolean isGlut = item.getCurrentInventory() > item.getTargetInventory() * 5;
+            // 修正判定：只有当 target_inventory 足够大时，才用 5 倍。如果 target 只有几十，很容易超过。
+            // 我们同时加入一个绝对差值的下限，防止刚上市的小物品瞬间爆仓。
+            boolean isGlut = item.getCurrentInventory() > Math.max(item.getTargetInventory() * 5, 500);
             boolean isScarcity = fullSettings != null && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
 
             if (isGlut) {
@@ -224,7 +226,7 @@ public class AIScheduler {
         if (isGlut) {
             surgeType = SurgeType.GLUT_CRASH;
             newBasePrice = Math.max(0.01, oldBase * 0.5D);
-            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+            newK = clamp(oldK - 0.2D, settings.kMin(), settings.kMax());
         } else if (isScarcity) {
             surgeType = SurgeType.SCARCITY_SURGE;
             newBasePrice = oldBase * 2.0D;
