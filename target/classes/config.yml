@@ -162,10 +162,13 @@ gui:
     # {physical_stock}    -> 真实物理库存
     # {virtual_inventory} -> 虚拟库存（AMM 内部池）
     item-lore:
-      - "&7Hash: &f{hash_short}"
-      - "&7实时价格: &e{price}"
-      - "&7系统物理库存: &b{physical_stock}"
-      - "&8(内部虚拟池: {virtual_inventory})"
-      - "&a左键: 购买 1 个"
-      - "&aShift+左键: 购买 1 组"
-      - "&c管理员右键: 删除物品档案"
+      - ""
+      - '&7&m+------------------------------+'
+      - ''
+      - '        &b价格: &f{price}￥'
+      - '        &b零售价格: &f{retailprice}￥'
+      - '        &b库存: &b{physical_stock}'
+      - '        &f&l单击 &7购买 1 个'
+      - '        &f&lShift+单击 &7购买 1 组'
+      - ''
+      - '&7&m+------------------------------+'
