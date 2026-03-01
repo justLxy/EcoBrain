@@ -37,7 +37,7 @@ trade:
   # 防止玩家超高速重复触发 buy/sell，降低并发与刷操作风险。
   # 1000 = 1秒，1500 = 1.5秒
   # 推荐：800 ~ 2500
-  cooldown-ms: 500
+  cooldown-ms: 1000
 
 circuit-breaker:
   # 【单日最大涨跌阈值】
@@ -46,7 +46,7 @@ circuit-breaker:
   # 调小：更保守，更容易触发保护。
   # 调大：更激进，允许更大波动。
     # 推荐：0.20 ~ 0.50
-  daily-limit-percent: 2
+  daily-limit-percent: 0.4
 
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
@@ -57,14 +57,12 @@ ai:
   # 【AI 调试日志开关】
   # true  = 每轮 AI 调参后输出可解释日志（状态/动作/奖励/具体调参）
   # false = 仅运行 AI，不打印调参明细
-  debug-log: true
+  debug-log: false
 
   # 【AI 调控周期（分钟）】
   # 每隔多少分钟跑一次 AI 调参。
   # 调小：反应更快，但可能更抖；调大：更平滑，但反应慢。
-  # 【开荒期/快速学习期推荐】：1 ~ 5 分钟
-  # 【稳定后正式服推荐】：30 ~ 60 分钟
-  schedule-minutes: 30
+  schedule-minutes: 60
 
   # 【每轮训练批次】
   # DQN 每次训练抽取多少条“经验”。
@@ -83,13 +81,69 @@ ai:
   # 【建议设置】：
   # - 如果你的服是快节奏的肝帝服，物价波动快，设为 12 或者 24
   # - 如果你的服是慢节奏的养老服，希望物价极度平稳，设为 48 或者 72
-  aov-window-hours: 24
+  aov-window-hours: 48
 
   # 【过期商品自动清理天数】
   # 如果一个物品在系统中库存极低（<=1个），并且超过 X 天没有任何人买卖，
   # AI 会判定它为玩家恶搞生成的“滞销垃圾”（如一把命名为"哈哈"的破木剑），并自动将其从商店数据库中抹除。
   # 推荐：7
   garbage-collection-days: 7
+
+  target-inventory:
+    # 【动态理想库存开关】
+    # true  = 按 item_hash 为每个物品动态计算 target_inventory，并写回数据库
+    # false = 使用 IPO 建档时写入的 target_inventory（现有行为）
+    enabled: true
+
+    # 【动态目标库存范围硬边界】
+    # 无论模型如何计算，最终 target_inventory 都会被夹在这个区间内
+    # 推荐：min 5~50, max 100~600
+    min: 5
+    max: 640
+
+    # 【价格 -> 目标库存：基线公式】
+    # baseTarget = price-scale / (base_price ^ price-alpha)
+    # 直觉：
+    # - base_price 越大（高价值物品）=> baseTarget 越小（系统不需要囤太多）
+    # - base_price 越小（低价值物品）=> baseTarget 越大（更像“耗材池”）
+    # 推荐：
+    # - price-alpha: 0.3 ~ 0.8（越大，高低价值差异越明显）
+    # - price-scale: 1000 ~ 20000（决定总体库存量级）
+    price-scale: 6000.0
+    price-alpha: 0.55
+
+    # 【成交量加成】
+    # 最近窗口成交额越大，适度抬高 target，减少稀缺时价格抖动
+    # 0 = 关闭；0.05~0.50 为常用区间
+    volume-boost: 0.22
+
+    # 【流速加成（买压/卖压）】
+    # buy 压强（净买入）越大，抬高 target；净卖入越大，压低 target
+    # 0 = 关闭；0.05~0.30 为常用区间
+    flow-boost: 0.12
+
+    # 【极端状态修正倍率】
+    # 稀缺：供给临界 & 虚拟库存紧张 & 近期有卖给系统证据 -> 目标库存乘以 scarcity-multiplier
+    # 爆仓：current_inventory > max(target*5, 500) -> 目标库存乘以 glut-multiplier
+    # 推荐：scarcity 1.05~1.80, glut 0.40~0.95
+    scarcity-multiplier: 1.35
+    glut-multiplier: 0.70
+
+    # 【单周期变化限幅（防瞬间跳价）】
+    # target 每个周期最多变化的百分比，例如 0.10 = 最多 ±10%
+    # 推荐：0.05 ~ 0.25
+    # 注意：写回数据库时会同比例缩放虚拟库存 current_inventory，尽量保持 (Target/Current) 不变，避免非交易性跳价
+    per-cycle-max-change-percent: 0.10
+
+    # 【单周期变化绝对上限】
+    # target 每个周期最多变化多少个库存（与百分比限幅取更严格的那个）
+    # 推荐：10 ~ 80
+    max-delta: 40
+
+    # 【是否要求最近窗口有成交才调 target】
+    # true  = 避免对“无人交易”的物品盲调导致漂移（更稳）
+    # false = 即使无成交也会按价格基线缓慢收敛（更主动）
+    require-recent-trade: true
 
   reward:
     # 奖励函数：
@@ -102,17 +156,17 @@ ai:
     # 成交量权重（正向）
     # 如果不太看重疯狂交易，只希望保持正常的流通，给个较低的基准分即可
     # 推荐：0.3 ~ 0.8
-    w1-transaction-volume: 0.8
+    w1-transaction-volume: 0.4
 
     # 通胀惩罚权重（负向）
     # 极度厌恶通货膨胀，一旦系统发钱过多，AI就会重拳出击打压价格
     # 推荐：1.5 ~ 2.5
-    w2-inflation-delta: 1.5
+    w2-inflation-delta: 2.2
 
     # 库存失衡惩罚权重（负向）
     # 不希望玩家大规模爆仓或买空，逼迫 AI 频繁寻找平衡点
     # 推荐：1.2 ~ 2.0
-    w3-inventory-imbalance: 1.2
+    w3-inventory-imbalance: 1.8
 
   tuning:
     # 【最高基础价格上限（防刷钱安全锁）】

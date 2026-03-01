@@ -23,8 +23,11 @@ com/ecobrain/plugin/ai/NeuralNet$State.class
 com/ecobrain/plugin/ai/AIScheduler$TuningResult.class
 com/ecobrain/plugin/ai/StateCollector.class
 com/ecobrain/plugin/ai/NeuralNet.class
+com/ecobrain/plugin/ai/TargetInventoryTuner.class
 com/ecobrain/plugin/ai/AIScheduler$AiAction.class
 com/ecobrain/plugin/model/ItemMarketRecord.class
+com/ecobrain/plugin/ai/TargetInventoryTuner$Decision.class
+com/ecobrain/plugin/config/PluginSettings$TargetInventory.class
 com/ecobrain/plugin/EcoBrainPlugin.class
 com/ecobrain/plugin/config/PluginSettings$Economy.class
 com/ecobrain/plugin/config/PluginSettings$CircuitBreaker.class

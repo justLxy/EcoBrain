@@ -36,6 +36,7 @@ public class AIScheduler {
     private final DqnTrainer dqnTrainer;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
+    private final TargetInventoryTuner targetInventoryTuner = new TargetInventoryTuner();
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
 
@@ -220,6 +221,47 @@ public class AIScheduler {
                     reward,
                     now
                 );
+            }
+
+            // --- 动态 target_inventory（按 item_hash） ---
+            // 重要：本周期 reward / state 已用旧 target 计算；这里写回数据库只影响下个周期
+            PluginSettings.TargetInventory targetCfg = settings.targetInventory();
+            if (targetCfg != null && targetCfg.enabled()) {
+                // 若本轮 base/k 已调参，用更新后的 base_price 作为动态 target 的参考（更贴近实际价值层级）
+                ItemMarketRecord effectiveItem = item;
+                if (result != null && result.newBasePrice() > 0.0D && result.newKFactor() > 0.0D) {
+                    effectiveItem = item.withTuning(result.newBasePrice(), result.newKFactor());
+                }
+
+                targetInventoryTuner.tune(
+                    effectiveItem,
+                    targetCfg,
+                    hasRecentTrade,
+                    recentVolume,
+                    recentFlow,
+                    dynamicAov,
+                    isGlut,
+                    isScarcity
+                ).ifPresent(decision -> {
+                    repository.updateTargetInventoryWithProportionalCurrentScaling(
+                        item.getItemHash(),
+                        decision.oldTargetInventory(),
+                        item.getCurrentInventory(),
+                        decision.appliedTargetInventory()
+                    );
+                    if (settings.debugLog()) {
+                        String hashShort = item.getItemHash().substring(0, Math.min(8, item.getItemHash().length()));
+                        plugin.getLogger().info(String.format(
+                            "[EcoBrain-AI] -> target_inventory 更新: [%s] (Hash: %s) %d -> %d (suggest=%d, reason=%s)",
+                            readableItemName(item),
+                            hashShort,
+                            decision.oldTargetInventory(),
+                            decision.appliedTargetInventory(),
+                            decision.suggestedTargetInventory(),
+                            decision.reason()
+                        ));
+                    }
+                });
             }
             
             // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉

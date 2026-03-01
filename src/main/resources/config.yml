@@ -89,6 +89,62 @@ ai:
   # 推荐：7
   garbage-collection-days: 7
 
+  target-inventory:
+    # 【动态理想库存开关】
+    # true  = 按 item_hash 为每个物品动态计算 target_inventory，并写回数据库
+    # false = 使用 IPO 建档时写入的 target_inventory（现有行为）
+    enabled: true
+
+    # 【动态目标库存范围硬边界】
+    # 无论模型如何计算，最终 target_inventory 都会被夹在这个区间内
+    # 推荐：min 5~50, max 100~600
+    min: 5
+    max: 640
+
+    # 【价格 -> 目标库存：基线公式】
+    # baseTarget = price-scale / (base_price ^ price-alpha)
+    # 直觉：
+    # - base_price 越大（高价值物品）=> baseTarget 越小（系统不需要囤太多）
+    # - base_price 越小（低价值物品）=> baseTarget 越大（更像“耗材池”）
+    # 推荐：
+    # - price-alpha: 0.3 ~ 0.8（越大，高低价值差异越明显）
+    # - price-scale: 1000 ~ 20000（决定总体库存量级）
+    price-scale: 6000.0
+    price-alpha: 0.55
+
+    # 【成交量加成】
+    # 最近窗口成交额越大，适度抬高 target，减少稀缺时价格抖动
+    # 0 = 关闭；0.05~0.50 为常用区间
+    volume-boost: 0.22
+
+    # 【流速加成（买压/卖压）】
+    # buy 压强（净买入）越大，抬高 target；净卖入越大，压低 target
+    # 0 = 关闭；0.05~0.30 为常用区间
+    flow-boost: 0.12
+
+    # 【极端状态修正倍率】
+    # 稀缺：供给临界 & 虚拟库存紧张 & 近期有卖给系统证据 -> 目标库存乘以 scarcity-multiplier
+    # 爆仓：current_inventory > max(target*5, 500) -> 目标库存乘以 glut-multiplier
+    # 推荐：scarcity 1.05~1.80, glut 0.40~0.95
+    scarcity-multiplier: 1.35
+    glut-multiplier: 0.70
+
+    # 【单周期变化限幅（防瞬间跳价）】
+    # target 每个周期最多变化的百分比，例如 0.10 = 最多 ±10%
+    # 推荐：0.05 ~ 0.25
+    # 注意：写回数据库时会同比例缩放虚拟库存 current_inventory，尽量保持 (Target/Current) 不变，避免非交易性跳价
+    per-cycle-max-change-percent: 0.10
+
+    # 【单周期变化绝对上限】
+    # target 每个周期最多变化多少个库存（与百分比限幅取更严格的那个）
+    # 推荐：10 ~ 80
+    max-delta: 40
+
+    # 【是否要求最近窗口有成交才调 target】
+    # true  = 避免对“无人交易”的物品盲调导致漂移（更稳）
+    # false = 即使无成交也会按价格基线缓慢收敛（更主动）
+    require-recent-trade: true
+
   reward:
     # 奖励函数：
     # R = (w1 * TransactionVolume) - (w2 * InflationDelta) - (w3 * InventoryImbalance)

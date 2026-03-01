@@ -5,6 +5,7 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/NeuralNet.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/ReplayBuffer.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/StateCollector.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/TargetInventoryTuner.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/command/AdminCommand.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/command/EcoBrainCommand.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/config/PluginSettings.java

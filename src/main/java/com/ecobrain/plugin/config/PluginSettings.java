@@ -80,7 +80,21 @@ public class PluginSettings {
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
             c.getDouble("ai.tuning.k-max", 3.0D),
-            c.getDouble("ai.tuning.max-base-price", 5000000.0D)
+            c.getDouble("ai.tuning.max-base-price", 5000000.0D),
+            new TargetInventory(
+                c.getBoolean("ai.target-inventory.enabled", false),
+                c.getInt("ai.target-inventory.min", 20),
+                c.getInt("ai.target-inventory.max", 400),
+                c.getDouble("ai.target-inventory.price-scale", 6000.0D),
+                c.getDouble("ai.target-inventory.price-alpha", 0.55D),
+                c.getDouble("ai.target-inventory.volume-boost", 0.22D),
+                c.getDouble("ai.target-inventory.flow-boost", 0.12D),
+                c.getDouble("ai.target-inventory.scarcity-multiplier", 1.35D),
+                c.getDouble("ai.target-inventory.glut-multiplier", 0.70D),
+                c.getDouble("ai.target-inventory.per-cycle-max-change-percent", 0.10D),
+                c.getInt("ai.target-inventory.max-delta", 40),
+                c.getBoolean("ai.target-inventory.require-recent-trade", true)
+            )
         );
 
         Gui gui = new Gui(
@@ -113,7 +127,23 @@ public class PluginSettings {
                      int garbageCollectionDays,
                      double rewardW1, double rewardW2, double rewardW3,
                      double actionUpPriceRate, double actionDownPriceRate,
-                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax, double maxBasePrice) {}
+                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax, double maxBasePrice,
+                     TargetInventory targetInventory) {}
+
+    public record TargetInventory(
+        boolean enabled,
+        int min,
+        int max,
+        double priceScale,
+        double priceAlpha,
+        double volumeBoost,
+        double flowBoost,
+        double scarcityMultiplier,
+        double glutMultiplier,
+        double perCycleMaxChangePercent,
+        int maxDelta,
+        boolean requireRecentTrade
+    ) {}
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,
                       Material cancelButtonMaterial, String cancelButtonName, List<String> cancelButtonLore,

@@ -113,6 +113,50 @@ public class ItemMarketRepository {
         }
     }
 
+    /**
+     * 动态调整 target_inventory 时，必须按比例缩放 current_inventory（虚拟库存池）以避免价格非交易性跳变。
+     * 仅调整 target_inventory 与 current_inventory，绝不修改 physical_stock。
+     *
+     * 说明：current/target 为整数，严格恒等在数学上不一定可行；这里使用四舍五入将误差压到最小。
+     */
+    public void updateTargetInventoryWithProportionalCurrentScaling(String itemHash,
+                                                                    int oldTargetInventory,
+                                                                    int oldCurrentInventory,
+                                                                    int newTargetInventory) {
+        int safeOldTarget = Math.max(1, oldTargetInventory);
+        int safeOldCurrent = Math.max(1, oldCurrentInventory);
+        int safeNewTarget = Math.max(1, newTargetInventory);
+
+        int newCurrent = Math.max(1,
+            (int) Math.round((double) safeOldCurrent * (double) safeNewTarget / (double) safeOldTarget));
+
+        String sql = "UPDATE ecobrain_items SET target_inventory = ?, current_inventory = ? WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection()) {
+            boolean prevAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setInt(1, safeNewTarget);
+                statement.setInt(2, newCurrent);
+                statement.setString(3, itemHash);
+                statement.executeUpdate();
+                connection.commit();
+            } catch (SQLException e) {
+                try {
+                    connection.rollback();
+                } catch (SQLException ignored) {
+                }
+                throw e;
+            } finally {
+                try {
+                    connection.setAutoCommit(prevAutoCommit);
+                } catch (SQLException ignored) {
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to update target inventory with proportional current scaling", e);
+        }
+    }
+
     public void deleteByHash(String itemHash) {
         String deleteStatsSql = "DELETE FROM ecobrain_trade_stats WHERE item_hash = ?";
         String deleteRiskSql = "DELETE FROM ecobrain_risk WHERE item_hash = ?";
