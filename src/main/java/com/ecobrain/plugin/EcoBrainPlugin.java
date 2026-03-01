@@ -4,7 +4,6 @@ import com.ecobrain.plugin.ai.AIScheduler;
 import com.ecobrain.plugin.ai.DqnTrainer;
 import com.ecobrain.plugin.ai.NeuralNet;
 import com.ecobrain.plugin.ai.ReplayBuffer;
-import com.ecobrain.plugin.ai.StateCollector;
 import com.ecobrain.plugin.command.AdminCommand;
 import com.ecobrain.plugin.command.EcoBrainCommand;
 import com.ecobrain.plugin.config.PluginSettings;
