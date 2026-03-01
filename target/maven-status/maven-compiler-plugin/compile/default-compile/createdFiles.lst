@@ -2,11 +2,13 @@ com/ecobrain/plugin/service/MarketService.class
 com/ecobrain/plugin/persistence/ItemMarketRepository.class
 com/ecobrain/plugin/listener/BulkSellListener$AggregatedItem.class
 com/ecobrain/plugin/config/PluginSettings.class
+com/ecobrain/plugin/ai/AiModelStore.class
 com/ecobrain/plugin/gui/MarketViewGUI$ItemCategory.class
 com/ecobrain/plugin/ai/AIScheduler$SurgeType.class
 com/ecobrain/plugin/config/PluginSettings$Gui.class
 com/ecobrain/plugin/model/PlayerStat.class
 com/ecobrain/plugin/model/TradeType.class
+com/ecobrain/plugin/ai/AIScheduler$ItemNameInfo.class
 com/ecobrain/plugin/service/MarketService$1.class
 com/ecobrain/plugin/service/EconomyService.class
 com/ecobrain/plugin/safety/CircuitBreaker$BuyCheckResult.class
@@ -17,6 +19,7 @@ com/ecobrain/plugin/gui/BulkSellGUI.class
 com/ecobrain/plugin/command/EcoBrainCommand.class
 com/ecobrain/plugin/listener/BulkSellListener.class
 com/ecobrain/plugin/gui/MarketViewGUI.class
+com/ecobrain/plugin/ai/NeuralNet$State.class
 com/ecobrain/plugin/ai/AIScheduler$TuningResult.class
 com/ecobrain/plugin/ai/StateCollector.class
 com/ecobrain/plugin/ai/NeuralNet.class
@@ -29,6 +32,7 @@ com/ecobrain/plugin/gui/BulkSellGUI$Session.class
 com/ecobrain/plugin/ai/DqnTrainer.class
 com/ecobrain/plugin/serialization/ItemSerializer.class
 com/ecobrain/plugin/gui/MarketViewGUI$Session.class
+com/ecobrain/plugin/ai/AiModelStore$Snapshot.class
 com/ecobrain/plugin/command/AdminCommand.class
 com/ecobrain/plugin/ai/ReplayBuffer$Transition.class
 com/ecobrain/plugin/service/AMMCalculator.class

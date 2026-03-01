@@ -1,18 +1,32 @@
 package com.ecobrain.plugin.ai;
 
+import java.io.Serial;
+import java.io.Serializable;
 import java.util.Random;
 
 /**
  * 纯 Java 手写 MLP：
- * Input(6) -> Hidden1(16, ReLU) -> Hidden2(8, ReLU) -> Output(2)
+ * Input(3) -> Hidden1(16, ReLU) -> Hidden2(8, ReLU) -> Output(3)
  */
-public class NeuralNet {
+public class NeuralNet implements Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+
     private final double[][] w1;
     private final double[] b1;
     private final double[][] w2;
     private final double[] b2;
     private final double[][] w3;
     private final double[] b3;
+
+    public record State(
+        double[][] w1, double[] b1,
+        double[][] w2, double[] b2,
+        double[][] w3, double[] b3
+    ) implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+    }
 
     public NeuralNet(int inputSize, int hidden1, int hidden2, int outputSize, long seed) {
         Random random = new Random(seed);
@@ -22,6 +36,32 @@ public class NeuralNet {
         this.b2 = new double[hidden2];
         this.w3 = randomMatrix(hidden2, outputSize, random);
         this.b3 = new double[outputSize];
+    }
+
+    private NeuralNet(double[][] w1, double[] b1,
+                      double[][] w2, double[] b2,
+                      double[][] w3, double[] b3) {
+        this.w1 = deepCopy2d(w1);
+        this.b1 = deepCopy1d(b1);
+        this.w2 = deepCopy2d(w2);
+        this.b2 = deepCopy1d(b2);
+        this.w3 = deepCopy2d(w3);
+        this.b3 = deepCopy1d(b3);
+    }
+
+    public State exportState() {
+        return new State(
+            deepCopy2d(w1), deepCopy1d(b1),
+            deepCopy2d(w2), deepCopy1d(b2),
+            deepCopy2d(w3), deepCopy1d(b3)
+        );
+    }
+
+    public static NeuralNet fromState(State state) {
+        if (state == null) {
+            throw new IllegalArgumentException("state is null");
+        }
+        return new NeuralNet(state.w1(), state.b1(), state.w2(), state.b2(), state.w3(), state.b3());
     }
 
     public double[] predict(double[] input) {
@@ -120,6 +160,24 @@ public class NeuralNet {
             }
         }
         return matrix;
+    }
+
+    private static double[] deepCopy1d(double[] src) {
+        if (src == null) {
+            return new double[0];
+        }
+        return src.clone();
+    }
+
+    private static double[][] deepCopy2d(double[][] src) {
+        if (src == null) {
+            return new double[0][0];
+        }
+        double[][] out = new double[src.length][];
+        for (int i = 0; i < src.length; i++) {
+            out[i] = src[i] == null ? new double[0] : src[i].clone();
+        }
+        return out;
     }
 
     private record ForwardCache(double[] hidden1Pre, double[] hidden1, double[] hidden2Pre, double[] hidden2,

@@ -171,6 +171,61 @@ public class ItemMarketRepository {
         }
     }
 
+    /**
+     * 记录 AI 每次对单个物品的调参事件，用于审计与回放分析。
+     */
+    public void recordAiTuningEvent(String itemHash, String action, String reason,
+                                    double oldBasePrice, double newBasePrice,
+                                    double oldKFactor, double newKFactor,
+                                    double reward, long createdAtMillis) {
+        String sql = """
+            INSERT INTO ecobrain_ai_tuning_events(
+                item_hash, action, reason,
+                old_base_price, new_base_price,
+                old_k_factor, new_k_factor,
+                reward, created_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setString(2, action);
+            statement.setString(3, reason == null ? "" : reason);
+            statement.setDouble(4, oldBasePrice);
+            statement.setDouble(5, newBasePrice);
+            statement.setDouble(6, oldKFactor);
+            statement.setDouble(7, newKFactor);
+            statement.setDouble(8, reward);
+            statement.setLong(9, createdAtMillis);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record AI tuning event", e);
+        }
+    }
+
+    /**
+     * 判断一段时间内是否发生过“卖给系统”(SELL) 事件，用作供给证据。
+     */
+    public boolean hasSellSince(String itemHash, long sinceMillis) {
+        String sql = """
+            SELECT 1
+            FROM ecobrain_trade_stats
+            WHERE item_hash = ? AND trade_type = 'SELL' AND created_at >= ?
+            LIMIT 1
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setLong(2, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query sell evidence", e);
+        }
+    }
+
     public List<com.ecobrain.plugin.model.PlayerStat> getTopPlayers(TradeType tradeType, int limit) {
         String sql = """
             SELECT player_name, SUM(money_amount) as total_money

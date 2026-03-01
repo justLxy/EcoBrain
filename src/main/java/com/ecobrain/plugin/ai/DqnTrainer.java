@@ -35,6 +35,17 @@ public class DqnTrainer {
         this.actionSize = Math.max(2, actionSize);
     }
 
+    public double getEpsilon() {
+        return epsilon;
+    }
+
+    public void setEpsilon(double epsilon) {
+        if (Double.isNaN(epsilon) || Double.isInfinite(epsilon)) {
+            return;
+        }
+        this.epsilon = Math.max(0.0D, Math.min(1.0D, epsilon));
+    }
+
     public int chooseAction(double[] state) {
         if (random.nextDouble() < epsilon) {
             return random.nextInt(actionSize);

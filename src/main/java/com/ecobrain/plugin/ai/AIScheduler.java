@@ -51,6 +51,7 @@ public class AIScheduler {
         }
     }
     private final java.util.concurrent.ConcurrentHashMap<String, AgentMemory> memoryBank = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long SELL_EVIDENCE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
 
     public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
                        ItemMarketRepository repository, PluginSettings.AI settings, ItemSerializer itemSerializer) {
@@ -162,47 +163,51 @@ public class AIScheduler {
             // 修正判定：只有当 target_inventory 足够大时，才用 5 倍。如果 target 只有几十，很容易超过。
             // 我们同时加入一个绝对差值的下限，防止刚上市的小物品瞬间爆仓。
             boolean isGlut = item.getCurrentInventory() > Math.max(item.getTargetInventory() * 5, 500);
-            
-            // 如果 config 里设为了 0，那么只有当库存真实 <= 0 时，才会被判定为稀缺并触发暴涨。
-            boolean isScarcity = false;
-            if (fullSettings != null) {
-                // 只有当物理库存 <= criticalInventory 时，才算稀缺。
-                // 如果是新上市的物品（物理库存为0，并且虚拟库存还没被买空），不视为系统被买空导致的稀缺。
-                // 这个判断条件是：如果物理库存为0，但当前虚拟库存（current_inventory）比初始目标库存还要大或者差不多，说明这个物品只是刚出来没人卖，或者是被砸盘了导致虚拟库存很高，但物理库存刚好被人买空，这都不是真正的“系统级稀缺”（长期供不应求）。只有当虚拟库存也被买空（远小于目标库存）时，才算。
-                boolean isIpoInitialState = item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory() && item.getCurrentInventory() >= item.getTargetInventory() * 0.9;
-                
-                // 增加判断：如果这根本就不是没人卖或者被砸盘，就是一直触发暴涨然后又因为长期无人交易触发了【滞销保护】。
-                // 比较稳妥的做法是：如果连一次买卖都没发生过，也就是 current_inventory 完全等于 target_inventory，而且又没有物理库存（物理库存一直没人填补），那么也不该暴涨。
-                boolean isZeroTrading = item.getCurrentInventory() == item.getTargetInventory() && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
-                
-                // 彻底解决无人卖的问题：如果在过去几个小时内，从来没有任何人卖出（导致库存增加），而且现在物理库存又是0，那么就是纯粹的无人发掘，而不是被买空。
-                // 由于我们很难在这里查长期卖出记录，我们可以简单判断：如果物品当前库存（虚拟库存）从来没有小于过目标库存，且一直为0，那么这就是没人卖过，或者买卖绝对平衡。
-                // 考虑到我们是为了防止暴涨到几百万，加入最大价格限制最有效。
-                
-                // 更进一步：如果是物理库存为0的 IPO 初始状态，或者虚拟库存完全没减少过，都不判定为稀缺
-                if (!isIpoInitialState && !isZeroTrading) {
-                    isScarcity = item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory();
-                }
-                
-                // 终极保护：如果基础价格已经达到或者即将超过上限，禁止判定为稀缺
-                if (item.getBasePrice() >= settings.maxBasePrice() * 0.99) {
-                    isScarcity = false;
-                }
-            }
+
+            int criticalInventory = fullSettings != null ? fullSettings.circuitBreaker().criticalInventory() : 0;
+            boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
+            boolean hasSellEvidence = repository.hasSellSince(item.getItemHash(), now - SELL_EVIDENCE_WINDOW_MS);
+            boolean isVirtualTight = item.getCurrentInventory() <= Math.max(1, (int) Math.floor(item.getTargetInventory() * 0.4D));
+            boolean isScarcity = isSupplyCritical && isVirtualTight && hasSellEvidence && item.getBasePrice() < settings.maxBasePrice() * 0.99;
+
+            double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
+            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
+
+            String tuningReason = "AI_ACTION";
 
             if (isGlut) {
                 action = AiAction.DOWN_PRICE;
                 actionIndex = 0; // DOWN_PRICE index
+                tuningReason = "FORCED_GLUT_CRASH";
             } else if (isScarcity) {
                 action = AiAction.UP_PRICE;
                 actionIndex = 1; // UP_PRICE index
+                tuningReason = "FORCED_SCARCITY";
+            } else if (noSupplyDecay) {
+                action = AiAction.HOLD;
+                actionIndex = 2; // HOLD index
+                tuningReason = "NO_SUPPLY_DECAY";
             }
 
             // 5. 记忆本次决策，留给下个周期作为 A_{t-1} 评估
             memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
 
             // 6. 应用最终动作
-            TuningResult result = applyActionToItem(item, action, isGlut, isScarcity);
+            TuningResult result = applyActionToItem(item, action, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
+
+            if (result != null) {
+                repository.recordAiTuningEvent(
+                    item.getItemHash(),
+                    action.name(),
+                    tuningReason,
+                    result.oldBasePrice(),
+                    result.newBasePrice(),
+                    result.oldKFactor(),
+                    result.newKFactor(),
+                    reward,
+                    now
+                );
+            }
             
             // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉
             // 如果 oldBasePrice 接近 maxBasePrice，并且 newBasePrice 也接近 maxBasePrice，说明其实没涨
@@ -281,8 +286,9 @@ public class AIScheduler {
         dqnTrainer.trainBatch(settings.trainBatchSize());
     }
 
-    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action, boolean isGlut, boolean isScarcity) {
-        if (action == AiAction.HOLD && !isGlut && !isScarcity) {
+    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action, boolean isGlut, boolean isScarcity,
+                                          boolean noSupplyDecay, double ipoAnchorBase) {
+        if (action == AiAction.HOLD && !isGlut && !isScarcity && !noSupplyDecay) {
             return null;
         }
 
@@ -294,12 +300,28 @@ public class AIScheduler {
 
         if (isGlut) {
             surgeType = SurgeType.GLUT_CRASH;
-            newBasePrice = Math.max(0.01, oldBase * 0.8D);
-            newK = clamp(oldK - 0.1D, settings.kMin(), settings.kMax());
+            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+            double priceRate = settings.actionDownPriceRate();
+            newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+            newBasePrice = Math.max(0.01, newBasePrice);
+            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
         } else if (isScarcity) {
             surgeType = SurgeType.SCARCITY_SURGE;
-            newBasePrice = Math.min(settings.maxBasePrice(), oldBase * 1.5D);
-            newK = clamp(oldK + 0.1D, settings.kMin(), settings.kMax());
+            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+            double priceRate = settings.actionUpPriceRate();
+            newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+            newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
+            newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
+        } else if (noSupplyDecay) {
+            // 0 库存且缺乏“卖给系统”的供给证据时，不允许价格空涨；将 base 缓慢回归 IPO 锚点以防刷钱。
+            if (oldBase <= ipoAnchorBase) {
+                return null;
+            }
+            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+            double targetBase = Math.max(ipoAnchorBase, oldBase * 0.95D);
+            newBasePrice = clamp(targetBase, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+            newBasePrice = Math.max(ipoAnchorBase, Math.min(newBasePrice, settings.maxBasePrice()));
+            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
         } else {
             if (action == AiAction.UP_PRICE) {
                 double priceRate = settings.actionUpPriceRate();
@@ -321,18 +343,26 @@ public class AIScheduler {
         // 这种东西如果不处理，就会永远卡在 GUI 里。
         // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
         // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
-        if (item.getPhysicalStock() <= 1) {
+        ItemNameInfo nameInfo = itemNameInfo(item);
+        if (item.getPhysicalStock() <= 1 && nameInfo.hasCustomDisplayName()) {
             long lastTrade = repository.queryLastTradeTime(item.getItemHash());
+            if (lastTrade <= 0L) {
+                // 无任何交易记录时，绝不自动销毁（避免正常物品被误删）
+                // 注意：trade_stats 会记录 BUY/SELL，IPO 建档本身不写入该表
+                // 因此 lastTrade==0 代表从未发生过任何买卖
+                // -> 需要管理员手动清理
+                // （这里不返回 null，仍允许本轮调参落库）
+            }
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
-            if (daysSinceLastTrade >= settings.garbageCollectionDays()) {
+            if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
                 repository.deleteByHash(item.getItemHash());
-                return new TuningResult(readableItemName(item) + " [过期销毁]", item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
+                return new TuningResult(nameInfo.name() + " [过期销毁]", item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
             }
         }
 
         repository.updateTuning(item.getItemHash(), newBasePrice, newK);
         return new TuningResult(
-            readableItemName(item),
+            nameInfo.name(),
             item.getItemHash(),
             oldBase,
             newBasePrice,
@@ -364,19 +394,25 @@ public class AIScheduler {
      * 2) 否则显示 Material 名称
      * 3) 失败时回退 Unknown Item
      */
-    private String readableItemName(ItemMarketRecord record) {
+    private record ItemNameInfo(String name, boolean hasCustomDisplayName) {}
+
+    private ItemNameInfo itemNameInfo(ItemMarketRecord record) {
         try {
             ItemStack itemStack = itemSerializer.deserializeFromBase64(record.getItemBase64());
             ItemMeta meta = itemStack.getItemMeta();
             if (meta != null && meta.hasDisplayName()) {
-                return ChatColor.stripColor(meta.getDisplayName());
+                return new ItemNameInfo(ChatColor.stripColor(meta.getDisplayName()), true);
             }
             if (itemStack.getType() != null) {
-                return itemStack.getType().name();
+                return new ItemNameInfo(itemStack.getType().name(), false);
             }
         } catch (Exception ignored) {
         }
-        return "Unknown Item";
+        return new ItemNameInfo("Unknown Item", false);
+    }
+
+    private String readableItemName(ItemMarketRecord record) {
+        return itemNameInfo(record).name();
     }
 
     private void logExplainableCycle() {
