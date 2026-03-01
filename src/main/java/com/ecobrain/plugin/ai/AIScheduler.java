@@ -93,11 +93,23 @@ public class AIScheduler {
         long since = now - windowMs;
         double windowMinutes = Math.max(1, settings.scheduleMinutes());
 
-        double globalInflationRate = estimateGlobalInflation(items);
+        long oneDaySince = now - 24L * 60L * 60L * 1000L;
+        double dynamicAov = repository.queryDynamicAovSince(oneDaySince);
+        if (dynamicAov <= 0.0D) {
+            if (fullSettings != null) {
+                dynamicAov = fullSettings.economy().ipoBasePrice() * 10.0D;
+            } else {
+                dynamicAov = 50000.0D;
+            }
+        }
+
+        double cycleNetEmission = repository.queryNetEmissionSince(since);
+        double globalInflationRate = cycleNetEmission / dynamicAov;
 
         if (settings.debugLog()) {
             plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告开始 =====");
-            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局特征提取 -> global_inflation=%.6f", globalInflationRate));
+            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局宏观状态: 24h动态客单价(基准) = %.2f 金币", dynamicAov));
+            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局特征提取 -> 周期净印发=%.2f, global_inflation=%.6f", cycleNetEmission, globalInflationRate));
         }
 
         for (ItemMarketRecord item : items) {
@@ -212,21 +224,6 @@ public class AIScheduler {
             newK,
             surgeType
         );
-    }
-
-    private double estimateGlobalInflation(List<ItemMarketRecord> items) {
-        if (items.isEmpty()) {
-            return 0.0D;
-        }
-        double totalCurrentPrice = 0.0D;
-        for (ItemMarketRecord item : items) {
-            int currentInventory = Math.max(1, item.getCurrentInventory());
-            totalCurrentPrice += item.getBasePrice()
-                * Math.pow((double) item.getTargetInventory() / currentInventory, item.getKFactor());
-        }
-        double averagePrice = totalCurrentPrice / items.size();
-        double baseline = Math.max(1.0D, settings.inflationBaselinePrice());
-        return Math.max(0.0D, (averagePrice - baseline) / baseline);
     }
 
     private double clamp(double value, double min, double max) {

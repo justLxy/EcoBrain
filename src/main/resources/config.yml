@@ -124,12 +124,6 @@ ai:
     k-min: 0.2
     k-max: 3.0
 
-    # 【通胀基准价】
-    # 用于计算 InflationDelta 的参考价格。
-    # 若你的服整体物价水平较高，可适当调大这个值。
-    # 推荐：与 economy.ipo.base-price 同量级
-    inflation-baseline-price: 100.0
-
 gui:
   bulk-sell:
     # 支持颜色代码：&0~&f, &l, &o, &n 等

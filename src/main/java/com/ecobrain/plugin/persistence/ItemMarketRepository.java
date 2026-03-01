@@ -165,6 +165,52 @@ public class ItemMarketRepository {
     }
 
     /**
+     * 查询时间窗口内的平均订单总价 (Dynamic AOV)
+     */
+    public double queryDynamicAovSince(long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(SUM(total_price) / NULLIF(COUNT(*), 0), 0) AS aov
+            FROM ecobrain_trade_stats
+            WHERE created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("aov") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query dynamic AOV", e);
+        }
+    }
+
+    /**
+     * 查询时间窗口内的净印发金币总额 (SELL: 印发, BUY: 回收)
+     */
+    public double queryNetEmissionSince(long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN trade_type = 'SELL' THEN total_price
+                    WHEN trade_type = 'BUY' THEN -total_price
+                    ELSE 0
+                END
+            ), 0) AS net_emission
+            FROM ecobrain_trade_stats
+            WHERE created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("net_emission") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query net emission", e);
+        }
+    }
+
+    /**
      * 查询单个物品在时间窗口内的成交额。
      */
     public double queryItemVolumeSince(String itemHash, long sinceMillis) {
