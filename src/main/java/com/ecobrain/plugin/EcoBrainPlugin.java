@@ -85,6 +85,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         NeuralNet neuralNet = new NeuralNet(3, 16, 8, 3, System.currentTimeMillis());
         DqnTrainer dqnTrainer = new DqnTrainer(neuralNet, new ReplayBuffer(settings.ai().replayBufferCapacity()), 3);
         this.aiScheduler = new AIScheduler(this, dqnTrainer, repository, settings.ai(), itemSerializer);
+        this.aiScheduler.setFullSettings(settings);
         this.aiScheduler.start();
 
         getLogger().info("EcoBrain 已启用。");
@@ -121,6 +122,6 @@ public class EcoBrainPlugin extends JavaPlugin {
         bulkSellGUI.applySettings(settings.gui());
         marketViewGUI.applySettings(settings.gui());
         ecoBrainCommand.updateCooldown(settings.trade().cooldownMs());
-        aiScheduler.updateSettingsAndRestart(settings.ai());
+        aiScheduler.updateSettingsAndRestart(settings.ai(), settings);
     }
 }

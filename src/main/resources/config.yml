@@ -51,7 +51,7 @@ circuit-breaker:
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
   # 推荐：1 ~ 5
-  critical-inventory: 2
+  critical-inventory: 1
 
 ai:
   # 【AI 调试日志开关】

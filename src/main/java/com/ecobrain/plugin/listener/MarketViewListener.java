@@ -127,9 +127,24 @@ public class MarketViewListener implements Listener {
                 ItemStack template = itemSerializer.deserializeFromBase64(record.getItemBase64());
                 int amount = shiftClick ? Math.max(1, template.getMaxStackSize()) : 1;
 
-                if (record.getPhysicalStock() < amount) {
+                int requestedAmount = amount;
+                int currentPhysical = record.getPhysicalStock();
+                int criticalLimit = plugin.getConfig().getInt("circuit-breaker.critical-inventory", 2);
+
+                // 1. 如果当前库存【已经】触发熔断，直接一票否决
+                if (currentPhysical <= criticalLimit) {
                     Bukkit.getScheduler().runTask(plugin, () -> {
-                        player.sendMessage(ChatColor.RED + "系统真实库存不足，无法出售！");
+                        player.sendMessage(ChatColor.RED + "系统展柜保护机制：该物品库存已达红线，暂停出售！");
+                        releaseLock(player);
+                    });
+                    return;
+                }
+
+                // 2. 如果购买后，会导致库存跌破熔断线（穿仓）
+                if (currentPhysical - requestedAmount < criticalLimit) {
+                    int maxCanBuy = currentPhysical - criticalLimit;
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        player.sendMessage(ChatColor.RED + "购买失败！系统最多只能再向您出售 " + maxCanBuy + " 个该物品。");
                         releaseLock(player);
                     });
                     return;

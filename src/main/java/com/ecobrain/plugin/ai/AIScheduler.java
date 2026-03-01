@@ -26,12 +26,20 @@ public class AIScheduler {
         HOLD
     }
 
+    private enum SurgeType {
+        NONE,
+        SCARCITY_SURGE,
+        GLUT_CRASH
+    }
+
     private final JavaPlugin plugin;
     private final DqnTrainer dqnTrainer;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
+
+    private volatile PluginSettings fullSettings;
 
     public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
                        ItemMarketRepository repository, PluginSettings.AI settings, ItemSerializer itemSerializer) {
@@ -40,6 +48,10 @@ public class AIScheduler {
         this.repository = repository;
         this.settings = settings;
         this.itemSerializer = itemSerializer;
+    }
+
+    public void setFullSettings(PluginSettings fullSettings) {
+        this.fullSettings = fullSettings;
     }
 
     public void start() {
@@ -57,8 +69,9 @@ public class AIScheduler {
     /**
      * 热更新 AI 参数并重启调度周期。
      */
-    public void updateSettingsAndRestart(PluginSettings.AI settings) {
+    public void updateSettingsAndRestart(PluginSettings.AI settings, PluginSettings fullSettings) {
         this.settings = settings;
+        this.fullSettings = fullSettings;
         stop();
         start();
     }
@@ -81,16 +94,23 @@ public class AIScheduler {
         double windowMinutes = Math.max(1, settings.scheduleMinutes());
 
         double globalInflationRate = estimateGlobalInflation(items);
-        List<ItemCycleLog> cycleLogs = new ArrayList<>();
+
+        if (settings.debugLog()) {
+            plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告开始 =====");
+            plugin.getLogger().info(String.format("[EcoBrain-AI] 全局特征提取 -> global_inflation=%.6f", globalInflationRate));
+        }
 
         for (ItemMarketRecord item : items) {
+            // 1. State 的颗粒度降维：单品特征
             double saturation = calculateSaturation(item);
             double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
             double[] state = new double[] {saturation, recentFlow, globalInflationRate};
 
+            // 2. Action 的独立计算
             int actionIndex = dqnTrainer.chooseAction(state);
             AiAction action = resolveAction(actionIndex);
 
+            // 3. 计算专属 Reward
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
             double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
                 / (double) Math.max(1, item.getTargetInventory());
@@ -98,47 +118,90 @@ public class AIScheduler {
                 - (settings.rewardW2() * Math.abs(globalInflationRate))
                 - (settings.rewardW3() * imbalance);
 
+            // 4. 应用独立调控结果
             TuningResult result = applyActionToItem(item, action);
+            
+            // 5. 获取 nextState 并存入经验池
             ItemMarketRecord latest = repository.findByHash(item.getItemHash()).orElse(item);
             double nextSaturation = calculateSaturation(latest);
             double[] nextState = new double[] {nextSaturation, recentFlow, globalInflationRate};
 
             dqnTrainer.observe(state, actionIndex, reward, nextState);
 
+            // 6. 日志输出规范：在 for 循环内部，分别打印每个物品独有的调控信息
             if (settings.debugLog()) {
-                cycleLogs.add(new ItemCycleLog(
-                    readableItemName(item),
-                    item.getItemHash(),
-                    saturation,
-                    recentFlow,
-                    globalInflationRate,
-                    action,
-                    reward,
-                    result
-                ));
+                String hashShort = item.getItemHash().substring(0, Math.min(8, item.getItemHash().length()));
+                String itemName = readableItemName(item);
+                
+                plugin.getLogger().info(String.format("[EcoBrain-AI] -> 调控目标: [%s] (Hash: %s)", itemName, hashShort));
+                plugin.getLogger().info(String.format("    - 单品状态 (State) : 饱和度(current/target)=%.4f, 近期流速=%.4f, 全局通胀=%.6f", saturation, recentFlow, globalInflationRate));
+                plugin.getLogger().info(String.format("    - 独立决策 (Action): %s", action.name()));
+                plugin.getLogger().info(String.format("    - 专属反馈 (Reward): %.6f", reward));
+                
+                if (result == null) {
+                    plugin.getLogger().info("    - 调控结果 (Result): HOLD，参数不变");
+                } else {
+                    String surgeTag = "";
+                    if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                        surgeTag = " [稀缺暴涨!]";
+                    } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                        surgeTag = " [爆仓暴跌!]";
+                    }
+                    plugin.getLogger().info(String.format(
+                        "    - 调控结果 (Result): base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]%s",
+                        result.oldBasePrice(),
+                        result.newBasePrice(),
+                        result.oldKFactor(),
+                        result.newKFactor(),
+                        surgeTag
+                    ));
+                }
             }
         }
 
-        dqnTrainer.trainBatch(settings.trainBatchSize());
-
         if (settings.debugLog()) {
-            logExplainableCycle(cycleLogs);
+            plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告结束 =====");
         }
+
+        // 统一在周期末尾训练本批次收集的独立经验
+        dqnTrainer.trainBatch(settings.trainBatchSize());
     }
 
     private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action) {
         if (action == AiAction.HOLD) {
             return null;
         }
-        double priceRate = action == AiAction.UP_PRICE ? settings.actionUpPriceRate() : settings.actionDownPriceRate();
-        double kDelta = action == AiAction.UP_PRICE ? settings.kDelta() : -settings.kDelta();
-        double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+
+        SurgeType surgeType = SurgeType.NONE;
         double oldBase = item.getBasePrice();
         double oldK = item.getKFactor();
-        double newBasePrice = clamp(item.getBasePrice() * priceRate,
-            item.getBasePrice() * (1.0D - limit),
-            item.getBasePrice() * (1.0D + limit));
-        double newK = clamp(item.getKFactor() + kDelta, settings.kMin(), settings.kMax());
+        double newBasePrice = oldBase;
+        double newK = oldK;
+
+        if (action == AiAction.UP_PRICE) {
+            if (fullSettings != null && item.getPhysicalStock() <= fullSettings.circuitBreaker().criticalInventory()) {
+                surgeType = SurgeType.SCARCITY_SURGE;
+                newBasePrice = oldBase * 2.0D;
+                newK = clamp(oldK + 0.2D, settings.kMin(), settings.kMax());
+            } else {
+                double priceRate = settings.actionUpPriceRate();
+                double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+                newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+                newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
+            }
+        } else if (action == AiAction.DOWN_PRICE) {
+            if (item.getCurrentInventory() > item.getTargetInventory() * 5) {
+                surgeType = SurgeType.GLUT_CRASH;
+                newBasePrice = oldBase * 0.5D;
+                newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+            } else {
+                double priceRate = settings.actionDownPriceRate();
+                double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+                newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
+                newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+            }
+        }
+
         repository.updateTuning(item.getItemHash(), newBasePrice, newK);
         return new TuningResult(
             readableItemName(item),
@@ -146,7 +209,8 @@ public class AIScheduler {
             oldBase,
             newBasePrice,
             oldK,
-            newK
+            newK,
+            surgeType
         );
     }
 
@@ -202,43 +266,10 @@ public class AIScheduler {
         return "Unknown Item";
     }
 
-    private void logExplainableCycle(List<ItemCycleLog> logs) {
-        plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告开始 =====");
-        if (logs.isEmpty()) {
-            plugin.getLogger().info("[EcoBrain-AI] 本轮无活跃商品。");
-            plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告结束 =====");
-            return;
-        }
-        for (ItemCycleLog log : logs) {
-            String hashShort = log.hash().substring(0, Math.min(8, log.hash().length()));
-            plugin.getLogger().info(String.format(
-                "[EcoBrain-AI] Item: [%s] (Hash: %s...)",
-                log.itemName(), hashShort
-            ));
-            plugin.getLogger().info(String.format(
-                "[EcoBrain-AI] State: saturation=%.4f, recent_flow=%.4f, global_inflation=%.6f",
-                log.saturation(), log.recentFlow(), log.globalInflationRate()
-            ));
-            plugin.getLogger().info(String.format("[EcoBrain-AI] Action: %s", log.action().name()));
-            plugin.getLogger().info(String.format("[EcoBrain-AI] Reward: %.6f", log.reward()));
-            if (log.result() == null) {
-                plugin.getLogger().info("[EcoBrain-AI] Result: HOLD，本轮参数不变。");
-            } else {
-                plugin.getLogger().info(String.format(
-                    "[EcoBrain-AI] Result: base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]",
-                    log.result().oldBasePrice(),
-                    log.result().newBasePrice(),
-                    log.result().oldKFactor(),
-                    log.result().newKFactor()
-                ));
-            }
-        }
-        plugin.getLogger().info("[EcoBrain-AI] ===== 调控周期报告结束 =====");
+    private void logExplainableCycle() {
+        // Obsolete, replaced by inline logging in tick()
     }
 
-    private record ItemCycleLog(String itemName, String hash, double saturation, double recentFlow,
-                                double globalInflationRate, AiAction action, double reward,
-                                TuningResult result) {}
     private record TuningResult(String itemName, String hash, double oldBasePrice, double newBasePrice,
-                                double oldKFactor, double newKFactor) {}
+                                double oldKFactor, double newKFactor, SurgeType surgeType) {}
 }

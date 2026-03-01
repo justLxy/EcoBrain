@@ -63,9 +63,10 @@ public class CircuitBreaker {
         if (record.getCurrentInventory() <= criticalInventory) {
             return BuyCheckResult.LOW_VIRTUAL_INVENTORY;
         }
-        // 预检查：若本次买入会把真实库存打到熔断线及以下，则拒绝交易。
+        // 预检查：若本次买入会导致真实库存跌破熔断线，则拒绝交易。
+        // （允许精准停靠在熔断线上，以便触发 AI 的 Scarcity Surge）
         int postPhysicalStock = record.getPhysicalStock() - amount;
-        if (postPhysicalStock <= criticalInventory) {
+        if (postPhysicalStock < criticalInventory) {
             return BuyCheckResult.POST_BUY_STOCK_PROTECTED;
         }
         if (!checkDailyPriceLimit(record)) {

@@ -240,8 +240,21 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
                 ItemMarketRecord record = optionalRecord.get();
-                if (record.getPhysicalStock() < amount) {
-                    player.sendMessage(ChatColor.RED + "系统真实库存不足，无法出售！");
+                int requestedAmount = amount;
+                int currentPhysical = record.getPhysicalStock();
+                int criticalLimit = plugin.getConfig().getInt("circuit-breaker.critical-inventory", 2);
+
+                // 1. 如果当前库存【已经】触发熔断，直接一票否决
+                if (currentPhysical <= criticalLimit) {
+                    player.sendMessage(ChatColor.RED + "系统展柜保护机制：该物品库存已达红线，暂停出售！");
+                    releaseLock(player);
+                    return;
+                }
+
+                // 2. 如果购买后，会导致库存跌破熔断线（穿仓）
+                if (currentPhysical - requestedAmount < criticalLimit) {
+                    int maxCanBuy = currentPhysical - criticalLimit; // 计算出最多能买多少个
+                    player.sendMessage(ChatColor.RED + "购买失败！系统最多只能再向您出售 " + maxCanBuy + " 个该物品。");
                     releaseLock(player);
                     return;
                 }
