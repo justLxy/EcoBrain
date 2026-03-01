@@ -89,6 +89,22 @@
                                     <include>org.xerial:sqlite-jdbc</include>
                                 </includes>
                             </artifactSet>
+                            <!-- 移除不需要的平台架构文件，大幅减小体积 -->
+                            <filters>
+                                <filter>
+                                    <artifact>org.xerial:sqlite-jdbc</artifact>
+                                    <excludes>
+                                        <!-- 保留 Mac/aarch64 给你的 M3 本地开发用，保留 Linux x86_64 给正式服使用 -->
+                                        <exclude>org/sqlite/native/Mac/x86_64/**</exclude>
+                                        <exclude>org/sqlite/native/Windows/**</exclude>
+                                        <exclude>org/sqlite/native/Linux/x86/**</exclude>
+                                        <exclude>org/sqlite/native/Linux/arm**/**</exclude>
+                                        <exclude>org/sqlite/native/Linux/ppc64/**</exclude>
+                                        <exclude>org/sqlite/native/FreeBSD/**</exclude>
+                                        <exclude>org/sqlite/native/OpenBSD/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
