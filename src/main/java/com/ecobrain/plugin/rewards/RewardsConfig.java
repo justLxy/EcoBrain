@@ -5,9 +5,9 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 public final class RewardsConfig {
@@ -39,19 +39,10 @@ public final class RewardsConfig {
         String backName = Objects.toString(c.getString("gui.back.name", "&e返回"), "&e返回");
 
         List<RewardDefinition> rewards = new ArrayList<>();
-        List<?> list = c.getList("rewards", Collections.emptyList());
-        for (Object o : list) {
-            if (!(o instanceof java.util.Map<?, ?> map)) {
-                continue;
-            }
-            YamlConfiguration tmp = new YamlConfiguration();
-            for (var e : map.entrySet()) {
-                if (e.getKey() != null) {
-                    tmp.set(e.getKey().toString(), e.getValue());
-                }
-            }
-            String id = tmp.getString("id");
-            String typeStr = tmp.getString("type");
+        List<Map<?, ?>> mapList = c.getMapList("rewards");
+        for (Map<?, ?> map : mapList) {
+            String id = asString(map.get("id"));
+            String typeStr = asString(map.get("type"));
             if (id == null || id.isBlank() || typeStr == null || typeStr.isBlank()) {
                 continue;
             }
@@ -61,15 +52,20 @@ public final class RewardsConfig {
             } catch (IllegalArgumentException ex) {
                 continue;
             }
-            double target = tmp.getDouble("target", 0.0D);
+            double target = asDouble(map.get("target"), 0.0D);
             if (target <= 0.0D) {
                 continue;
             }
-            ConfigurationSection display = tmp.getConfigurationSection("display");
-            Material mat = parseMaterial(display == null ? null : display.getString("material"), Material.PAPER);
-            String name = display == null ? "&f奖励" : Objects.toString(display.getString("name", "&f奖励"), "&f奖励");
-            List<String> lore = display == null ? List.of() : display.getStringList("lore");
-            List<String> commands = tmp.getStringList("commands");
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> display = (map.get("display") instanceof Map<?, ?> dm)
+                ? (Map<String, Object>) dm
+                : null;
+            Material mat = parseMaterial(display == null ? null : asString(display.get("material")), Material.PAPER);
+            String name = display == null ? "&f奖励" : Objects.toString(asString(display.get("name")), "&f奖励");
+            List<String> lore = toStringList(display == null ? null : display.get("lore"));
+            List<String> commands = toStringList(map.get("commands"));
+
             rewards.add(new RewardDefinition(id, type, target, mat, name, lore, commands));
         }
 
@@ -91,6 +87,44 @@ public final class RewardsConfig {
         }
         Material m = Material.matchMaterial(input.trim());
         return m == null ? fallback : m;
+    }
+
+    private static String asString(Object o) {
+        if (o == null) {
+            return null;
+        }
+        String s = o.toString();
+        return s.isBlank() ? null : s;
+    }
+
+    private static double asDouble(Object o, double fallback) {
+        if (o == null) {
+            return fallback;
+        }
+        if (o instanceof Number n) {
+            return n.doubleValue();
+        }
+        try {
+            return Double.parseDouble(o.toString().trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static List<String> toStringList(Object o) {
+        if (o == null) {
+            return List.of();
+        }
+        if (o instanceof List<?> list) {
+            List<String> out = new ArrayList<>();
+            for (Object v : list) {
+                if (v != null) {
+                    out.add(v.toString());
+                }
+            }
+            return out;
+        }
+        return List.of(o.toString());
     }
 }
 
