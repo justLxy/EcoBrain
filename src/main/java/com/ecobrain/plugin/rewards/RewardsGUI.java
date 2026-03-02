@@ -28,8 +28,6 @@ public final class RewardsGUI {
 
     public enum Category {
         ALL("全部", Material.NETHER_STAR),
-        SELL_QTY("卖出数量", Material.CHEST),
-        BUY_QTY("买入数量", Material.BARREL),
         SELL_MONEY("卖出金额", Material.EMERALD),
         BUY_MONEY("买入金额", Material.DIAMOND);
 
@@ -52,8 +50,6 @@ public final class RewardsGUI {
         public boolean matches(RewardType type) {
             return switch (this) {
                 case ALL -> true;
-                case SELL_QTY -> type == RewardType.SELL_QTY;
-                case BUY_QTY -> type == RewardType.BUY_QTY;
                 case SELL_MONEY -> type == RewardType.SELL_MONEY;
                 case BUY_MONEY -> type == RewardType.BUY_MONEY;
             };
@@ -61,10 +57,8 @@ public final class RewardsGUI {
     }
 
     public static final int CAT_ALL_SLOT = 0;
-    public static final int CAT_SELL_QTY_SLOT = 2;
-    public static final int CAT_BUY_QTY_SLOT = 3;
-    public static final int CAT_SELL_MONEY_SLOT = 5;
-    public static final int CAT_BUY_MONEY_SLOT = 6;
+    public static final int CAT_SELL_MONEY_SLOT = 3;
+    public static final int CAT_BUY_MONEY_SLOT = 5;
 
     public record Session(int size, String title, Category category, int page, int maxPage, Map<Integer, String> rewardIdAtSlot) {}
 
@@ -135,8 +129,6 @@ public final class RewardsGUI {
 
             // category tabs (top row)
             placeCategoryTab(inv, CAT_ALL_SLOT, Category.ALL, category);
-            placeCategoryTab(inv, CAT_SELL_QTY_SLOT, Category.SELL_QTY, category);
-            placeCategoryTab(inv, CAT_BUY_QTY_SLOT, Category.BUY_QTY, category);
             placeCategoryTab(inv, CAT_SELL_MONEY_SLOT, Category.SELL_MONEY, category);
             placeCategoryTab(inv, CAT_BUY_MONEY_SLOT, Category.BUY_MONEY, category);
 
@@ -221,8 +213,6 @@ public final class RewardsGUI {
     public Optional<Category> categoryAtSlot(int slot) {
         return switch (slot) {
             case CAT_ALL_SLOT -> Optional.of(Category.ALL);
-            case CAT_SELL_QTY_SLOT -> Optional.of(Category.SELL_QTY);
-            case CAT_BUY_QTY_SLOT -> Optional.of(Category.BUY_QTY);
             case CAT_SELL_MONEY_SLOT -> Optional.of(Category.SELL_MONEY);
             case CAT_BUY_MONEY_SLOT -> Optional.of(Category.BUY_MONEY);
             default -> Optional.empty();

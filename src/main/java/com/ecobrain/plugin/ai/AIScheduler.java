@@ -184,16 +184,15 @@ public class AIScheduler {
             int criticalInventory = fullSettings != null ? fullSettings.circuitBreaker().criticalInventory() : 0;
             boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
             boolean hasSellEvidence = repository.hasSellSince(item.getItemHash(), now - SELL_EVIDENCE_WINDOW_MS);
+            
+            // 只要物理库存告急且近期有真实的买压，就允许涨价（移除错误的 isVirtualScarcity 判定）
             boolean hasBuyPressure = recentFlow > 0;
             boolean isScarcity = isSupplyCritical && hasBuyPressure && item.getBasePrice() < settings.maxBasePrice() * 0.99;
 
             double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
             
-            // Empty Shelf Bidding: if stock is <= critical_inventory and no recent trades, we still want to raise the price to attract sellers.
-            boolean isEmptyShelfBidding = isSupplyCritical && !hasRecentTrade && item.getBasePrice() < settings.maxBasePrice() * 0.99;
-
-            // noSupplyDecay is completely suppressed if we are in Empty Shelf Bidding mode
-            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D && !isEmptyShelfBidding;
+            // 移除原本引发漏洞的 Empty Shelf Bidding (无交易空抬价)，恢复原有的供需衰减逻辑
+            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
 
             String tuningReason = "AI_ACTION";
             if (!hasRecentTrade) {
@@ -208,10 +207,6 @@ public class AIScheduler {
                 action = AiAction.UP_PRICE;
                 actionIndex = 1; // UP_PRICE index
                 tuningReason = "FORCED_SCARCITY";
-            } else if (isEmptyShelfBidding) {
-                action = AiAction.UP_PRICE;
-                actionIndex = 1; // UP_PRICE index
-                tuningReason = "EMPTY_SHELF_BIDDING";
             } else if (noSupplyDecay) {
                 action = AiAction.HOLD;
                 actionIndex = 2; // HOLD index
@@ -253,7 +248,7 @@ public class AIScheduler {
                 targetInventoryTuner.tune(
                     effectiveItem,
                     targetCfg,
-                    hasRecentTrade || isEmptyShelfBidding,
+                    hasRecentTrade,
                     recentVolume,
                     recentFlow,
                     dynamicAov,
