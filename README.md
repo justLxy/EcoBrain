@@ -115,9 +115,12 @@ python train.py
 当服务器运行一段时间后：
 1. 在游戏内管理员输入命令：`/ecobrain admin exportdata`
 2. 插件会在 `plugins/EcoBrain/` 目录下生成一个包含真实玩家经济行为的日志文件（如 `ecobrain_training_data_1700000000.csv`）。
-3. 把这个 CSV 文件丢进你本地的 `simulator` 目录中。
-4. （进阶）修改 `simulator` 源码让其读取这份真实交易流水，替换掉模拟玩家的概率，再次执行 `python train.py`。
-5. 生成极其贴合你服务器生态的专属 `.onnx` 模型，覆盖回服务器。
+3. 复制该文件的绝对路径，直接用 `--dataset` 参数告诉训练脚本去读取它：
+```bash
+python train.py --dataset /你的服务器路径/plugins/EcoBrain/ecobrain_training_data_1700000000.csv
+```
+4. 脚本会自动解析 CSV 文件，计算出你服务器里真实的“玩家购买率、抛售率、平均交易量”等数据，并自动生成对应的 `ReplayPlayer` （回放玩家）来替换掉原来的模拟玩家。
+5. 等待训练完成，将生成的新 `.onnx` 模型覆盖回服务器即可！不需要再手动改任何代码了！
 
 ---
 
