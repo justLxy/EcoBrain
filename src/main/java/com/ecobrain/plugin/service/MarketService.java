@@ -46,6 +46,7 @@ public class MarketService {
      * 卖出场景下的 IPO 保证：
      * - 首次发现物品时，注入虚拟流动性（current_inventory = target_inventory）
      * - physical_stock 仅记录玩家真实卖入数量，不凭空增发实体库存
+     * - zero-trust IPO 下，初始化价格极低，由玩家买单来发现价值
      */
     public CompletableFuture<IpoState> ensureIpoForSellAsync(String hash, String base64, int firstSellQuantity) {
         return CompletableFuture.supplyAsync(() -> {
@@ -54,7 +55,9 @@ public class MarketService {
                 return new IpoState(existing.get(), false);
             }
             int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
-            repository.upsertIpo(hash, base64, economySettings.ipoBasePrice(), economySettings.ipoKFactor(),
+            double initialBasePrice = economySettings.zeroTrustIpo() ? 0.01D : economySettings.ipoBasePrice();
+            
+            repository.upsertIpo(hash, base64, initialBasePrice, economySettings.ipoKFactor(),
                 economySettings.ipoTargetInventory(),
                 virtualInitialInventory,
                 Math.max(0, firstSellQuantity));

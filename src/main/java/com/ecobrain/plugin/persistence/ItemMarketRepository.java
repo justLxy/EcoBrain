@@ -631,4 +631,42 @@ public class ItemMarketRepository {
             rs.getInt("physical_stock")
         );
     }
+
+    /**
+     * 导出所有交易数据为 CSV 格式供 Python PPO 离线微调使用
+     */
+    public String exportTransactionDataForTraining(java.io.File dataFolder) {
+        String sql = """
+            SELECT item_hash, trade_type, quantity, total_price, created_at
+            FROM ecobrain_trade_stats
+            ORDER BY created_at ASC
+            """;
+        
+        java.io.File exportFile = new java.io.File(dataFolder, "ecobrain_training_data_" + System.currentTimeMillis() + ".csv");
+        
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery();
+             java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.FileWriter(exportFile))) {
+            
+            // CSV Header
+            writer.println("item_hash,trade_type,quantity,total_price,created_at");
+            
+            int count = 0;
+            while (rs.next()) {
+                writer.printf("%s,%s,%d,%.6f,%d%n",
+                    rs.getString("item_hash"),
+                    rs.getString("trade_type"),
+                    rs.getInt("quantity"),
+                    rs.getDouble("total_price"),
+                    rs.getLong("created_at")
+                );
+                count++;
+            }
+            
+            return exportFile.getAbsolutePath() + " (共导出 " + count + " 条记录)";
+        } catch (Exception e) {
+            throw new IllegalStateException("导出训练数据失败", e);
+        }
+    }
 }

@@ -49,9 +49,10 @@ public class PluginSettings {
         FileConfiguration c = plugin.getConfig();
 
         Economy economy = new Economy(
-            c.getDouble("economy.ipo.base-price", 5000.0D),
+            c.getDouble("economy.ipo.base-price", 0.01D),
             c.getInt("economy.ipo.target-inventory", 50),
-            c.getDouble("economy.ipo.k-factor", 1.0D)
+            c.getDouble("economy.ipo.k-factor", 1.0D),
+            c.getBoolean("economy.ipo.zero-trust", true)
         );
 
         Trade trade = new Trade(
@@ -67,9 +68,6 @@ public class PluginSettings {
             c.getBoolean("ai.debug-log", true),
             // 新字段：按分钟调度；兼容旧字段 schedule-hours（自动换算成分钟）
             c.getInt("ai.schedule-minutes", Math.max(1, c.getInt("ai.schedule-hours", 2) * 60)),
-            c.getInt("ai.train-batch-size", 32),
-            c.getInt("ai.replay-buffer-capacity", 4096),
-            c.getInt("ai.model-autosave-minutes", 10),
             c.getInt("ai.aov-window-hours", 24),
             c.getInt("ai.garbage-collection-days", 7),
             c.getDouble("ai.reward.w1-transaction-volume", 1.0D),
@@ -87,6 +85,12 @@ public class PluginSettings {
             // 无成交时爆仓暴跌冷却：每 N 个调控周期最多触发一次（N=1 表示每次周期都允许）
             c.getInt("ai.tuning.glut-no-trade-cooldown-cycles", 4),
             c.getDouble("ai.tuning.max-base-price", 5000000.0D),
+            new Tiers(
+                c.getDouble("ai.tiers.high.price-threshold", 50000.0D),
+                c.getInt("ai.tiers.high.inventory-threshold", 10),
+                c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
+                c.getInt("ai.tiers.mid.inventory-threshold", 100)
+            ),
             new TargetInventory(
                 c.getBoolean("ai.target-inventory.enabled", false),
                 c.getInt("ai.target-inventory.min", 20),
@@ -126,11 +130,10 @@ public class PluginSettings {
         return material == null ? fallback : material;
     }
 
-    public record Economy(double ipoBasePrice, int ipoTargetInventory, double ipoKFactor) {}
+    public record Economy(double ipoBasePrice, int ipoTargetInventory, double ipoKFactor, boolean zeroTrustIpo) {}
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
-    public record AI(boolean debugLog, int scheduleMinutes, int trainBatchSize, int replayBufferCapacity,
-                     int modelAutosaveMinutes,
+    public record AI(boolean debugLog, int scheduleMinutes,
                      int aovWindowHours,
                      int garbageCollectionDays,
                      double rewardW1, double rewardW2, double rewardW3,
@@ -139,7 +142,13 @@ public class PluginSettings {
                      double glutThresholdMultiplier, int glutThresholdMinAbsolute,
                      int glutNoTradeCooldownCycles,
                      double maxBasePrice,
+                     Tiers tiers,
                      TargetInventory targetInventory) {}
+
+    public record Tiers(
+        double highPriceThreshold, int highInventoryThreshold,
+        double midPriceThreshold, int midInventoryThreshold
+    ) {}
 
     public record TargetInventory(
         boolean enabled,

@@ -36,10 +36,23 @@ public class AdminCommand {
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze <hash>");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze all        (解冻所有物品)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearleaderboard");
+            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin exportdata          (导出供 AI 训练的离线数据)");
             return true;
         }
 
         String action = args[1].toLowerCase();
+        if ("exportdata".equals(action)) {
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    String fileName = repository.exportTransactionDataForTraining(plugin.getDataFolder());
+                    sender.sendMessage(ChatColor.GREEN + "成功导出交易日志数据到: " + fileName);
+                } catch (Exception e) {
+                    sender.sendMessage(ChatColor.RED + "导出数据失败: " + e.getMessage());
+                }
+            });
+            return true;
+        }
+
         if ("clearleaderboard".equalsIgnoreCase(action) || "resetleaderboard".equalsIgnoreCase(action)
             || "clear-ranking".equalsIgnoreCase(action) || "clearranking".equalsIgnoreCase(action)) {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {

@@ -35,6 +35,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.17.1</version>
+        </dependency>
+        <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
             <version>${paper.api.version}</version>

@@ -18,6 +18,32 @@ public class AMMCalculator {
     }
 
     /**
+     * 获取指定物品的 TWAP (时间加权平均价) 估算。
+     * 实际中这通常由专门的定时任务维护，或者结合最近的交易记录，这里为了实现简单我们在运行时利用当前价格平滑处理。
+     */
+    public double getTwapPrice(ItemMarketRecord record) {
+        // 在完整的数据库实现中，会查询记录表内的价格均值，这里做简单近似处理
+        return calculateCurrentPrice(record);
+    }
+    
+    /**
+     * 计算动态印花税 (防套利)
+     */
+    public double calculateDynamicSpread(ItemMarketRecord record) {
+        double currentPrice = calculateCurrentPrice(record);
+        double twap = getTwapPrice(record);
+        double baseSpread = 0.05;
+        
+        if (twap > 0) {
+            double volatility = Math.abs(currentPrice - twap) / twap;
+            double dynamicSpread = baseSpread + (volatility * 0.5);
+            return Math.min(0.50, dynamicSpread); // 封顶 50%
+        }
+        
+        return baseSpread;
+    }
+
+    /**
      * 计算玩家卖出 N 个物品后的总收益与结算库存。
      */
     public TradeResult calculateSellTotal(ItemMarketRecord record, int amount) {
@@ -31,9 +57,9 @@ public class AMMCalculator {
             totalRevenue += record.getBasePrice()
                 * Math.pow((double) record.getTargetInventory() / Math.max(1, stepInventory), record.getKFactor());
         }
-        // 卖出时系统扣除 5% 的手续费（即玩家只能获得 95% 的滑点总价）
-        // 这就导致了天然的买卖差价（Spread），防止玩家利用原价无损来回倒腾（无风险套利）
-        return new TradeResult(Math.max(0.0D, totalRevenue * 0.95D), initialInventory + amount);
+        // 动态印花税
+        double spread = calculateDynamicSpread(record);
+        return new TradeResult(Math.max(0.0D, totalRevenue * (1.0 - spread)), initialInventory + amount);
     }
 
     /**

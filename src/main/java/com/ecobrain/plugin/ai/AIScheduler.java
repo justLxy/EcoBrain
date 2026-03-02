@@ -4,6 +4,7 @@ import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
+import com.ecobrain.plugin.service.AMMCalculator;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.inventory.ItemStack;
@@ -16,16 +17,9 @@ import java.util.List;
 
 /**
  * AI 调度器：
- * 以“单个物品”为粒度执行状态提取、动作决策、奖励回传和参数微调，
- * 避免全市场“一刀切”导致健康物品被连坐调价。
+ * 采用 ONNX PPO 模型实现连续动作调价。
  */
 public class AIScheduler {
-    private enum AiAction {
-        DOWN_PRICE,
-        UP_PRICE,
-        HOLD
-    }
-
     private enum SurgeType {
         NONE,
         SCARCITY_SURGE,
@@ -33,33 +27,26 @@ public class AIScheduler {
     }
 
     private final JavaPlugin plugin;
-    private final DqnTrainer dqnTrainer;
+    private final OnnxModelRunner onnxModelRunner;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
+    private final AMMCalculator ammCalculator;
     private final TargetInventoryTuner targetInventoryTuner = new TargetInventoryTuner();
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
 
     private volatile PluginSettings fullSettings;
 
-    private static class AgentMemory {
-        final double[] state;
-        final int actionIndex;
-
-        AgentMemory(double[] state, int actionIndex) {
-            this.state = state;
-            this.actionIndex = actionIndex;
-        }
-    }
-    private final java.util.concurrent.ConcurrentHashMap<String, AgentMemory> memoryBank = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastForcedGlutCrashAt = new java.util.concurrent.ConcurrentHashMap<>();
     private static final long SELL_EVIDENCE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
 
-    public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
-                       ItemMarketRepository repository, PluginSettings.AI settings, ItemSerializer itemSerializer) {
+    public AIScheduler(JavaPlugin plugin, OnnxModelRunner onnxModelRunner,
+                       ItemMarketRepository repository, AMMCalculator ammCalculator, 
+                       PluginSettings.AI settings, ItemSerializer itemSerializer) {
         this.plugin = plugin;
-        this.dqnTrainer = dqnTrainer;
+        this.onnxModelRunner = onnxModelRunner;
         this.repository = repository;
+        this.ammCalculator = ammCalculator;
         this.settings = settings;
         this.itemSerializer = itemSerializer;
     }
@@ -138,9 +125,23 @@ public class AIScheduler {
             // 1. 获取当前状态 St
             double saturation = calculateSaturation(item);
             double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
-            double[] currentState = new double[] {saturation, recentFlow, globalInflationRate};
+            
+            double currentPrice = ammCalculator.calculateCurrentPrice(item);
+            double twap = ammCalculator.getTwapPrice(item);
+            double volatility = twap > 0 ? Math.abs(currentPrice - twap) / twap : 0.0D;
+            double elasticity = 0.0D; // 可选的复杂追踪
+            double isIpoFlag = (item.getBasePrice() <= 0.011D) ? 1.0D : 0.0D;
 
-            // 2. 获取针对【上一个周期】的反馈 (Reward Rt)
+            float[] obs = new float[] {
+                (float) saturation,
+                (float) recentFlow,
+                (float) globalInflationRate,
+                (float) elasticity,
+                (float) volatility,
+                (float) isIpoFlag
+            };
+
+            // 2. 获取针对【上一个周期】的反馈 (Reward) - 仅供日志使用，ONNX为离线训练
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
             double normalizedVolume = recentVolume / Math.max(1.0, dynamicAov);
             boolean hasRecentTrade = recentVolume > 0.0D;
@@ -152,29 +153,24 @@ public class AIScheduler {
                 - (settings.rewardW2() * Math.abs(globalInflationRate))
                 - (settings.rewardW3() * imbalance);
 
-            // 3. 闭环：将 (S_{t-1}, A_{t-1}, R_t, S_t) 存入经验池
-            AgentMemory lastMemory = memoryBank.get(item.getItemHash());
-            if (lastMemory != null) {
-                dqnTrainer.observe(lastMemory.state, lastMemory.actionIndex, reward, currentState);
-            }
-
             // 4. 为【当前周期】做决策 At
-            // 重要：只对“最近窗口有成交”的物品做 AI_ACTION，避免对无成交反馈的物品盲调导致参数漂移。
-            int actionIndex = 2; // default HOLD
-            AiAction action = AiAction.HOLD;
+            double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
             if (hasRecentTrade) {
-                actionIndex = dqnTrainer.chooseAction(currentState);
-                action = resolveAction(actionIndex);
+                String valueType;
+                if (item.getBasePrice() >= settings.tiers().highPriceThreshold() || item.getTargetInventory() <= settings.tiers().highInventoryThreshold()) {
+                    valueType = "high";
+                } else if (item.getBasePrice() >= settings.tiers().midPriceThreshold() || item.getTargetInventory() <= settings.tiers().midInventoryThreshold()) {
+                    valueType = "mid";
+                } else {
+                    valueType = "low";
+                }
+                action = onnxModelRunner.predictAction(obs, valueType);
             }
 
             // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
-            // 修正判定：只有当 target_inventory 足够大时，才用 5 倍。如果 target 只有几十，很容易超过。
-            // 我们同时加入一个绝对差值的下限，防止刚上市的小物品瞬间爆仓。
             double glutMultiplier = Math.max(1.0D, settings.glutThresholdMultiplier());
             int glutMinAbs = Math.max(1, settings.glutThresholdMinAbsolute());
             boolean rawGlut = item.getCurrentInventory() > Math.max((int) Math.floor(item.getTargetInventory() * glutMultiplier), glutMinAbs);
-            // 无成交时，持续每轮强制暴跌会产生“无意义写库噪声”，且对价格已触底的物品没有边际收益。
-            // 因此对无成交窗口引入冷却：仅在近期有成交时立刻介入；否则每隔一段时间才允许再次暴跌一次。
             long lastGlutAt = lastForcedGlutCrashAt.getOrDefault(item.getItemHash(), 0L);
             long cooldownCycles = Math.max(1L, settings.glutNoTradeCooldownCycles());
             long noTradeCooldownMs = windowMs * cooldownCycles;
@@ -185,13 +181,10 @@ public class AIScheduler {
             boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
             boolean hasSellEvidence = repository.hasSellSince(item.getItemHash(), now - SELL_EVIDENCE_WINDOW_MS);
             
-            // 只要物理库存告急且近期有真实的买压，就允许涨价（移除错误的 isVirtualScarcity 判定）
             boolean hasBuyPressure = recentFlow > 0;
             boolean isScarcity = isSupplyCritical && hasBuyPressure && item.getBasePrice() < settings.maxBasePrice() * 0.99;
 
             double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
-            
-            // 移除原本引发漏洞的 Empty Shelf Bidding (无交易空抬价)，恢复原有的供需衰减逻辑
             boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
 
             String tuningReason = "AI_ACTION";
@@ -200,16 +193,10 @@ public class AIScheduler {
             }
 
             if (isGlut) {
-                action = AiAction.DOWN_PRICE;
-                actionIndex = 0; // DOWN_PRICE index
                 tuningReason = "FORCED_GLUT_CRASH";
             } else if (isScarcity) {
-                action = AiAction.UP_PRICE;
-                actionIndex = 1; // UP_PRICE index
                 tuningReason = "FORCED_SCARCITY";
             } else if (noSupplyDecay) {
-                action = AiAction.HOLD;
-                actionIndex = 2; // HOLD index
                 tuningReason = "NO_SUPPLY_DECAY";
             }
 
@@ -217,11 +204,10 @@ public class AIScheduler {
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
 
             if (result != null) {
-                // 只有当本轮确实发生了参数变更（或触发了删除等副作用）时，才写入记忆与审计表
-                memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
+                String actionName = String.format("MULT:%.2f K:%.2f", action[0], action[1]);
                 repository.recordAiTuningEvent(
                     item.getItemHash(),
-                    action.name(),
+                    actionName,
                     tuningReason,
                     result.oldBasePrice(),
                     result.newBasePrice(),
@@ -309,7 +295,7 @@ public class AIScheduler {
                 
                 plugin.getLogger().info(String.format("[EcoBrain-AI] -> 调控目标: [%s] (Hash: %s)", itemName, hashShort));
                 plugin.getLogger().info(String.format("    - 单品状态 (State) : 饱和度(current/target)=%.4f, 近期流速=%.4f, 全局通胀=%.6f", saturation, recentFlow, globalInflationRate));
-                plugin.getLogger().info(String.format("    - 独立决策 (Action): %s", action.name()));
+                plugin.getLogger().info(String.format("    - 独立决策 (Action): MULT=%.3f, K=%.3f", action[0], action[1]));
                 plugin.getLogger().info(String.format("    - 专属反馈 (Reward): %.6f", reward));
                 
                 if (result == null) {
@@ -356,12 +342,13 @@ public class AIScheduler {
         }
 
         // 统一在周期末尾训练本批次收集的独立经验
-        dqnTrainer.trainBatch(settings.trainBatchSize());
+        // DQN 时代： dqnTrainer.trainBatch(settings.trainBatchSize());
+        // PPO 时代： 离线外置模型，无需实时训练
     }
 
-    private TuningResult applyActionToItem(ItemMarketRecord item, AiAction action, boolean isGlut, boolean isScarcity,
+    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, boolean isGlut, boolean isScarcity,
                                           boolean noSupplyDecay, double ipoAnchorBase) {
-        if (action == AiAction.HOLD && !isGlut && !isScarcity && !noSupplyDecay) {
+        if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5 && !isGlut && !isScarcity && !noSupplyDecay) {
             return null;
         }
 
@@ -386,7 +373,6 @@ public class AIScheduler {
             newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
             newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
         } else if (noSupplyDecay) {
-            // 0 库存且缺乏“卖给系统”的供给证据时，不允许价格空涨；将 base 缓慢回归 IPO 锚点以防刷钱。
             if (oldBase <= ipoAnchorBase) {
                 return null;
             }
@@ -396,19 +382,18 @@ public class AIScheduler {
             newBasePrice = Math.max(ipoAnchorBase, Math.min(newBasePrice, settings.maxBasePrice()));
             newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
         } else {
-            if (action == AiAction.UP_PRICE) {
-                double priceRate = settings.actionUpPriceRate();
-                double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-                newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
-                newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
-                newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
-            } else if (action == AiAction.DOWN_PRICE) {
-                double priceRate = settings.actionDownPriceRate();
-                double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-                newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
-                newBasePrice = Math.max(0.01, newBasePrice);
-                newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
-            }
+            // Apply ONNX continuous action
+            double priceMult = action[0];
+            double kDelta = action[1];
+            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+            // Clip the AI multiplier to the safe per-cycle max change percent
+            double safeMult = clamp(priceMult, 1.0D - limit, 1.0D + limit);
+            newBasePrice = oldBase * safeMult;
+            newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
+            
+            // Limit K factor changes
+            double safeKDelta = clamp(kDelta, -settings.kDelta(), settings.kDelta());
+            newK = clamp(oldK + safeKDelta, settings.kMin(), settings.kMax());
         }
 
         // --- 防垃圾回收机制（按时间过期） ---
@@ -454,14 +439,6 @@ public class AIScheduler {
 
     private double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private AiAction resolveAction(int action) {
-        return switch (action) {
-            case 1 -> AiAction.UP_PRICE;
-            case 0 -> AiAction.DOWN_PRICE;
-            default -> AiAction.HOLD;
-        };
     }
 
     private double calculateSaturation(ItemMarketRecord item) {

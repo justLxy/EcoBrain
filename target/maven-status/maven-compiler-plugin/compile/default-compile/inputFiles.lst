@@ -1,10 +1,6 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/EcoBrainPlugin.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/AIScheduler.java
-/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/AiModelStore.java
-/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/DqnTrainer.java
-/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/NeuralNet.java
-/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/ReplayBuffer.java
-/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/StateCollector.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/OnnxModelRunner.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/ai/TargetInventoryTuner.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/command/AdminCommand.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/command/EcoBrainCommand.java
