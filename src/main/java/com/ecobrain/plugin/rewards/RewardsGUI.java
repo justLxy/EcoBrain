@@ -22,8 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class RewardsGUI {
     public static final String TITLE_PREFIX = ChatColor.AQUA + "EcoBrain - 奖励";
+    public static final int PREV_PAGE_SLOT = 52;
+    public static final int NEXT_PAGE_SLOT = 53;
 
-    public record Session(int size, String title, Map<Integer, String> rewardIdAtSlot) {}
+    public record Session(int size, String title, int page, int maxPage, Map<Integer, String> rewardIdAtSlot) {}
 
     private final Plugin plugin;
     private final RewardsManager rewardsManager;
@@ -39,7 +41,10 @@ public final class RewardsGUI {
     }
 
     public boolean isRewardsTitle(String title) {
-        return title != null && title.startsWith(TITLE_PREFIX);
+        if (title == null) {
+            return false;
+        }
+        return org.bukkit.ChatColor.stripColor(title).startsWith("EcoBrain - 奖励");
     }
 
     public Session getSession(UUID uuid) {
@@ -51,6 +56,10 @@ public final class RewardsGUI {
     }
 
     public void open(Player player) {
+        open(player, 1);
+    }
+
+    public void open(Player player, int page) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             RewardsConfig cfg = rewardsManager.config();
             UUID uuid = player.getUniqueId();
@@ -81,15 +90,39 @@ public final class RewardsGUI {
             // back
             inv.setItem(cfg.gui().backSlot(), namedItem(cfg.gui().backMaterial(), color(cfg.gui().backName())));
 
-            // rewards grid (skip border slots)
-            int slot = 10;
-            for (RewardDefinition def : cfg.rewards()) {
-                while (slot < cfg.gui().size() && isBorderSlot(slot, cfg.gui().size())) {
-                    slot++;
+            // paging
+            List<Integer> contentSlots = getContentSlots(cfg.gui().size());
+            int perPage = contentSlots.size(); // 54-sized inventory => 28
+            int total = cfg.rewards().size();
+            int maxPage = Math.max(1, (int) Math.ceil(total / (double) perPage));
+            int safePage = Math.max(1, Math.min(page, maxPage));
+            int start = (safePage - 1) * perPage;
+            int end = Math.min(start + perPage, total);
+
+            if (safePage > 1) {
+                ItemStack prev = namedItem(Material.ARROW, ChatColor.YELLOW + "上一页");
+                ItemMeta prevMeta = prev.getItemMeta();
+                if (prevMeta != null) {
+                    prevMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
+                    prev.setItemMeta(prevMeta);
                 }
-                if (slot >= cfg.gui().size()) {
-                    break;
+                inv.setItem(PREV_PAGE_SLOT, prev);
+            }
+            if (safePage < maxPage) {
+                ItemStack next = namedItem(Material.ARROW, ChatColor.YELLOW + "下一页");
+                ItemMeta nextMeta = next.getItemMeta();
+                if (nextMeta != null) {
+                    nextMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
+                    next.setItemMeta(nextMeta);
                 }
+                inv.setItem(NEXT_PAGE_SLOT, next);
+            }
+
+            // rewards for this page
+            int slotIdx = 0;
+            for (int i = start; i < end; i++) {
+                RewardDefinition def = cfg.rewards().get(i);
+                int slot = contentSlots.get(slotIdx++);
 
                 Progress p = progressFor(def.type(), def.target(), sellMoney, sellQty, sellRank, buyMoney, buyQty, buyRank);
                 boolean unlocked = p.progress() >= p.target();
@@ -123,10 +156,9 @@ public final class RewardsGUI {
 
                 inv.setItem(slot, item);
                 slotMap.put(slot, def.id());
-                slot++;
             }
 
-            Session session = new Session(cfg.gui().size(), title, Map.copyOf(slotMap));
+            Session session = new Session(cfg.gui().size(), title, safePage, maxPage, Map.copyOf(slotMap));
             sessions.put(uuid, session);
 
             Bukkit.getScheduler().runTask(plugin, () -> player.openInventory(inv));
@@ -151,6 +183,16 @@ public final class RewardsGUI {
         int col = slot % 9;
         int maxRow = (size / 9) - 1;
         return row == 0 || row == maxRow || col == 0 || col == 8;
+    }
+
+    private List<Integer> getContentSlots(int size) {
+        List<Integer> slots = new ArrayList<>();
+        for (int slot = 0; slot < size; slot++) {
+            if (!isBorderSlot(slot, size)) {
+                slots.add(slot);
+            }
+        }
+        return slots;
     }
 
     private String replaceVars(String text, Progress p, String statusText) {

@@ -62,6 +62,14 @@ public final class RewardsListener implements Listener {
             player.closeInventory();
             return;
         }
+        if (rawSlot == RewardsGUI.PREV_PAGE_SLOT && session.page() > 1) {
+            rewardsGUI.open(player, session.page() - 1);
+            return;
+        }
+        if (rawSlot == RewardsGUI.NEXT_PAGE_SLOT && session.page() < session.maxPage()) {
+            rewardsGUI.open(player, session.page() + 1);
+            return;
+        }
 
         Map<Integer, String> map = session.rewardIdAtSlot();
         String rewardId = map.get(rawSlot);
@@ -104,7 +112,7 @@ public final class RewardsListener implements Listener {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 player.sendMessage(ChatColor.GREEN + "奖励领取成功！");
                 commandRunner.run(player, def.commands());
-                rewardsGUI.open(player);
+                rewardsGUI.open(player, session.page());
             });
         });
     }

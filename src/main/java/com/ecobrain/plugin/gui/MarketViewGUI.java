@@ -24,13 +24,17 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class MarketViewGUI {
     public static final String TITLE_PREFIX = ChatColor.GOLD + "EcoBrain 市场大盘 - 第";
-    public static final int BULK_BUTTON_SLOT = 45;
-    public static final int CATEGORY_BUTTON_SLOT = 46;
-    public static final int SORT_BUTTON_SLOT = 47;
-    public static final int REWARDS_BUTTON_SLOT = 48;
+    // 底栏布局：
+    // 45/46: 筛选/排序（左下角与+1）
+    // 47: 页码信息
+    // 49: 批量出售（原本书的位置）
+    public static final int CATEGORY_BUTTON_SLOT = 45;
+    public static final int SORT_BUTTON_SLOT = 46;
+    public static final int INFO_SLOT = 47;
+    public static final int BULK_BUTTON_SLOT = 49;
+    public static final int REWARDS_BUTTON_SLOT = 8;
     public static final int PREV_PAGE_SLOT = 52;
     public static final int NEXT_PAGE_SLOT = 53;
-    public static final int INFO_SLOT = 49;
     private static final int PAGE_SIZE = 28;
 
     private final AMMCalculator ammCalculator;
@@ -237,13 +241,6 @@ public class MarketViewGUI {
             inventory.setItem(i, namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " "));
         }
         inventory.setItem(BULK_BUTTON_SLOT, namedItem(Material.HOPPER, ChatColor.GREEN + "打开批量出售"));
-        ItemStack rewards = namedItem(Material.CHEST, ChatColor.LIGHT_PURPLE + "打开奖励菜单");
-        ItemMeta rewardsMeta = rewards.getItemMeta();
-        if (rewardsMeta != null) {
-            rewardsMeta.setLore(List.of(ChatColor.GRAY + "点击查看并领取达成奖励"));
-            rewards.setItemMeta(rewardsMeta);
-        }
-        inventory.setItem(REWARDS_BUTTON_SLOT, rewards);
         inventory.setItem(INFO_SLOT, namedItem(Material.BOOK, ChatColor.GOLD + "第 " + page + " / " + maxPage + " 页"));
 
         FilterState filterState = getFilterState(playerId);
@@ -311,6 +308,18 @@ public class MarketViewGUI {
             head.setItemMeta(meta);
         }
         inventory.setItem(4, head); // 0-8的第一行正中心是第4格
+
+        // 右上角：奖励菜单入口
+        ItemStack rewards = namedItem(Material.CHEST, ChatColor.LIGHT_PURPLE + "打开奖励菜单");
+        ItemMeta rewardsMeta = rewards.getItemMeta();
+        if (rewardsMeta != null) {
+            rewardsMeta.setLore(List.of(
+                ChatColor.GRAY + "点击查看并领取达成奖励",
+                ChatColor.DARK_GRAY + "/ecobrain rewards"
+            ));
+            rewards.setItemMeta(rewardsMeta);
+        }
+        inventory.setItem(REWARDS_BUTTON_SLOT, rewards);
     }
 
     private List<Integer> getContentSlots() {
