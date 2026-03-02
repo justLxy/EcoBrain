@@ -91,6 +91,11 @@ class EcoBrainEnv(gym.Env):
         self.recent_sell_volume = 0
         self.last_price = self.amm.get_current_price()
         
+        # Reset all player balances
+        for player in self.players:
+            if hasattr(player, 'reset'):
+                player.reset()
+        
         # State: [saturation, flow, inflation, elasticity, volatility, is_ipo]
         return self._get_obs(), {}
         
