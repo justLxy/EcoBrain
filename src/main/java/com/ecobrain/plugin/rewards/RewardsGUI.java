@@ -60,7 +60,7 @@ public final class RewardsGUI {
         }
     }
 
-    public static final int CAT_ALL_SLOT = 1;
+    public static final int CAT_ALL_SLOT = 0;
     public static final int CAT_SELL_QTY_SLOT = 2;
     public static final int CAT_BUY_QTY_SLOT = 3;
     public static final int CAT_SELL_MONEY_SLOT = 5;

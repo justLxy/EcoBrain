@@ -5,7 +5,7 @@ gui:
     material: BLACK_STAINED_GLASS_PANE
     name: "&8 "
   back:
-    slot: 49
+    slot: 45
     material: ARROW
     name: "&e返回"
 
