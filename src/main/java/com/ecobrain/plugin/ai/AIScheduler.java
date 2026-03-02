@@ -31,7 +31,6 @@ public class AIScheduler {
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
     private final AMMCalculator ammCalculator;
-    private final TargetInventoryTuner targetInventoryTuner = new TargetInventoryTuner();
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
 
@@ -141,17 +140,9 @@ public class AIScheduler {
                 (float) isIpoFlag
             };
 
-            // 2. 获取针对【上一个周期】的反馈 (Reward) - 仅供日志使用，ONNX为离线训练
+            // 2. 只有最近有交易才由 AI 处理，否则跳过
             double recentVolume = repository.queryItemVolumeSince(item.getItemHash(), since);
-            double normalizedVolume = recentVolume / Math.max(1.0, dynamicAov);
             boolean hasRecentTrade = recentVolume > 0.0D;
-
-            double imbalance = Math.abs(item.getCurrentInventory() - item.getTargetInventory())
-                / (double) Math.max(1, item.getTargetInventory());
-                
-            double reward = (settings.rewardW1() * normalizedVolume)
-                - (settings.rewardW2() * Math.abs(globalInflationRate))
-                - (settings.rewardW3() * imbalance);
 
             // 4. 为【当前周期】做决策 At
             double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
@@ -213,7 +204,7 @@ public class AIScheduler {
                     result.newBasePrice(),
                     result.oldKFactor(),
                     result.newKFactor(),
-                    reward,
+                    0.0, // Reward is calculated offline in 2.0
                     now
                 );
                 if (tuningReason.equals("FORCED_GLUT_CRASH")) {
@@ -221,47 +212,6 @@ public class AIScheduler {
                 }
             }
 
-            // --- 动态 target_inventory（按 item_hash） ---
-            // 重要：本周期 reward / state 已用旧 target 计算；这里写回数据库只影响下个周期
-            PluginSettings.TargetInventory targetCfg = settings.targetInventory();
-            if (targetCfg != null && targetCfg.enabled()) {
-                // 若本轮 base/k 已调参，用更新后的 base_price 作为动态 target 的参考（更贴近实际价值层级）
-                ItemMarketRecord effectiveItem = item;
-                if (result != null && result.newBasePrice() > 0.0D && result.newKFactor() > 0.0D) {
-                    effectiveItem = item.withTuning(result.newBasePrice(), result.newKFactor());
-                }
-
-                targetInventoryTuner.tune(
-                    effectiveItem,
-                    targetCfg,
-                    hasRecentTrade,
-                    recentVolume,
-                    recentFlow,
-                    dynamicAov,
-                    isGlut,
-                    isScarcity
-                ).ifPresent(decision -> {
-                    repository.updateTargetInventoryWithProportionalCurrentScaling(
-                        item.getItemHash(),
-                        decision.oldTargetInventory(),
-                        item.getCurrentInventory(),
-                        decision.appliedTargetInventory()
-                    );
-                    if (settings.debugLog()) {
-                        String hashShort = item.getItemHash().substring(0, Math.min(8, item.getItemHash().length()));
-                        plugin.getLogger().info(String.format(
-                            "[EcoBrain-AI] -> target_inventory 更新: [%s] (Hash: %s) %d -> %d (suggest=%d, reason=%s)",
-                            readableItemName(item),
-                            hashShort,
-                            decision.oldTargetInventory(),
-                            decision.appliedTargetInventory(),
-                            decision.suggestedTargetInventory(),
-                            decision.reason()
-                        ));
-                    }
-                });
-            }
-            
             // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉
             // 如果 oldBasePrice 接近 maxBasePrice，并且 newBasePrice 也接近 maxBasePrice，说明其实没涨
             boolean isAtMax = result != null && result.newBasePrice() >= settings.maxBasePrice() * 0.99 && result.oldBasePrice() >= settings.maxBasePrice() * 0.99;
@@ -296,7 +246,6 @@ public class AIScheduler {
                 plugin.getLogger().info(String.format("[EcoBrain-AI] -> 调控目标: [%s] (Hash: %s)", itemName, hashShort));
                 plugin.getLogger().info(String.format("    - 单品状态 (State) : 饱和度(current/target)=%.4f, 近期流速=%.4f, 全局通胀=%.6f", saturation, recentFlow, globalInflationRate));
                 plugin.getLogger().info(String.format("    - 独立决策 (Action): MULT=%.3f, K=%.3f", action[0], action[1]));
-                plugin.getLogger().info(String.format("    - 专属反馈 (Reward): %.6f", reward));
                 
                 if (result == null) {
                     plugin.getLogger().info("    - 调控结果 (Result): HOLD，参数不变");
@@ -361,14 +310,14 @@ public class AIScheduler {
         if (isGlut) {
             surgeType = SurgeType.GLUT_CRASH;
             double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double priceRate = settings.actionDownPriceRate();
+            double priceRate = settings.forceCrashMultiplier();
             newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
             newBasePrice = Math.max(0.01, newBasePrice);
             newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
         } else if (isScarcity) {
             surgeType = SurgeType.SCARCITY_SURGE;
             double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double priceRate = settings.actionUpPriceRate();
+            double priceRate = settings.forceSurgeMultiplier();
             newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
             newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
             newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());

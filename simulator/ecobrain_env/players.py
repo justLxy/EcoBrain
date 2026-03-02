@@ -8,41 +8,60 @@ class Player:
     def act(self, amm, step):
         pass
 
-class Farmer(Player):
+class NewPlayer(Player):
     """
-    Produces large amounts of low-value items and sells them constantly.
+    New player (新玩家): Occasionally buys or sells small amounts. Does not heavily impact the market alone.
     """
-    def __init__(self, name, production_rate=64, cost_per_item=0.0):
-        super().__init__(name, 0)
-        self.production_rate = production_rate
-        
-    def act(self, amm, step):
-        # Always sells produced items
-        if amm.is_ipo:
-            # Maybe won't sell if it's IPO? or will sell at low price
-            pass
-        
-        # Sells a batch
-        revenue = amm.execute_sell(self.production_rate)
-        self.balance += revenue
-        return -self.production_rate, revenue # - means sell to system
-
-class Whale(Player):
-    """
-    Buys high-value items regardless of price, up to a certain budget or need.
-    """
-    def __init__(self, name, buy_probability=0.1, buy_amount=10):
-        super().__init__(name, 10000000)
+    def __init__(self, name, balance=1000, buy_probability=0.05, sell_probability=0.05, amount=5):
+        super().__init__(name, balance)
         self.buy_probability = buy_probability
-        self.buy_amount = buy_amount
+        self.sell_probability = sell_probability
+        self.amount = amount
         
     def act(self, amm, step):
-        if np.random.random() < self.buy_probability:
+        action_rand = np.random.random()
+        if action_rand < self.buy_probability:
+            # Buy
+            cost = amm.simulate_buy(self.amount)
+            if self.balance >= cost:
+                actual_cost = amm.execute_buy(self.amount)
+                self.balance -= actual_cost
+                return self.amount, -actual_cost
+        elif action_rand < self.buy_probability + self.sell_probability:
+            # Sell
+            revenue = amm.execute_sell(self.amount)
+            self.balance += revenue
+            return -self.amount, revenue
+            
+        return 0, 0
+
+class VeteranPlayer(Player):
+    """
+    Veteran player (老玩家): Mostly produces and sells large amounts to the system, rarely buys.
+    Generates significant sell pressure.
+    """
+    def __init__(self, name, balance=100000, buy_probability=0.02, sell_probability=0.8, buy_amount=10, sell_amount=64):
+        super().__init__(name, balance)
+        self.buy_probability = buy_probability
+        self.sell_probability = sell_probability
+        self.buy_amount = buy_amount
+        self.sell_amount = sell_amount
+        
+    def act(self, amm, step):
+        action_rand = np.random.random()
+        if action_rand < self.buy_probability:
+            # Buy
             cost = amm.simulate_buy(self.buy_amount)
             if self.balance >= cost:
                 actual_cost = amm.execute_buy(self.buy_amount)
                 self.balance -= actual_cost
                 return self.buy_amount, -actual_cost
+        elif action_rand < self.buy_probability + self.sell_probability:
+            # Sell
+            revenue = amm.execute_sell(self.sell_amount)
+            self.balance += revenue
+            return -self.sell_amount, revenue
+            
         return 0, 0
 
 class Arbitrageur(Player):

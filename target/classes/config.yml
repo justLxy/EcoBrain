@@ -62,46 +62,6 @@ ai:
   # 调小：反应更快，但可能更抖；调大：更平滑，但反应慢。
   schedule-minutes: 60
 
-  # ==========================================================
-  # 动态 target_inventory（可选）
-  # ==========================================================
-  # 默认关闭。开启后，AI 会在每轮周期内对每个物品的 target_inventory 做微调，
-  # 并按比例缩放 current_inventory，避免“非交易性”的价格跳变。
-  #
-  # 常见用途：
-  # - 热门物品：提高 target，让系统“容纳更多库存”，价格更不容易被买穿
-  # - 冷门/高价物品：降低 target，减少系统对其库存的需求
-  #
-  # 注意：
-  # - `require-recent-trade=true` 时，如果该物品在本窗口内没有成交，则不会调整 target
-  # - `per-cycle-max-change-percent` 与 `max-delta` 会限制每轮 target 的最大变化，防止抖动
-  target-inventory:
-    # 是否启用动态 target_inventory
-    enabled: true
-
-    # 只有近期有成交才允许调整（推荐 true，更稳）
-    require-recent-trade: true
-
-    # target 的边界
-    min: 12
-    max: 640
-
-    # 基础 target 计算（按 base_price 映射）：baseTarget ≈ price-scale / (base_price ^ price-alpha)
-    price-scale: 8000.0
-    price-alpha: 0.90
-
-    # 成交量与流速的加成（越大越“跟热度走”）
-    volume-boost: 0.15
-    flow-boost: 0.08
-
-    # 极端状态修正（稀缺/爆仓）
-    scarcity-multiplier: 1.20
-    glut-multiplier: 0.80
-
-    # 平滑限制：每轮最大变化比例 + 绝对变化上限（二者取更严格）
-    per-cycle-max-change-percent: 0.06
-    max-delta: 24
-
   # 【动态客单价(AOV)统计窗口（小时）】
   # AI 会统计过去 X 小时内的全服平均客单价作为通胀惩罚的基准。
   # 它的作用是平滑短期的大额交易。如果设得很小，一旦有人大额交易，物价就会剧烈波动。
@@ -115,14 +75,6 @@ ai:
   # AI 会判定它为玩家恶搞生成的“滞销垃圾”（如一把命名为"哈哈"的破木剑），并自动将其从商店数据库中抹除。
   # 推荐：7
   garbage-collection-days: 7
-
-  reward:
-    # 这些奖励参数仅用于后台打出的 log 显示“如果在线训练这个动作得了多少分”。
-    # ONNX 为离线模型，其内部权重不会因这里的改动而在服务端产生改变。
-    # 调整这些参数只会改变后台的 debug 奖励数值，如果你想实际改变 AI 的偏好，请修改模拟器的 python 源码并重新训练。
-    w1-transaction-volume: 0.4
-    w2-inflation-delta: 1.5
-    w3-inventory-imbalance: 1.8
 
   # ==========================================================
   # PPO 连续模型：AI 根据该物品当前的价格与库存等特征，自动分配给相应的 AI 脑(ONNX)进行推理。

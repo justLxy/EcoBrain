@@ -70,11 +70,8 @@ public class PluginSettings {
             c.getInt("ai.schedule-minutes", Math.max(1, c.getInt("ai.schedule-hours", 2) * 60)),
             c.getInt("ai.aov-window-hours", 24),
             c.getInt("ai.garbage-collection-days", 7),
-            c.getDouble("ai.reward.w1-transaction-volume", 1.0D),
-            c.getDouble("ai.reward.w2-inflation-delta", 0.6D),
-            c.getDouble("ai.reward.w3-inventory-imbalance", 0.8D),
-            c.getDouble("ai.tuning.action-up-price-rate", 1.03D),
-            c.getDouble("ai.tuning.action-down-price-rate", 0.97D),
+            c.getDouble("ai.tuning.force-surge-multiplier", 1.03D),
+            c.getDouble("ai.tuning.force-crash-multiplier", 0.97D),
             c.getDouble("ai.tuning.per-cycle-max-change-percent", 0.05D),
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
@@ -90,20 +87,6 @@ public class PluginSettings {
                 c.getInt("ai.tiers.high.inventory-threshold", 10),
                 c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
                 c.getInt("ai.tiers.mid.inventory-threshold", 100)
-            ),
-            new TargetInventory(
-                c.getBoolean("ai.target-inventory.enabled", false),
-                c.getInt("ai.target-inventory.min", 20),
-                c.getInt("ai.target-inventory.max", 400),
-                c.getDouble("ai.target-inventory.price-scale", 6000.0D),
-                c.getDouble("ai.target-inventory.price-alpha", 0.55D),
-                c.getDouble("ai.target-inventory.volume-boost", 0.22D),
-                c.getDouble("ai.target-inventory.flow-boost", 0.12D),
-                c.getDouble("ai.target-inventory.scarcity-multiplier", 1.35D),
-                c.getDouble("ai.target-inventory.glut-multiplier", 0.70D),
-                c.getDouble("ai.target-inventory.per-cycle-max-change-percent", 0.10D),
-                c.getInt("ai.target-inventory.max-delta", 40),
-                c.getBoolean("ai.target-inventory.require-recent-trade", true)
             )
         );
 
@@ -136,34 +119,18 @@ public class PluginSettings {
     public record AI(boolean debugLog, int scheduleMinutes,
                      int aovWindowHours,
                      int garbageCollectionDays,
-                     double rewardW1, double rewardW2, double rewardW3,
-                     double actionUpPriceRate, double actionDownPriceRate,
+                     double forceSurgeMultiplier, double forceCrashMultiplier,
                      double perCycleMaxChangePercent, double kDelta, double kMin, double kMax,
                      double glutThresholdMultiplier, int glutThresholdMinAbsolute,
                      int glutNoTradeCooldownCycles,
                      double maxBasePrice,
-                     Tiers tiers,
-                     TargetInventory targetInventory) {}
+                     Tiers tiers) {}
 
     public record Tiers(
         double highPriceThreshold, int highInventoryThreshold,
         double midPriceThreshold, int midInventoryThreshold
     ) {}
 
-    public record TargetInventory(
-        boolean enabled,
-        int min,
-        int max,
-        double priceScale,
-        double priceAlpha,
-        double volumeBoost,
-        double flowBoost,
-        double scarcityMultiplier,
-        double glutMultiplier,
-        double perCycleMaxChangePercent,
-        int maxDelta,
-        boolean requireRecentTrade
-    ) {}
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,
                       Material cancelButtonMaterial, String cancelButtonName, List<String> cancelButtonLore,

@@ -2,7 +2,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 from .amm import AMM
-from .players import Farmer, Whale, Arbitrageur
+from .players import NewPlayer, VeteranPlayer, Arbitrageur
 
 class EcoBrainEnv(gym.Env):
     """
@@ -55,17 +55,18 @@ class EcoBrainEnv(gym.Env):
         # Initialize players
         self.players = []
         if self.value_type == "high":
-            self.players.append(Whale("Whale1", buy_probability=0.2, buy_amount=2))
-            self.players.append(Arbitrageur("Arb1", balance=50000))
+            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.01, buy_probability=0.1, sell_amount=1, buy_amount=1)) # Rarely gets boss drops
+            self.players.append(NewPlayer("New1", buy_probability=0.01, sell_probability=0.0, amount=1)) # Very rarely buys
+            self.players.append(Arbitrageur("Arb1", balance=500000))
         elif self.value_type == "mid":
-            self.players.append(Farmer("Farmer1", production_rate=32))
-            self.players.append(Whale("Whale1", buy_probability=0.1, buy_amount=5))
-            self.players.append(Arbitrageur("Arb1", balance=5000))
+            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.4, buy_probability=0.05, sell_amount=16, buy_amount=5))
+            self.players.append(NewPlayer("New1", buy_probability=0.1, sell_probability=0.05, amount=5))
+            self.players.append(Arbitrageur("Arb1", balance=50000))
         else: # low
-            self.players.append(Farmer("Farmer1", production_rate=128))
-            self.players.append(Farmer("Farmer2", production_rate=64))
-            self.players.append(Arbitrageur("Arb1", balance=1000))
-            self.players.append(Whale("Whale_Rare", buy_probability=0.01, buy_amount=10)) # Occasional buy
+            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.9, buy_probability=0.01, sell_amount=128, buy_amount=10))
+            self.players.append(VeteranPlayer("Veteran2", sell_probability=0.8, buy_probability=0.02, sell_amount=64, buy_amount=10))
+            self.players.append(NewPlayer("New1", buy_probability=0.2, sell_probability=0.1, amount=16))
+            self.players.append(Arbitrageur("Arb1", balance=10000))
             
         self.step_count = 0
         
