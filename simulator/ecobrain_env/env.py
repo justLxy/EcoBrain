@@ -5,7 +5,7 @@ import csv
 import os
 from .amm import AMM
 from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
-from .config import TIERS, ACTION_BASE_PRICE_MAX_PERCENT, ACTION_K_FACTOR_MAX_DELTA
+from .config import TIERS, ACTION_BASE_PRICE_MAX_PERCENT, ACTION_K_FACTOR_MAX_DELTA, PLAYERS
 
 class EcoBrainEnv(gym.Env):
     """
@@ -57,19 +57,30 @@ class EcoBrainEnv(gym.Env):
             self._load_dataset_players()
             self.players.append(Arbitrageur("Arb1", balance=50000)) # Always keep the arbitrageur to punish bad AI
         else:
-            if self.value_type == "high":
-                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.01, buy_probability=0.1, sell_amount=1, buy_amount=1)) # Rarely gets boss drops
-                self.players.append(NewPlayer("New1", buy_probability=0.01, sell_probability=0.0, amount=1)) # Very rarely buys
-                self.players.append(Arbitrageur("Arb1", balance=500000))
-            elif self.value_type == "mid":
-                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.4, buy_probability=0.05, sell_amount=16, buy_amount=5))
-                self.players.append(NewPlayer("New1", buy_probability=0.1, sell_probability=0.05, amount=5))
-                self.players.append(Arbitrageur("Arb1", balance=50000))
-            else: # low
-                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.9, buy_probability=0.01, sell_amount=128, buy_amount=10))
-                self.players.append(VeteranPlayer("Veteran2", sell_probability=0.8, buy_probability=0.02, sell_amount=64, buy_amount=10))
-                self.players.append(NewPlayer("New1", buy_probability=0.2, sell_probability=0.1, amount=16))
-                self.players.append(Arbitrageur("Arb1", balance=10000))
+            player_configs = PLAYERS.get(self.value_type, [])
+            for p_cfg in player_configs:
+                if p_cfg["type"] == "VeteranPlayer":
+                    self.players.append(VeteranPlayer(
+                        p_cfg["name"], 
+                        balance=p_cfg.get("balance", 100000),
+                        buy_probability=p_cfg.get("buy_prob", 0.05),
+                        sell_probability=p_cfg.get("sell_prob", 0.5),
+                        buy_amount=p_cfg.get("buy_amount", 1),
+                        sell_amount=p_cfg.get("sell_amount", 64)
+                    ))
+                elif p_cfg["type"] == "NewPlayer":
+                    self.players.append(NewPlayer(
+                        p_cfg["name"],
+                        balance=p_cfg.get("balance", 1000),
+                        buy_probability=p_cfg.get("buy_prob", 0.1),
+                        sell_probability=p_cfg.get("sell_prob", 0.1),
+                        amount=p_cfg.get("amount", 5)
+                    ))
+                elif p_cfg["type"] == "Arbitrageur":
+                    self.players.append(Arbitrageur(
+                        p_cfg["name"],
+                        balance=p_cfg.get("balance", 10000)
+                    ))
             
         self.step_count = 0
         

@@ -94,7 +94,7 @@ def export_to_onnx(model, filename):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EcoBrain 2.0 PPO Training & Export")
     parser.add_argument("--dataset", type=str, help="Path to the real server CSV data for online fine-tuning", default=None)
-    parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=1000000)
+    parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=100000)
     args = parser.parse_args()
 
     print("Starting EcoBrain 2.0 PPO Training & Export")

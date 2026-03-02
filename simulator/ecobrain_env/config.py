@@ -50,3 +50,42 @@ TIERS = {
         "inflation_penalty": 30.0     # 极其严厉的通货膨胀惩罚 (重罚)
     }
 }
+
+# ==========================================
+# 模拟玩家生态配置 (Simulated Players)
+# ==========================================
+# 在离线训练时，如果没有提供真实的 CSV 数据，模拟器会使用以下设定的虚拟玩家。
+# 调整这里的概率和数量，可以训练出应对不同服务器生态的 AI。
+# 
+# buy_prob: 每个周期购买物品的概率 (0.0~1.0)
+# sell_prob: 每个周期出售物品的概率 (0.0~1.0)
+# amount: 每次购买/出售的数量
+# balance: 玩家携带的初始资金
+
+PLAYERS = {
+    "high": [
+        # 老玩家：偶尔打到极品材料卖钱，偶尔买一点
+        {"type": "VeteranPlayer", "name": "Veteran1", "sell_prob": 0.01, "buy_prob": 0.1, "sell_amount": 1, "buy_amount": 1, "balance": 100000},
+        # 新玩家/平民：极少购买极品
+        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.01, "sell_prob": 0.0, "amount": 1, "balance": 5000},
+        # 倒爷：永远存在，寻找一切低买高卖的机会
+        {"type": "Arbitrageur", "name": "Arb1", "balance": 500000}
+    ],
+    
+    "mid": [
+        # 老玩家：有中等产出能力，主要卖钱
+        {"type": "VeteranPlayer", "name": "Veteran1", "sell_prob": 0.4, "buy_prob": 0.05, "sell_amount": 16, "buy_amount": 5, "balance": 50000},
+        # 新玩家：需要消耗中等材料度过前期
+        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.1, "sell_prob": 0.05, "amount": 5, "balance": 2000},
+        {"type": "Arbitrageur", "name": "Arb1", "balance": 50000}
+    ],
+    
+    "low": [
+        # 老玩家：超级农场主，疯狂倾销海量物资
+        {"type": "VeteranPlayer", "name": "Veteran_Farmer1", "sell_prob": 0.9, "buy_prob": 0.01, "sell_amount": 128, "buy_amount": 10, "balance": 10000},
+        {"type": "VeteranPlayer", "name": "Veteran_Farmer2", "sell_prob": 0.8, "buy_prob": 0.02, "sell_amount": 64, "buy_amount": 10, "balance": 10000},
+        # 新玩家：偶尔买卖少量杂物
+        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.2, "sell_prob": 0.1, "amount": 16, "balance": 500},
+        {"type": "Arbitrageur", "name": "Arb1", "balance": 10000}
+    ]
+}
