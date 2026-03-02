@@ -130,7 +130,8 @@ public class MarketViewGUI {
                 "&a左键: 购买 1 个",
                 "&aShift+左键: 购买 1 组",
                 "&aShift+右键: 购买 10 组",
-                "&c管理员右键: 删除物品档案"
+                "&a右键: 自定义数量购买",
+                "&c管理员按Q: 删除物品档案"
             );
             return;
         }
@@ -355,10 +356,32 @@ public class MarketViewGUI {
                 .replace("{hash_short}", hashShort)
                 .replace("{price}", price)
                 .replace("{physical_stock}", String.valueOf(record.getPhysicalStock()))
+                .replace("{target_inventory}", String.valueOf(record.getTargetInventory()))
                 .replace("{virtual_inventory}", String.valueOf(record.getCurrentInventory()));
             lore.add(ChatColor.translateAlternateColorCodes('&', rendered));
         }
         return lore;
+    }
+
+    /**
+     * 将数据库记录渲染为市场展示用的 ItemStack（包含 lore 和数量显示）。
+     * 用于“原地刷新”某个槽位，避免因重新排序导致玩家误点。
+     */
+    public ItemStack toMarketDisplayItem(ItemMarketRecord record) {
+        ItemStack item = new ItemStack(org.bukkit.Material.PAPER);
+        try {
+            item = itemSerializer.deserializeFromBase64(record.getItemBase64());
+        } catch (Exception ignored) {
+        }
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            List<String> lore = renderLore(record, meta);
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+        }
+        int visibleAmount = Math.max(1, Math.min(item.getMaxStackSize(), Math.max(0, record.getPhysicalStock())));
+        item.setAmount(visibleAmount);
+        return item;
     }
 
     public static class Session {
@@ -382,6 +405,10 @@ public class MarketViewGUI {
 
         public String hashAt(int slot) {
             return slotToHash.get(slot);
+        }
+
+        public void clearSlot(int slot) {
+            slotToHash.remove(slot);
         }
     }
 }

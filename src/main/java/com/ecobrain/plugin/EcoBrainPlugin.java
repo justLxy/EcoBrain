@@ -4,6 +4,7 @@ import com.ecobrain.plugin.ai.AIScheduler;
 import com.ecobrain.plugin.ai.DqnTrainer;
 import com.ecobrain.plugin.ai.NeuralNet;
 import com.ecobrain.plugin.ai.ReplayBuffer;
+import org.bukkit.scheduler.BukkitTask;
 import com.ecobrain.plugin.command.AdminCommand;
 import com.ecobrain.plugin.command.EcoBrainCommand;
 import com.ecobrain.plugin.config.PluginSettings;
@@ -45,6 +46,7 @@ public class EcoBrainPlugin extends JavaPlugin {
     private AIScheduler aiScheduler;
     private NeuralNet neuralNet;
     private DqnTrainer dqnTrainer;
+    private BukkitTask aiAutosaveTask;
 
     @Override
     public void onEnable() {
@@ -124,27 +126,24 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.aiScheduler = new AIScheduler(this, this.dqnTrainer, repository, settings.ai(), itemSerializer);
         this.aiScheduler.setFullSettings(settings);
         this.aiScheduler.start();
+        restartAiAutosave(settings.ai());
 
         getLogger().info("EcoBrain 已启用。");
     }
 
     @Override
     public void onDisable() {
+        if (aiAutosaveTask != null) {
+            aiAutosaveTask.cancel();
+            aiAutosaveTask = null;
+        }
         if (aiScheduler != null) {
             aiScheduler.stop();
         }
         if (placeholderApiHook != null) {
             placeholderApiHook.shutdown();
         }
-        if (neuralNet != null && dqnTrainer != null) {
-            com.ecobrain.plugin.ai.AiModelStore store = new com.ecobrain.plugin.ai.AiModelStore();
-            store.save(this, new com.ecobrain.plugin.ai.AiModelStore.Snapshot(
-                1,
-                neuralNet.exportState(),
-                dqnTrainer.getEpsilon(),
-                System.currentTimeMillis()
-            ));
-        }
+        saveAiSnapshot();
         getLogger().info("EcoBrain 已关闭。");
     }
 
@@ -175,5 +174,36 @@ public class EcoBrainPlugin extends JavaPlugin {
             rewardsManager.reload();
         }
         aiScheduler.updateSettingsAndRestart(settings.ai(), settings);
+        restartAiAutosave(settings.ai());
+    }
+
+    private void restartAiAutosave(PluginSettings.AI aiSettings) {
+        if (aiAutosaveTask != null) {
+            aiAutosaveTask.cancel();
+            aiAutosaveTask = null;
+        }
+        int minutes = aiSettings == null ? 0 : aiSettings.modelAutosaveMinutes();
+        if (minutes <= 0) {
+            return;
+        }
+        long periodTicks = 20L * 60L * Math.max(1, minutes);
+        aiAutosaveTask = Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::saveAiSnapshot, periodTicks, periodTicks);
+    }
+
+    private void saveAiSnapshot() {
+        if (neuralNet == null || dqnTrainer == null) {
+            return;
+        }
+        try {
+            com.ecobrain.plugin.ai.AiModelStore store = new com.ecobrain.plugin.ai.AiModelStore();
+            store.save(this, new com.ecobrain.plugin.ai.AiModelStore.Snapshot(
+                1,
+                neuralNet.exportState(),
+                dqnTrainer.getEpsilon(),
+                System.currentTimeMillis()
+            ));
+        } catch (Exception e) {
+            getLogger().warning("[EcoBrain-AI] 自动保存失败: " + e.getMessage());
+        }
     }
 }

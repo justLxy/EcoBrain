@@ -49,7 +49,7 @@ public class NeuralNet implements Serializable {
         this.b3 = deepCopy1d(b3);
     }
 
-    public State exportState() {
+    public synchronized State exportState() {
         return new State(
             deepCopy2d(w1), deepCopy1d(b1),
             deepCopy2d(w2), deepCopy1d(b2),
@@ -64,7 +64,7 @@ public class NeuralNet implements Serializable {
         return new NeuralNet(state.w1(), state.b1(), state.w2(), state.b2(), state.w3(), state.b3());
     }
 
-    public double[] predict(double[] input) {
+    public synchronized double[] predict(double[] input) {
         ForwardCache cache = forward(input);
         return cache.output;
     }
@@ -73,7 +73,7 @@ public class NeuralNet implements Serializable {
      * 单样本梯度下降更新（MSE 损失）。
      * 这里直接对输出层目标 Q 值进行回归，避免引入复杂自动求导框架。
      */
-    public void trainSingle(double[] input, double[] targetQ, double learningRate) {
+    public synchronized void trainSingle(double[] input, double[] targetQ, double learningRate) {
         ForwardCache cache = forward(input);
         double[] output = cache.output;
 

@@ -74,6 +74,12 @@ ai:
   # 【为了最佳效果，由于你的服物品价值跨度极大，需要更大的记忆池防止 AI “健忘”】
   replay-buffer-capacity: 8192
 
+  # 【AI 模型自动保存间隔（分钟）】
+  # 用于降低 PlugMan reload / 崩溃时的“最近学习数据丢失窗口”。
+  # 0 或负数表示关闭自动保存。
+  # 推荐：5 ~ 15
+  model-autosave-minutes: 5
+
   # 【动态客单价(AOV)统计窗口（小时）】
   # AI 会统计过去 X 小时内的全服平均客单价作为通胀惩罚的基准。
   # 它的作用是平滑短期的大额交易。如果设得很小，一旦有人大额交易，物价就会剧烈波动。
@@ -179,6 +185,7 @@ gui:
     # {hash_short}        -> 缩短 hash
     # {price}             -> 实时价格（保留两位小数）
     # {physical_stock}    -> 真实物理库存
+    # {target_inventory}  -> 目标库存（AMM 锚点）
     # {virtual_inventory} -> 虚拟库存（AMM 内部池）
     item-lore:
       - ""
@@ -186,7 +193,9 @@ gui:
       - ''
       - '        &b价格: &f{price}￥'
       - '        &b库存: &f{physical_stock}'
+      # - '        &b目标: &f{target_inventory}'
       - '        &f&l单击 &7购买 1 个'
       - '        &f&lShift+单击 &7购买 1 组'
+      - '        &f&lShift+右键 &7购买 10 组'
       - ''
       - '&7&m+------------------------------+'
