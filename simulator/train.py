@@ -26,20 +26,27 @@ def train_model(value_type="low", total_timesteps=100000, dataset_path=None):
         
     print(f"Using device: {device}")
 
-    model = PPO("MlpPolicy", env, verbose=1, 
-                learning_rate=3e-4, 
-                n_steps=2048, 
-                batch_size=64, 
-                n_epochs=10, 
-                gamma=0.99, 
-                gae_lambda=0.95, 
-                clip_range=0.2,
-                device=device)
+    model_name = f"ecobrain_ppo_{value_type}"
+    model_path = f"{model_name}.zip"
+    
+    if os.path.exists(model_path):
+        print(f"Found existing model {model_path}, loading and resuming training...")
+        model = PPO.load(model_path, env=env, device=device)
+    else:
+        print(f"No existing model found for {value_type}, starting from scratch...")
+        model = PPO("MlpPolicy", env, verbose=1, 
+                    learning_rate=3e-4, 
+                    n_steps=2048, 
+                    batch_size=64, 
+                    n_epochs=10, 
+                    gamma=0.99, 
+                    gae_lambda=0.95, 
+                    clip_range=0.2,
+                    device=device)
                 
     model.learn(total_timesteps=total_timesteps)
     
     # Save the model
-    model_name = f"ecobrain_ppo_{value_type}"
     model.save(model_name)
     print(f"Saved model to {model_name}.zip")
     return model
