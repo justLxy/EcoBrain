@@ -26,11 +26,9 @@ public class MarketViewGUI {
     public static final String TITLE_PREFIX = ChatColor.GOLD + "EcoBrain 市场大盘 - 第";
     // 底栏布局：
     // 45/46: 筛选/排序（左下角与+1）
-    // 47: 页码信息
     // 49: 批量出售（原本书的位置）
     public static final int CATEGORY_BUTTON_SLOT = 45;
     public static final int SORT_BUTTON_SLOT = 46;
-    public static final int INFO_SLOT = 47;
     public static final int BULK_BUTTON_SLOT = 49;
     public static final int REWARDS_BUTTON_SLOT = 8;
     public static final int PREV_PAGE_SLOT = 52;
@@ -241,7 +239,6 @@ public class MarketViewGUI {
             inventory.setItem(i, namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " "));
         }
         inventory.setItem(BULK_BUTTON_SLOT, namedItem(Material.HOPPER, ChatColor.GREEN + "打开批量出售"));
-        inventory.setItem(INFO_SLOT, namedItem(Material.BOOK, ChatColor.GOLD + "第 " + page + " / " + maxPage + " 页"));
 
         FilterState filterState = getFilterState(playerId);
         

@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,13 +26,54 @@ public final class RewardsGUI {
     public static final int PREV_PAGE_SLOT = 52;
     public static final int NEXT_PAGE_SLOT = 53;
 
-    public record Session(int size, String title, int page, int maxPage, Map<Integer, String> rewardIdAtSlot) {}
+    public enum Category {
+        ALL("全部", Material.NETHER_STAR),
+        SELL_QTY("卖出数量", Material.CHEST),
+        BUY_QTY("买入数量", Material.BARREL),
+        SELL_MONEY("卖出金额", Material.EMERALD),
+        BUY_MONEY("买入金额", Material.DIAMOND);
+
+        private final String label;
+        private final Material icon;
+
+        Category(String label, Material icon) {
+            this.label = label;
+            this.icon = icon;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        public Material icon() {
+            return icon;
+        }
+
+        public boolean matches(RewardType type) {
+            return switch (this) {
+                case ALL -> true;
+                case SELL_QTY -> type == RewardType.SELL_QTY;
+                case BUY_QTY -> type == RewardType.BUY_QTY;
+                case SELL_MONEY -> type == RewardType.SELL_MONEY;
+                case BUY_MONEY -> type == RewardType.BUY_MONEY;
+            };
+        }
+    }
+
+    public static final int CAT_ALL_SLOT = 1;
+    public static final int CAT_SELL_QTY_SLOT = 2;
+    public static final int CAT_BUY_QTY_SLOT = 3;
+    public static final int CAT_SELL_MONEY_SLOT = 5;
+    public static final int CAT_BUY_MONEY_SLOT = 6;
+
+    public record Session(int size, String title, Category category, int page, int maxPage, Map<Integer, String> rewardIdAtSlot) {}
 
     private final Plugin plugin;
     private final RewardsManager rewardsManager;
     private final ItemMarketRepository marketRepository;
     private final RewardClaimRepository claimRepository;
     private final ConcurrentHashMap<UUID, Session> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Category> selectedCategory = new ConcurrentHashMap<>();
 
     public RewardsGUI(Plugin plugin, RewardsManager rewardsManager, ItemMarketRepository marketRepository, RewardClaimRepository claimRepository) {
         this.plugin = plugin;
@@ -63,6 +105,7 @@ public final class RewardsGUI {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             RewardsConfig cfg = rewardsManager.config();
             UUID uuid = player.getUniqueId();
+            Category category = selectedCategory.getOrDefault(uuid, Category.ALL);
 
             double sellMoney = marketRepository.getPlayerTotalMoney(uuid, TradeType.SELL);
             long sellQty = marketRepository.getPlayerTotalQuantity(uuid, TradeType.SELL);
@@ -90,10 +133,20 @@ public final class RewardsGUI {
             // back
             inv.setItem(cfg.gui().backSlot(), namedItem(cfg.gui().backMaterial(), color(cfg.gui().backName())));
 
+            // category tabs (top row)
+            placeCategoryTab(inv, CAT_ALL_SLOT, Category.ALL, category);
+            placeCategoryTab(inv, CAT_SELL_QTY_SLOT, Category.SELL_QTY, category);
+            placeCategoryTab(inv, CAT_BUY_QTY_SLOT, Category.BUY_QTY, category);
+            placeCategoryTab(inv, CAT_SELL_MONEY_SLOT, Category.SELL_MONEY, category);
+            placeCategoryTab(inv, CAT_BUY_MONEY_SLOT, Category.BUY_MONEY, category);
+
             // paging
             List<Integer> contentSlots = getContentSlots(cfg.gui().size());
             int perPage = contentSlots.size(); // 54-sized inventory => 28
-            int total = cfg.rewards().size();
+            List<RewardDefinition> filtered = cfg.rewards().stream()
+                .filter(r -> category.matches(r.type()))
+                .toList();
+            int total = filtered.size();
             int maxPage = Math.max(1, (int) Math.ceil(total / (double) perPage));
             int safePage = Math.max(1, Math.min(page, maxPage));
             int start = (safePage - 1) * perPage;
@@ -121,7 +174,7 @@ public final class RewardsGUI {
             // rewards for this page
             int slotIdx = 0;
             for (int i = start; i < end; i++) {
-                RewardDefinition def = cfg.rewards().get(i);
+                RewardDefinition def = filtered.get(i);
                 int slot = contentSlots.get(slotIdx++);
 
                 Progress p = progressFor(def.type(), def.target(), sellMoney, sellQty, sellRank, buyMoney, buyQty, buyRank);
@@ -158,11 +211,29 @@ public final class RewardsGUI {
                 slotMap.put(slot, def.id());
             }
 
-            Session session = new Session(cfg.gui().size(), title, safePage, maxPage, Map.copyOf(slotMap));
+            Session session = new Session(cfg.gui().size(), title, category, safePage, maxPage, Map.copyOf(slotMap));
             sessions.put(uuid, session);
 
             Bukkit.getScheduler().runTask(plugin, () -> player.openInventory(inv));
         });
+    }
+
+    public Optional<Category> categoryAtSlot(int slot) {
+        return switch (slot) {
+            case CAT_ALL_SLOT -> Optional.of(Category.ALL);
+            case CAT_SELL_QTY_SLOT -> Optional.of(Category.SELL_QTY);
+            case CAT_BUY_QTY_SLOT -> Optional.of(Category.BUY_QTY);
+            case CAT_SELL_MONEY_SLOT -> Optional.of(Category.SELL_MONEY);
+            case CAT_BUY_MONEY_SLOT -> Optional.of(Category.BUY_MONEY);
+            default -> Optional.empty();
+        };
+    }
+
+    public void setCategory(UUID playerId, Category category) {
+        if (playerId == null || category == null) {
+            return;
+        }
+        selectedCategory.put(playerId, category);
     }
 
     public record Progress(RewardType type, double target, double progress, int rank) {}
@@ -183,6 +254,22 @@ public final class RewardsGUI {
         int col = slot % 9;
         int maxRow = (size / 9) - 1;
         return row == 0 || row == maxRow || col == 0 || col == 8;
+    }
+
+    private void placeCategoryTab(Inventory inv, int slot, Category tab, Category selected) {
+        ItemStack item = new ItemStack(tab.icon());
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.AQUA + tab.label());
+            meta.setLore(List.of(ChatColor.GRAY + "点击切换分类"));
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            if (tab == selected) {
+                meta.addEnchant(org.bukkit.enchantments.Enchantment.LUCK, 1, true);
+                meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            }
+            item.setItemMeta(meta);
+        }
+        inv.setItem(slot, item);
     }
 
     private List<Integer> getContentSlots(int size) {

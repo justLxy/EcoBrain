@@ -8,6 +8,7 @@ com/ecobrain/plugin/ai/AiModelStore.class
 com/ecobrain/plugin/gui/MarketViewGUI$ItemCategory.class
 com/ecobrain/plugin/ai/AIScheduler$SurgeType.class
 com/ecobrain/plugin/config/PluginSettings$Gui.class
+com/ecobrain/plugin/rewards/RewardsGUI$Category.class
 com/ecobrain/plugin/model/PlayerStat.class
 com/ecobrain/plugin/model/TradeType.class
 com/ecobrain/plugin/rewards/RewardsManager.class

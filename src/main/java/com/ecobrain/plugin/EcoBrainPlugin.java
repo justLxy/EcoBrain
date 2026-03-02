@@ -97,7 +97,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
         Bukkit.getPluginManager().registerEvents(
-            new com.ecobrain.plugin.rewards.RewardsListener(this, rewardsGUI, rewardsManager, repository, rewardClaimRepository, rewardCommandRunner), this);
+            new com.ecobrain.plugin.rewards.RewardsListener(this, rewardsGUI, rewardsManager, marketViewGUI, repository, rewardClaimRepository, rewardCommandRunner), this);
 
         this.placeholderApiHook = new com.ecobrain.plugin.placeholder.PlaceholderApiHook(this, repository);
         this.placeholderApiHook.registerIfPresent();
