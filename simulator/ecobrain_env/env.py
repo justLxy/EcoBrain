@@ -5,7 +5,7 @@ import csv
 import os
 from .amm import AMM
 from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
-from .config import TIERS
+from .config import TIERS, ACTION_BASE_PRICE_MAX_PERCENT, ACTION_K_FACTOR_MAX_DELTA
 
 class EcoBrainEnv(gym.Env):
     """
@@ -158,8 +158,8 @@ class EcoBrainEnv(gym.Env):
         self.step_count += 1
         
         # 1. Apply AI action
-        base_price_mult = 1.0 + (action[0] * 0.20) # -20% to +20%
-        k_delta = action[1] * 0.1 # -0.1 to +0.1
+        base_price_mult = 1.0 + (action[0] * ACTION_BASE_PRICE_MAX_PERCENT)
+        k_delta = action[1] * ACTION_K_FACTOR_MAX_DELTA
         
         self.amm.apply_ai_action(base_price_mult, k_delta)
         
