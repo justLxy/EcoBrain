@@ -63,12 +63,12 @@ ai:
   tiers:
     high:
       # 高价值物品（如 Boss 掉落物）的判断门槛。交给 ecobrain_high_value.onnx 处理。
-      price-threshold: 50000.0  
+      price-threshold: 10000.0  
       inventory-threshold: 10   
     mid:
       # 中等价值物品（如副本材料）的判断门槛。交给 ecobrain_mid_value.onnx 处理。
       price-threshold: 1000.0   
-      inventory-threshold: 100  
+      inventory-threshold: 640  
     # 都不满足的，就是泥土小麦之类的破烂，全丢给 ecobrain_low_value.onnx 处理。
     
   tuning:
