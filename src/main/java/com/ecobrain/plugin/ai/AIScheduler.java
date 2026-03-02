@@ -52,6 +52,7 @@ public class AIScheduler {
         }
     }
     private final java.util.concurrent.ConcurrentHashMap<String, AgentMemory> memoryBank = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastForcedGlutCrashAt = new java.util.concurrent.ConcurrentHashMap<>();
     private static final long SELL_EVIDENCE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
 
     public AIScheduler(JavaPlugin plugin, DqnTrainer dqnTrainer,
@@ -169,7 +170,16 @@ public class AIScheduler {
             // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
             // 修正判定：只有当 target_inventory 足够大时，才用 5 倍。如果 target 只有几十，很容易超过。
             // 我们同时加入一个绝对差值的下限，防止刚上市的小物品瞬间爆仓。
-            boolean isGlut = item.getCurrentInventory() > Math.max(item.getTargetInventory() * 5, 500);
+            double glutMultiplier = Math.max(1.0D, settings.glutThresholdMultiplier());
+            int glutMinAbs = Math.max(1, settings.glutThresholdMinAbsolute());
+            boolean rawGlut = item.getCurrentInventory() > Math.max((int) Math.floor(item.getTargetInventory() * glutMultiplier), glutMinAbs);
+            // 无成交时，持续每轮强制暴跌会产生“无意义写库噪声”，且对价格已触底的物品没有边际收益。
+            // 因此对无成交窗口引入冷却：仅在近期有成交时立刻介入；否则每隔一段时间才允许再次暴跌一次。
+            long lastGlutAt = lastForcedGlutCrashAt.getOrDefault(item.getItemHash(), 0L);
+            long cooldownCycles = Math.max(1L, settings.glutNoTradeCooldownCycles());
+            long noTradeCooldownMs = windowMs * cooldownCycles;
+            boolean allowGlutCrashThisTick = hasRecentTrade || (now - lastGlutAt) >= noTradeCooldownMs;
+            boolean isGlut = rawGlut && allowGlutCrashThisTick;
 
             int criticalInventory = fullSettings != null ? fullSettings.circuitBreaker().criticalInventory() : 0;
             boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
@@ -199,17 +209,12 @@ public class AIScheduler {
                 tuningReason = "NO_SUPPLY_DECAY";
             }
 
-            // 5. 记忆本次决策，留给下个周期作为 A_{t-1} 评估
-            // 只有当本轮确实执行了调参（或触发风控动作）时才写入记忆；否则不写，避免无意义经验污染训练。
-            boolean willTune = !(action == AiAction.HOLD && !isGlut && !isScarcity && !noSupplyDecay);
-            if (willTune) {
-                memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
-            }
-
-            // 6. 应用最终动作
+            // 5. 应用最终动作
             TuningResult result = applyActionToItem(item, action, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
 
             if (result != null) {
+                // 只有当本轮确实发生了参数变更（或触发了删除等副作用）时，才写入记忆与审计表
+                memoryBank.put(item.getItemHash(), new AgentMemory(currentState, actionIndex));
                 repository.recordAiTuningEvent(
                     item.getItemHash(),
                     action.name(),
@@ -221,6 +226,9 @@ public class AIScheduler {
                     reward,
                     now
                 );
+                if (tuningReason.equals("FORCED_GLUT_CRASH")) {
+                    lastForcedGlutCrashAt.put(item.getItemHash(), now);
+                }
             }
 
             // --- 动态 target_inventory（按 item_hash） ---
@@ -421,6 +429,12 @@ public class AIScheduler {
                 return new TuningResult(item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
             }
             }
+        }
+
+        // 若 clamp 后没有产生任何实际变更，则不写库、不落审计事件，避免噪声与无意义 IO
+        boolean unchanged = Math.abs(newBasePrice - oldBase) < 1e-12 && Math.abs(newK - oldK) < 1e-12;
+        if (unchanged) {
+            return null;
         }
 
         repository.updateTuning(item.getItemHash(), newBasePrice, newK);

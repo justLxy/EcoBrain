@@ -24,7 +24,7 @@ economy:
     # 调大：系统更“怕缺货”，低库存时涨价更明显。
     # 调小：系统更“宽松”，库存变化对价格影响变弱。
     # 推荐：30 ~ 200
-    target-inventory: 192
+    target-inventory: 64
 
     # 【价格弹性系数 k】
     # 核心敏感度参数。越大，库存每变一点，价格变化越明显。
@@ -42,10 +42,9 @@ trade:
 circuit-breaker:
   # 【单日最大涨跌阈值】
   # 若某物品相对“当日开盘价”涨跌超过这个值，会被自动冻结交易。
-  # 例如 0.30 = 30%
   # 调小：更保守，更容易触发保护。
   # 调大：更激进，允许更大波动。
-  daily-limit-percent: 2
+  daily-limit-percent: 10
 
   # 【库存熔断线】
   # 当系统库存 <= 该值时，直接冻结该物品交易，避免“抽干库存”。
@@ -67,12 +66,52 @@ ai:
   # DQN 每次训练抽取多少条“经验”。
   # 调大：学习更稳但更吃性能；调小：更轻量但噪声更大。
   # 【为了最佳效果，建议调大以稳定 AI 激进调价时的脑电波】
-  train-batch-size: 64
+  train-batch-size: 256
 
   # 【经验回放池容量】
   # 记录历史市场状态用于训练。越大记忆越多，但占用更多内存。
   # 【为了最佳效果，由于你的服物品价值跨度极大，需要更大的记忆池防止 AI “健忘”】
-  replay-buffer-capacity: 8192
+  replay-buffer-capacity: 32768
+
+  # ==========================================================
+  # 动态 target_inventory（可选）
+  # ==========================================================
+  # 默认关闭。开启后，AI 会在每轮周期内对每个物品的 target_inventory 做微调，
+  # 并按比例缩放 current_inventory，避免“非交易性”的价格跳变。
+  #
+  # 常见用途：
+  # - 热门物品：提高 target，让系统“容纳更多库存”，价格更不容易被买穿
+  # - 冷门/高价物品：降低 target，减少系统对其库存的需求
+  #
+  # 注意：
+  # - `require-recent-trade=true` 时，如果该物品在本窗口内没有成交，则不会调整 target
+  # - `per-cycle-max-change-percent` 与 `max-delta` 会限制每轮 target 的最大变化，防止抖动
+  target-inventory:
+    # 是否启用动态 target_inventory
+    enabled: true
+
+    # 只有近期有成交才允许调整（推荐 true，更稳）
+    require-recent-trade: true
+
+    # target 的边界
+    min: 12
+    max: 640
+
+    # 基础 target 计算（按 base_price 映射）：baseTarget ≈ price-scale / (base_price ^ price-alpha)
+    price-scale: 8000.0
+    price-alpha: 0.90
+
+    # 成交量与流速的加成（越大越“跟热度走”）
+    volume-boost: 0.15
+    flow-boost: 0.08
+
+    # 极端状态修正（稀缺/爆仓）
+    scarcity-multiplier: 1.20
+    glut-multiplier: 0.80
+
+    # 平滑限制：每轮最大变化比例 + 绝对变化上限（二者取更严格）
+    per-cycle-max-change-percent: 0.06
+    max-delta: 24
 
   # 【AI 模型自动保存间隔（分钟）】
   # 用于降低 PlugMan reload / 崩溃时的“最近学习数据丢失窗口”。
@@ -86,7 +125,7 @@ ai:
   # 【建议设置】：
   # - 如果你的服是快节奏的肝帝服，物价波动快，设为 12 或者 24
   # - 如果你的服是慢节奏的养老服，希望物价极度平稳，设为 48 或者 72
-  aov-window-hours: 48
+  aov-window-hours: 24
 
   # 【过期商品自动清理天数】
   # 如果一个物品在系统中库存极低（<=1个），并且超过 X 天没有任何人买卖，
@@ -110,7 +149,7 @@ ai:
     # 通胀惩罚权重（负向）
     # 极度厌恶通货膨胀，一旦系统发钱过多，AI就会重拳出击打压价格
     # 推荐：1.5 ~ 2.5
-    w2-inflation-delta: 2.2
+    w2-inflation-delta: 1.5
 
     # 库存失衡惩罚权重（负向）
     # 不希望玩家大规模爆仓或买空，逼迫 AI 频繁寻找平衡点
@@ -127,17 +166,17 @@ ai:
     # 【上调动作价格倍率】
     # 若你的服务器物品价值跨度极大（比如有 5,000,000 金币的物品）
     # 可以设置为极度激进的值，例如 1.50（每次 AI 决定涨价时，底价直接涨 50%）
-    action-up-price-rate: 1.08
+    action-up-price-rate: 1.2
 
     # 【下调动作价格倍率】
     # 若想快速把毫无价值的垃圾（例如倾销的泥土）打压到 10 金币
     # 可设为 0.70（每次降价，底价直接打 7 折）甚至 0.50（直接腰斩）
-    action-down-price-rate: 0.92
+    action-down-price-rate: 0.70
 
     # 【单次调控最大限制】
     # 这是防止 AI 暴走的“安全锁”。如果你上面填了 1.50 和 0.50
     # 这里必须相应地放宽，比如填 0.50，允许单次最大涨跌幅为 50%。
-    per-cycle-max-change-percent: 0.2
+    per-cycle-max-change-percent: 0.30
 
     # 【k 系数步进】
     # AI 每次调控 k 的步长。k 值决定了玩家买卖时价格暴涨/暴跌的“陡峭程度”。
@@ -149,6 +188,25 @@ ai:
     # 建议保持 min < max，且不要设得过窄。
     k-min: 0.2
     k-max: 2.0
+
+    # 【爆仓阈值（强制爆仓暴跌触发条件）】
+    # 当虚拟库存 current_inventory 满足：
+    #   current_inventory > max(target_inventory × multiplier, min-absolute)
+    # 即判定为“明显爆仓”，AI 动作会被强制覆盖为 DOWN_PRICE。
+    #
+    # multiplier：相对阈值（默认 5.0，表示超过目标库存 5 倍）
+    # min-absolute：绝对阈值下限（默认 500，避免 target 很小的物品被轻易判爆仓）
+    glut-threshold-multiplier: 10.0
+    glut-threshold-min-absolute: 64
+
+    # 【无成交时爆仓暴跌冷却（周期数）】
+    # 当某物品处于爆仓状态但在本调控窗口内完全没有成交时，
+    # 为避免每次 AI 周期都重复“强制暴跌”（尤其在 base/k 已接近下限时），
+    # 我们只允许每 N 个调控周期触发一次 FORCED_GLUT_CRASH。
+    #
+    # 例：schedule-minutes=60 时，N=4 表示“无成交爆仓最多每 4 小时暴跌一次”
+    # N=1 则表示“每次 AI 周期都允许暴跌一次”（更激进）
+    glut-no-trade-cooldown-cycles: 2
 
 gui:
   bulk-sell:
@@ -192,10 +250,10 @@ gui:
       - '&7&m+------------------------------+'
       - ''
       - '        &b价格: &f{price}￥'
-      - '        &b库存: &f{physical_stock}'
-      # - '        &b目标: &f{target_inventory}'
+      - '        &b库存: &f{physical_stock} / &8理想库存: {target_inventory}'
       - '        &f&l单击 &7购买 1 个'
       - '        &f&lShift+单击 &7购买 1 组'
       - '        &f&lShift+右键 &7购买 10 组'
+      - '        &f&l右键 &7自定义数量购买（聊天输入）'
       - ''
       - '&7&m+------------------------------+'

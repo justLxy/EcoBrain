@@ -81,6 +81,11 @@ public class PluginSettings {
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
             c.getDouble("ai.tuning.k-max", 3.0D),
+            // 爆仓阈值：current_inventory > max(target * multiplier, min-absolute) 视为爆仓
+            c.getDouble("ai.tuning.glut-threshold-multiplier", 5.0D),
+            c.getInt("ai.tuning.glut-threshold-min-absolute", 500),
+            // 无成交时爆仓暴跌冷却：每 N 个调控周期最多触发一次（N=1 表示每次周期都允许）
+            c.getInt("ai.tuning.glut-no-trade-cooldown-cycles", 4),
             c.getDouble("ai.tuning.max-base-price", 5000000.0D),
             new TargetInventory(
                 c.getBoolean("ai.target-inventory.enabled", false),
@@ -130,7 +135,10 @@ public class PluginSettings {
                      int garbageCollectionDays,
                      double rewardW1, double rewardW2, double rewardW3,
                      double actionUpPriceRate, double actionDownPriceRate,
-                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax, double maxBasePrice,
+                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax,
+                     double glutThresholdMultiplier, int glutThresholdMinAbsolute,
+                     int glutNoTradeCooldownCycles,
+                     double maxBasePrice,
                      TargetInventory targetInventory) {}
 
     public record TargetInventory(

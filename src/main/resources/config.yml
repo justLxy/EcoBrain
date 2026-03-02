@@ -60,7 +60,7 @@ ai:
   # 【AI 调控周期（分钟）】
   # 每隔多少分钟跑一次 AI 调参。
   # 调小：反应更快，但可能更抖；调大：更平滑，但反应慢。
-  schedule-minutes: 15
+  schedule-minutes: 60
 
   # 【每轮训练批次】
   # DQN 每次训练抽取多少条“经验”。
@@ -188,6 +188,25 @@ ai:
     # 建议保持 min < max，且不要设得过窄。
     k-min: 0.2
     k-max: 2.0
+
+    # 【爆仓阈值（强制爆仓暴跌触发条件）】
+    # 当虚拟库存 current_inventory 满足：
+    #   current_inventory > max(target_inventory × multiplier, min-absolute)
+    # 即判定为“明显爆仓”，AI 动作会被强制覆盖为 DOWN_PRICE。
+    #
+    # multiplier：相对阈值（默认 5.0，表示超过目标库存 5 倍）
+    # min-absolute：绝对阈值下限（默认 500，避免 target 很小的物品被轻易判爆仓）
+    glut-threshold-multiplier: 10.0
+    glut-threshold-min-absolute: 64
+
+    # 【无成交时爆仓暴跌冷却（周期数）】
+    # 当某物品处于爆仓状态但在本调控窗口内完全没有成交时，
+    # 为避免每次 AI 周期都重复“强制暴跌”（尤其在 base/k 已接近下限时），
+    # 我们只允许每 N 个调控周期触发一次 FORCED_GLUT_CRASH。
+    #
+    # 例：schedule-minutes=60 时，N=4 表示“无成交爆仓最多每 4 小时暴跌一次”
+    # N=1 则表示“每次 AI 周期都允许暴跌一次”（更激进）
+    glut-no-trade-cooldown-cycles: 2
 
 gui:
   bulk-sell:
