@@ -2,8 +2,10 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import csv
+import os
 from .amm import AMM
 from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
+from .config import TIERS
 
 class EcoBrainEnv(gym.Env):
     """
@@ -35,16 +37,9 @@ class EcoBrainEnv(gym.Env):
         # Initialize AMM
         # Zero-trust IPO: start with 0.01 base price
         
-        target_inv = 1000
-        current_inv = 500
-        if self.value_type == "high":
-            # Boss materials: extremely low inventory, very high value
-            target_inv = 5
-            current_inv = 2
-        elif self.value_type == "mid":
-            # MythicMobs drop materials: low/mid inventory, high value
-            target_inv = 50
-            current_inv = 25
+        tier_cfg = TIERS[self.value_type]
+        target_inv = tier_cfg["target_inventory"]
+        current_inv = tier_cfg["current_inventory"]
             
         self.amm = AMM(
             base_price=0.01, 
@@ -107,9 +102,8 @@ class EcoBrainEnv(gym.Env):
                     # Simple heuristic to guess if row belongs to this value type based on total_price/qty
                     if qty > 0:
                         price_per_item = float(row['total_price']) / qty
-                        if (self.value_type == "high" and price_per_item < 50000) or \
-                           (self.value_type == "low" and price_per_item > 1000) or \
-                           (self.value_type == "mid" and (price_per_item < 1000 or price_per_item > 50000)):
+                        tier_cfg = TIERS[self.value_type]
+                        if not (tier_cfg["price_min"] <= price_per_item < tier_cfg["price_max"]):
                            continue # Skip records that don't match this tier
                            
                     if row['trade_type'] == 'BUY':
@@ -201,29 +195,30 @@ class EcoBrainEnv(gym.Env):
         reward = float((0.1 * trade_volume) - (0.5 * max(0, net_emission)) - (10.0 * inventory_imbalance))
         
         # Specific shaping to help it learn the difference between garbage and gold
+        tier_cfg = TIERS[self.value_type]
         if self.value_type == "high":
             # Boss mats: encourage scaling to hundreds of thousands or millions
-            if self.amm.get_current_price() > 500000.0:
-                reward += 10.0 # Huge bonus for finding the true boss value
-            elif self.amm.get_current_price() > 50000.0:
-                reward += 5.0
+            if self.amm.get_current_price() > tier_cfg["price_target"]:
+                reward += tier_cfg["price_reward_2"]
+            elif self.amm.get_current_price() > tier_cfg["price_min"]:
+                reward += tier_cfg["price_reward_1"]
                 
             if self.amm.current_inventory <= 0:
-                reward -= 20.0 # Extremely strict about zero inventory for boss mats
+                reward -= tier_cfg["empty_stock_penalty"]
                 
         elif self.value_type == "mid":
             # MythicMobs mats: scale to thousands or tens of thousands
-            if 1000.0 <= self.amm.get_current_price() <= 50000.0:
-                reward += 5.0 
-            if net_emission > 10000:
-                reward -= 10.0
+            if tier_cfg["price_min"] <= self.amm.get_current_price() <= tier_cfg["price_max"]:
+                reward += tier_cfg["price_reward"]
+            if net_emission > tier_cfg["inflation_penalty_threshold"]:
+                reward -= tier_cfg["inflation_penalty"]
                 
         else: # low
             # Vanilla mats: scale to tens of coins, extremely strict on inflation
-            if self.amm.get_current_price() < 50.0:
-                reward += 2.0 
-            if net_emission > 500:
-                reward -= 30.0 # Unforgiving penalty for letting farmers print money
+            if self.amm.get_current_price() < tier_cfg["price_target"]:
+                reward += tier_cfg["price_reward"]
+            if net_emission > tier_cfg["inflation_penalty_threshold"]:
+                reward -= tier_cfg["inflation_penalty"]
                 
         # 4. Check done
         done = self.step_count >= self.max_steps
