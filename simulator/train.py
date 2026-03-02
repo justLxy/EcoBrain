@@ -16,6 +16,16 @@ def train_model(value_type="low", total_timesteps=100000, dataset_path=None):
         
     check_env(env)
     
+    # Define device: use MPS for Apple Silicon, CUDA for NVIDIA, otherwise CPU
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+        
+    print(f"Using device: {device}")
+
     model = PPO("MlpPolicy", env, verbose=1, 
                 learning_rate=3e-4, 
                 n_steps=2048, 
@@ -23,7 +33,8 @@ def train_model(value_type="low", total_timesteps=100000, dataset_path=None):
                 n_epochs=10, 
                 gamma=0.99, 
                 gae_lambda=0.95, 
-                clip_range=0.2)
+                clip_range=0.2,
+                device=device)
                 
     model.learn(total_timesteps=total_timesteps)
     
