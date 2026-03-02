@@ -184,11 +184,16 @@ public class AIScheduler {
             int criticalInventory = fullSettings != null ? fullSettings.circuitBreaker().criticalInventory() : 0;
             boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
             boolean hasSellEvidence = repository.hasSellSince(item.getItemHash(), now - SELL_EVIDENCE_WINDOW_MS);
-            boolean isVirtualTight = item.getCurrentInventory() <= Math.max(1, (int) Math.floor(item.getTargetInventory() * 0.4D));
-            boolean isScarcity = isSupplyCritical && isVirtualTight && hasSellEvidence && item.getBasePrice() < settings.maxBasePrice() * 0.99;
+            boolean hasBuyPressure = recentFlow > 0;
+            boolean isScarcity = isSupplyCritical && hasBuyPressure && item.getBasePrice() < settings.maxBasePrice() * 0.99;
 
             double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
-            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
+            
+            // Empty Shelf Bidding: if stock is 0 and no recent trades, we still want to raise the price to attract sellers.
+            boolean isEmptyShelfBidding = item.getPhysicalStock() == 0 && !hasRecentTrade && item.getBasePrice() < settings.maxBasePrice() * 0.99;
+
+            // noSupplyDecay is completely suppressed if we are in Empty Shelf Bidding mode
+            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D && !isEmptyShelfBidding;
 
             String tuningReason = "AI_ACTION";
             if (!hasRecentTrade) {
@@ -203,6 +208,10 @@ public class AIScheduler {
                 action = AiAction.UP_PRICE;
                 actionIndex = 1; // UP_PRICE index
                 tuningReason = "FORCED_SCARCITY";
+            } else if (isEmptyShelfBidding) {
+                action = AiAction.UP_PRICE;
+                actionIndex = 1; // UP_PRICE index
+                tuningReason = "EMPTY_SHELF_BIDDING";
             } else if (noSupplyDecay) {
                 action = AiAction.HOLD;
                 actionIndex = 2; // HOLD index
@@ -244,7 +253,7 @@ public class AIScheduler {
                 targetInventoryTuner.tune(
                     effectiveItem,
                     targetCfg,
-                    hasRecentTrade,
+                    hasRecentTrade || isEmptyShelfBidding,
                     recentVolume,
                     recentFlow,
                     dynamicAov,
