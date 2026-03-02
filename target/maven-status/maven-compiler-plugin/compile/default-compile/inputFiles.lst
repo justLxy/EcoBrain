@@ -25,6 +25,14 @@
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/placeholder/LeaderboardPlaceholderCache.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/placeholder/PersonalStatsPlaceholderCache.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/placeholder/PlaceholderApiHook.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardClaimRepository.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardCommandRunner.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardDefinition.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardType.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardsConfig.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardsGUI.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardsListener.java
+/Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/rewards/RewardsManager.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/safety/CircuitBreaker.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/serialization/ItemSerializer.java
 /Users/lvxuanyi/Desktop/EcoBrain/src/main/java/com/ecobrain/plugin/service/AMMCalculator.java

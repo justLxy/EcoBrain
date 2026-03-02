@@ -3,6 +3,7 @@ package com.ecobrain.plugin.command;
 import com.ecobrain.plugin.EcoBrainPlugin;
 import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
+import com.ecobrain.plugin.rewards.RewardsGUI;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
@@ -48,13 +49,14 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     private final EconomyService economyService;
     private final BulkSellGUI bulkSellGUI;
     private final MarketViewGUI marketViewGUI;
+    private final RewardsGUI rewardsGUI;
     private final AdminCommand adminCommand;
     private volatile long cooldownMs;
     private final ConcurrentHashMap<String, Long> playerActionLock = new ConcurrentHashMap<>();
 
     public EcoBrainCommand(JavaPlugin plugin, ItemSerializer itemSerializer, ItemMarketRepository repository,
                            MarketService marketService, EconomyService economyService, BulkSellGUI bulkSellGUI,
-                           MarketViewGUI marketViewGUI, AdminCommand adminCommand, long cooldownMs) {
+                           MarketViewGUI marketViewGUI, RewardsGUI rewardsGUI, AdminCommand adminCommand, long cooldownMs) {
         this.plugin = plugin;
         this.itemSerializer = itemSerializer;
         this.repository = repository;
@@ -62,6 +64,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         this.economyService = economyService;
         this.bulkSellGUI = bulkSellGUI;
         this.marketViewGUI = marketViewGUI;
+        this.rewardsGUI = rewardsGUI;
         this.adminCommand = adminCommand;
         this.cooldownMs = Math.max(0L, cooldownMs);
     }
@@ -84,6 +87,14 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         }
         if (!(sender instanceof Player player)) {
             sender.sendMessage("Only players can use this command.");
+            return true;
+        }
+        if ("rewards".equalsIgnoreCase(args[0]) || "reward".equalsIgnoreCase(args[0])) {
+            if (!player.hasPermission("ecobrain.rewards")) {
+                player.sendMessage(ChatColor.RED + "你没有权限打开奖励菜单。");
+                return true;
+            }
+            rewardsGUI.open(player);
             return true;
         }
         if (!economyService.isReady()) {
@@ -408,7 +419,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("sell", "buy", "market", "reload", "admin");
+            return List.of("sell", "buy", "market", "rewards", "reload", "admin");
         }
         if (args.length == 2 && "sell".equalsIgnoreCase(args[0])) {
             return List.of("all", "1", "16", "64");

@@ -2,6 +2,7 @@ package com.ecobrain.plugin.listener;
 
 import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
+import com.ecobrain.plugin.rewards.RewardsGUI;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
@@ -37,6 +38,7 @@ public class MarketViewListener implements Listener {
     private final MarketViewGUI marketViewGUI;
     private final BulkSellGUI bulkSellGUI;
     private final LeaderboardGUI leaderboardGUI;
+    private final RewardsGUI rewardsGUI;
     private final ItemMarketRepository repository;
     private final MarketService marketService;
     private final EconomyService economyService;
@@ -45,12 +47,13 @@ public class MarketViewListener implements Listener {
     private final ConcurrentHashMap<java.util.UUID, Long> clickCooldown = new ConcurrentHashMap<>();
 
     public MarketViewListener(Plugin plugin, MarketViewGUI marketViewGUI, BulkSellGUI bulkSellGUI,
-                              LeaderboardGUI leaderboardGUI, ItemMarketRepository repository, MarketService marketService,
+                              LeaderboardGUI leaderboardGUI, RewardsGUI rewardsGUI, ItemMarketRepository repository, MarketService marketService,
                               EconomyService economyService, ItemSerializer itemSerializer) {
         this.plugin = plugin;
         this.marketViewGUI = marketViewGUI;
         this.bulkSellGUI = bulkSellGUI;
         this.leaderboardGUI = leaderboardGUI;
+        this.rewardsGUI = rewardsGUI;
         this.repository = repository;
         this.marketService = marketService;
         this.economyService = economyService;
@@ -118,6 +121,14 @@ public class MarketViewListener implements Listener {
 
         if (rawSlot == MarketViewGUI.BULK_BUTTON_SLOT) {
             bulkSellGUI.open(player);
+            return;
+        }
+        if (rawSlot == MarketViewGUI.REWARDS_BUTTON_SLOT) {
+            if (!player.hasPermission("ecobrain.rewards")) {
+                player.sendMessage(ChatColor.RED + "你没有权限打开奖励菜单。");
+                return;
+            }
+            rewardsGUI.open(player);
             return;
         }
         if (rawSlot == MarketViewGUI.CATEGORY_BUTTON_SLOT) {

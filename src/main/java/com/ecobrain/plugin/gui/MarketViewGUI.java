@@ -27,6 +27,7 @@ public class MarketViewGUI {
     public static final int BULK_BUTTON_SLOT = 45;
     public static final int CATEGORY_BUTTON_SLOT = 46;
     public static final int SORT_BUTTON_SLOT = 47;
+    public static final int REWARDS_BUTTON_SLOT = 48;
     public static final int PREV_PAGE_SLOT = 52;
     public static final int NEXT_PAGE_SLOT = 53;
     public static final int INFO_SLOT = 49;
@@ -236,6 +237,13 @@ public class MarketViewGUI {
             inventory.setItem(i, namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " "));
         }
         inventory.setItem(BULK_BUTTON_SLOT, namedItem(Material.HOPPER, ChatColor.GREEN + "打开批量出售"));
+        ItemStack rewards = namedItem(Material.CHEST, ChatColor.LIGHT_PURPLE + "打开奖励菜单");
+        ItemMeta rewardsMeta = rewards.getItemMeta();
+        if (rewardsMeta != null) {
+            rewardsMeta.setLore(List.of(ChatColor.GRAY + "点击查看并领取达成奖励"));
+            rewards.setItemMeta(rewardsMeta);
+        }
+        inventory.setItem(REWARDS_BUTTON_SLOT, rewards);
         inventory.setItem(INFO_SLOT, namedItem(Material.BOOK, ChatColor.GOLD + "第 " + page + " / " + maxPage + " 页"));
 
         FilterState filterState = getFilterState(playerId);

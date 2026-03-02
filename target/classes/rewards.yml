@@ -1,0 +1,46 @@
+gui:
+  title: "&bEcoBrain - 奖励"
+  size: 54
+  border:
+    material: BLACK_STAINED_GLASS_PANE
+    name: "&8 "
+  back:
+    slot: 49
+    material: ARROW
+    name: "&e返回"
+
+# 奖励列表：
+# - type: SELL_MONEY / SELL_QTY / BUY_MONEY / BUY_QTY
+# - target: 目标值（金额为小数，数量为整数）
+# - commands: 领取时执行的命令（默认 console 执行）
+#   - "console: eco give {player} diamond 1"
+#   - "player: say 我领取了奖励！"
+rewards:
+  - id: "sell_money_10k"
+    type: "SELL_MONEY"
+    target: 10000.0
+    display:
+      material: EMERALD
+      name: "&a累计出售达到 &e{target}&a 金币"
+      lore:
+        - "&7进度: &f{progress}&7/&f{target}"
+        - "&7榜位: &e{rank}"
+        - "&7状态: {status}"
+        - "&8点击领取奖励"
+    commands:
+      - "console: eco give {player} diamond 1"
+
+  - id: "buy_qty_1000"
+    type: "BUY_QTY"
+    target: 1000
+    display:
+      material: DIAMOND
+      name: "&b累计消费数量达到 &e{target}&b 个"
+      lore:
+        - "&7进度: &f{progress}&7/&f{target}"
+        - "&7榜位: &e{rank}"
+        - "&7状态: {status}"
+        - "&8点击领取奖励"
+    commands:
+      - "console: eco give {player} emerald 10"
+

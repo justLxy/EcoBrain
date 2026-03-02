@@ -32,6 +32,8 @@ public class EcoBrainPlugin extends JavaPlugin {
     private DatabaseManager databaseManager;
     private ItemMarketRepository repository;
     private com.ecobrain.plugin.placeholder.PlaceholderApiHook placeholderApiHook;
+    private com.ecobrain.plugin.rewards.RewardsManager rewardsManager;
+    private com.ecobrain.plugin.rewards.RewardsGUI rewardsGUI;
     private EconomyService economyService;
     private AMMCalculator ammCalculator;
     private CircuitBreaker circuitBreaker;
@@ -66,6 +68,10 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
         this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui());
         this.leaderboardGUI = new LeaderboardGUI();
+        this.rewardsManager = new com.ecobrain.plugin.rewards.RewardsManager(this);
+        com.ecobrain.plugin.rewards.RewardClaimRepository rewardClaimRepository = new com.ecobrain.plugin.rewards.RewardClaimRepository(databaseManager);
+        this.rewardsGUI = new com.ecobrain.plugin.rewards.RewardsGUI(this, rewardsManager, repository, rewardClaimRepository);
+        com.ecobrain.plugin.rewards.RewardCommandRunner rewardCommandRunner = new com.ecobrain.plugin.rewards.RewardCommandRunner(this);
         AdminCommand adminCommand = new AdminCommand(this, repository);
 
         this.ecoBrainCommand = new EcoBrainCommand(
@@ -76,6 +82,7 @@ public class EcoBrainPlugin extends JavaPlugin {
             economyService,
             bulkSellGUI,
             marketViewGUI,
+            rewardsGUI,
             adminCommand,
             settings.trade().cooldownMs()
         );
@@ -86,9 +93,11 @@ public class EcoBrainPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(
             new BulkSellListener(this, bulkSellGUI, itemSerializer, marketService, economyService), this);
         Bukkit.getPluginManager().registerEvents(
-            new MarketViewListener(this, marketViewGUI, bulkSellGUI, leaderboardGUI, repository, marketService, economyService, itemSerializer), this);
+            new MarketViewListener(this, marketViewGUI, bulkSellGUI, leaderboardGUI, rewardsGUI, repository, marketService, economyService, itemSerializer), this);
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
+        Bukkit.getPluginManager().registerEvents(
+            new com.ecobrain.plugin.rewards.RewardsListener(this, rewardsGUI, rewardsManager, repository, rewardClaimRepository, rewardCommandRunner), this);
 
         this.placeholderApiHook = new com.ecobrain.plugin.placeholder.PlaceholderApiHook(this, repository);
         this.placeholderApiHook.registerIfPresent();
@@ -162,6 +171,9 @@ public class EcoBrainPlugin extends JavaPlugin {
         bulkSellGUI.applySettings(settings.gui());
         marketViewGUI.applySettings(settings.gui());
         ecoBrainCommand.updateCooldown(settings.trade().cooldownMs());
+        if (rewardsManager != null) {
+            rewardsManager.reload();
+        }
         aiScheduler.updateSettingsAndRestart(settings.ai(), settings);
     }
 }

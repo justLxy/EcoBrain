@@ -16,3 +16,6 @@ permissions:
   ecobrain.admin:
     description: EcoBrain 管理权限
     default: op
+  ecobrain.rewards:
+    description: EcoBrain 奖励菜单权限
+    default: true

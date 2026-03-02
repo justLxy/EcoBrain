@@ -89,12 +89,21 @@ public class DatabaseManager {
                 created_at INTEGER NOT NULL
             )
             """;
+        String createRewardClaimsSql = """
+            CREATE TABLE IF NOT EXISTS ecobrain_reward_claims (
+                player_uuid TEXT NOT NULL,
+                reward_id TEXT NOT NULL,
+                claimed_at INTEGER NOT NULL,
+                PRIMARY KEY (player_uuid, reward_id)
+            )
+            """;
         String indexInventorySql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_inventory ON ecobrain_items(current_inventory)";
         String indexPhysicalSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_physical ON ecobrain_items(physical_stock)";
         String indexTradeTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_time ON ecobrain_trade_stats(created_at)";
         String indexPlayerTxSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_player_tx ON ecobrain_player_transactions(player_uuid, created_at)";
         String indexAiTuningTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_time ON ecobrain_ai_tuning_events(created_at)";
         String indexAiTuningItemSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_item ON ecobrain_ai_tuning_events(item_hash, created_at)";
+        String indexRewardClaimsSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_reward_claims_uuid ON ecobrain_reward_claims(player_uuid, claimed_at)";
 
         try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
             statement.execute(createItemsSql);
@@ -103,12 +112,14 @@ public class DatabaseManager {
             statement.execute(createTradeStatSql);
             statement.execute(createPlayerTxSql);
             statement.execute(createAiTuningEventSql);
+            statement.execute(createRewardClaimsSql);
             statement.execute(indexInventorySql);
             statement.execute(indexPhysicalSql);
             statement.execute(indexTradeTimeSql);
             statement.execute(indexPlayerTxSql);
             statement.execute(indexAiTuningTimeSql);
             statement.execute(indexAiTuningItemSql);
+            statement.execute(indexRewardClaimsSql);
         } catch (SQLException e) {
             plugin.getLogger().severe("Failed to initialize database schema: " + e.getMessage());
             throw new IllegalStateException("Failed to initialize schema", e);
