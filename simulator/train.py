@@ -78,6 +78,11 @@ def export_to_onnx(model, filename):
     dummy_input = torch.randn(1, 6) # [saturation, flow, inflation, elasticity, volatility, is_ipo]
     
     # Export to ONNX
+    # We must move the model back to CPU before export because 
+    # ONNX export tracing for some operators is not fully supported on MPS
+    onnx_policy.cpu()
+    dummy_input = dummy_input.cpu()
+    
     torch.onnx.export(
         onnx_policy,
         dummy_input,
