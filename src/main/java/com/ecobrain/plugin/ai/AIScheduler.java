@@ -189,8 +189,8 @@ public class AIScheduler {
 
             double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
             
-            // Empty Shelf Bidding: if stock is 0 and no recent trades, we still want to raise the price to attract sellers.
-            boolean isEmptyShelfBidding = item.getPhysicalStock() == 0 && !hasRecentTrade && item.getBasePrice() < settings.maxBasePrice() * 0.99;
+            // Empty Shelf Bidding: if stock is <= critical_inventory and no recent trades, we still want to raise the price to attract sellers.
+            boolean isEmptyShelfBidding = isSupplyCritical && !hasRecentTrade && item.getBasePrice() < settings.maxBasePrice() * 0.99;
 
             // noSupplyDecay is completely suppressed if we are in Empty Shelf Bidding mode
             boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D && !isEmptyShelfBidding;
