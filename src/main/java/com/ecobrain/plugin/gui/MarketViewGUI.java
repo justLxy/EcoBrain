@@ -129,6 +129,7 @@ public class MarketViewGUI {
                 "&8(内部虚拟池: {virtual_inventory})",
                 "&a左键: 购买 1 个",
                 "&aShift+左键: 购买 1 组",
+                "&aShift+右键: 购买 10 组",
                 "&c管理员右键: 删除物品档案"
             );
             return;
@@ -138,7 +139,7 @@ public class MarketViewGUI {
 
     /**
      * 打开市场主菜单。
-     * 菜单支持：直接左键购买 1 个，Shift+左键购买 1 组，右键(管理员)删除该物品档案。
+     * 菜单支持：左键购买 1 个，Shift+左键购买 1 组，Shift+右键购买 10 组，右键(管理员)删除该物品档案。
      */
     public void open(Player player, List<ItemMarketRecord> allRecords, int page) {
         int maxPage = Math.max(1, (int) Math.ceil(allRecords.size() / (double) PAGE_SIZE));

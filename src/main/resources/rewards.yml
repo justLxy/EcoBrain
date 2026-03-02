@@ -19,226 +19,217 @@ gui:
 # 本文件内置的“默认奖励内容”说明（你可以按需修改每条 rewards[*].commands）：
 #
 # - 数量档位奖励（SELL_QTY / BUY_QTY）默认给 jyssp（金钥匙碎片）数量：
-#   10 -> 1
-#   100 -> 2
-#   250 -> 3
-#   500 -> 4
-#   1000 -> 5
-#   2500 -> 8
-#   5000 -> 12
-#   10000 -> 18
-#   50000 -> 30
+#   SELL 档位：100 -> 5, 1000 -> 32, 2500 -> 64, 5000 -> 128, 10000 -> 256, 25000 -> 512, 50000 -> 1024, 100000 -> 2048, 500000 -> 4096
+#   BUY 档位：在 SELL 基础上去掉最右一位零（1, 10, 25, 50, 100, 250, 500, 1000, 5000），奖励数量同上对应档位。
 #
 # - 金额档位奖励（SELL_MONEY / BUY_MONEY）默认给 jyssp 数量：
-#   100 -> 1
-#   1000 -> 2
-#   10000 -> 3
-#   100000 -> 5
-#   1000000 -> 8
-#   10000000 -> 12
-#   100000000 -> 20
+#   SELL 档位：1000 -> 5, 10000 -> 32, 100000 -> 64, 1000000 -> 128, 10000000 -> 256, 100000000 -> 512, 1000000000 -> 1024
+#   BUY 档位：在 SELL 基础上去掉最右一位零（100, 1000, 10000, 100000, 1000000, 10000000），奖励数量同上对应档位。
+#
+# 注意：玩家“卖给系统”的奖励（SELL_QTY / SELL_MONEY）默认在上述基础上【减半】。
+# 若减半后出现小数（例如 5/2=2.5），默认向上取整（2.5 -> 3）。
 rewards:
   # =========================
-  # 数量档位：10/100/250/500/1000/2500/5000/10000/50000
+  # 数量档位：SELL 100/1000/2500/5000/10000/25000/50000/100000/500000；BUY 1/10/25/50/100/250/500/1000/5000
   # =========================
 
-  # 卖出数量（SELL_QTY）
-  - id: "sell_qty_10"
-    type: "SELL_QTY"
-    target: 10
-    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 1" ]
-
+  # 卖出数量（SELL_QTY）- 档位与奖励如注释，SELL 默认减半
   - id: "sell_qty_100"
     type: "SELL_QTY"
     target: 100
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 2" ]
-
-  - id: "sell_qty_250"
-    type: "SELL_QTY"
-    target: 250
-    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
     commands: [ "console: mm items give {player} jyssp 3" ]
-
-  - id: "sell_qty_500"
-    type: "SELL_QTY"
-    target: 500
-    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 4" ]
 
   - id: "sell_qty_1000"
     type: "SELL_QTY"
     target: 1000
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 5" ]
+    commands: [ "console: mm items give {player} jyssp 16" ]
 
   - id: "sell_qty_2500"
     type: "SELL_QTY"
     target: 2500
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 8" ]
+    commands: [ "console: mm items give {player} jyssp 32" ]
 
   - id: "sell_qty_5000"
     type: "SELL_QTY"
     target: 5000
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 12" ]
+    commands: [ "console: mm items give {player} jyssp 64" ]
 
   - id: "sell_qty_10000"
     type: "SELL_QTY"
     target: 10000
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 18" ]
+    commands: [ "console: mm items give {player} jyssp 128" ]
+
+  - id: "sell_qty_25000"
+    type: "SELL_QTY"
+    target: 25000
+    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 256" ]
 
   - id: "sell_qty_50000"
     type: "SELL_QTY"
     target: 50000
     display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 30" ]
+    commands: [ "console: mm items give {player} jyssp 512" ]
 
-  # 买入数量（BUY_QTY）
+  - id: "sell_qty_100000"
+    type: "SELL_QTY"
+    target: 100000
+    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 1024" ]
+
+  - id: "sell_qty_500000"
+    type: "SELL_QTY"
+    target: 500000
+    display: { material: CHEST, name: "&a累计卖出 &e{target}&a 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 2048" ]
+
+  # 买入数量（BUY_QTY）- 档位为 SELL 去掉最右一位零
+  - id: "buy_qty_1"
+    type: "BUY_QTY"
+    target: 1
+    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 5" ]
+
   - id: "buy_qty_10"
     type: "BUY_QTY"
     target: 10
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 1" ]
+    commands: [ "console: mm items give {player} jyssp 32" ]
+
+  - id: "buy_qty_25"
+    type: "BUY_QTY"
+    target: 25
+    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 64" ]
+
+  - id: "buy_qty_50"
+    type: "BUY_QTY"
+    target: 50
+    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 128" ]
 
   - id: "buy_qty_100"
     type: "BUY_QTY"
     target: 100
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 2" ]
+    commands: [ "console: mm items give {player} jyssp 256" ]
 
   - id: "buy_qty_250"
     type: "BUY_QTY"
     target: 250
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 3" ]
+    commands: [ "console: mm items give {player} jyssp 512" ]
 
   - id: "buy_qty_500"
     type: "BUY_QTY"
     target: 500
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 4" ]
+    commands: [ "console: mm items give {player} jyssp 1024" ]
 
   - id: "buy_qty_1000"
     type: "BUY_QTY"
     target: 1000
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 5" ]
-
-  - id: "buy_qty_2500"
-    type: "BUY_QTY"
-    target: 2500
-    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 8" ]
+    commands: [ "console: mm items give {player} jyssp 2048" ]
 
   - id: "buy_qty_5000"
     type: "BUY_QTY"
     target: 5000
     display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 12" ]
-
-  - id: "buy_qty_10000"
-    type: "BUY_QTY"
-    target: 10000
-    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 18" ]
-
-  - id: "buy_qty_50000"
-    type: "BUY_QTY"
-    target: 50000
-    display: { material: BARREL, name: "&b累计买入 &e{target}&b 个", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 30" ]
+    commands: [ "console: mm items give {player} jyssp 4096" ]
 
   # =========================
-  # 金额档位：100/1000/10000/100000/1000000/10000000/100000000
+  # 金额档位：SELL 1000/10000/.../100000000；BUY 100/1000/10000/100000/1000000/10000000
   # =========================
 
-  # 卖出金额（SELL_MONEY）
-  - id: "sell_money_100"
-    type: "SELL_MONEY"
-    target: 100.0
-    display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 1" ]
-
+  # 卖出金额（SELL_MONEY）- 档位如注释，SELL 默认减半
   - id: "sell_money_1000"
     type: "SELL_MONEY"
     target: 1000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 2" ]
+    commands: [ "console: mm items give {player} jyssp 3" ]
 
   - id: "sell_money_10000"
     type: "SELL_MONEY"
     target: 10000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 3" ]
+    commands: [ "console: mm items give {player} jyssp 16" ]
 
   - id: "sell_money_100000"
     type: "SELL_MONEY"
     target: 100000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 5" ]
+    commands: [ "console: mm items give {player} jyssp 32" ]
 
   - id: "sell_money_1000000"
     type: "SELL_MONEY"
     target: 1000000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 8" ]
+    commands: [ "console: mm items give {player} jyssp 64" ]
 
   - id: "sell_money_10000000"
     type: "SELL_MONEY"
     target: 10000000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 12" ]
+    commands: [ "console: mm items give {player} jyssp 128" ]
 
   - id: "sell_money_100000000"
     type: "SELL_MONEY"
     target: 100000000.0
     display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 20" ]
+    commands: [ "console: mm items give {player} jyssp 256" ]
 
-  # 买入金额（BUY_MONEY）
+  - id: "sell_money_1000000000"
+    type: "SELL_MONEY"
+    target: 1000000000.0
+    display: { material: EMERALD, name: "&a累计出售金额达到 &e{target}&a", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 512" ]
+
+  # 买入金额（BUY_MONEY）- 档位为 SELL 去掉最右一位零
+  - id: "buy_money_10"
+    type: "BUY_MONEY"
+    target: 10.0
+    display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
+    commands: [ "console: mm items give {player} jyssp 5" ]
+
   - id: "buy_money_100"
     type: "BUY_MONEY"
     target: 100.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 1" ]
+    commands: [ "console: mm items give {player} jyssp 32" ]
 
   - id: "buy_money_1000"
     type: "BUY_MONEY"
     target: 1000.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 2" ]
+    commands: [ "console: mm items give {player} jyssp 64" ]
 
   - id: "buy_money_10000"
     type: "BUY_MONEY"
     target: 10000.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 3" ]
+    commands: [ "console: mm items give {player} jyssp 128" ]
 
   - id: "buy_money_100000"
     type: "BUY_MONEY"
     target: 100000.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 5" ]
+    commands: [ "console: mm items give {player} jyssp 256" ]
 
   - id: "buy_money_1000000"
     type: "BUY_MONEY"
     target: 1000000.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 8" ]
+    commands: [ "console: mm items give {player} jyssp 512" ]
 
   - id: "buy_money_10000000"
     type: "BUY_MONEY"
     target: 10000000.0
     display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 12" ]
-
-  - id: "buy_money_100000000"
-    type: "BUY_MONEY"
-    target: 100000000.0
-    display: { material: DIAMOND, name: "&b累计消费金额达到 &e{target}&b", lore: [ "&7进度: &f{progress}&7/&f{target}", "&7状态: {status}", "&8点击领取奖励" ] }
-    commands: [ "console: mm items give {player} jyssp 20" ]
+    commands: [ "console: mm items give {player} jyssp 1024" ]
 

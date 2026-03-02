@@ -543,6 +543,23 @@ public class ItemMarketRepository {
     }
 
     /**
+     * 批量设置所有已存在风险记录的冻结状态。
+     * 注意：ecobrain_risk 表中不存在的 item_hash 视为未冻结，因此“全体解冻”只需更新已有行即可。
+     *
+     * @return 被更新的行数（SQLite 可能返回 0 表示未知）
+     */
+    public int setAllFrozen(boolean frozen) {
+        String sql = "UPDATE ecobrain_risk SET is_frozen = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, frozen ? 1 : 0);
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to set all frozen", e);
+        }
+    }
+
+    /**
      * 更新或读取当天开盘价，用于熔断判断。
      */
     public double upsertAndGetDayOpenPrice(String itemHash, double currentPrice, String dayKey) {

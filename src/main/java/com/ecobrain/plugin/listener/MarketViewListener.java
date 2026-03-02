@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 市场主菜单交互监听：
  * - 左键购买 1 个
  * - Shift+左键购买 1 组
+ * - Shift+右键购买 10 组
  * - 管理员右键删除物品档案
  * - 底栏按钮可跳转批量出售与翻页
  */
@@ -157,7 +158,8 @@ public class MarketViewListener implements Listener {
             return;
         }
 
-        if (event.isRightClick() && player.hasPermission("ecobrain.admin")) {
+        // 管理员：右键(非 Shift)删除档案；Shift+右键保留给“买 10 组”
+        if (event.isRightClick() && !event.isShiftClick() && player.hasPermission("ecobrain.admin")) {
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
                 repository.deleteByHash(itemHash);
                 Bukkit.getScheduler().runTask(plugin, () -> {
@@ -168,10 +170,12 @@ public class MarketViewListener implements Listener {
             return;
         }
 
-        if (!event.isLeftClick()) {
+        boolean buyOne = event.isLeftClick() && !event.isShiftClick();
+        boolean buyOneStack = event.isLeftClick() && event.isShiftClick();
+        boolean buyTenStacks = event.isRightClick() && event.isShiftClick();
+        if (!buyOne && !buyOneStack && !buyTenStacks) {
             return;
         }
-        boolean shiftClick = event.isShiftClick();
         if (!economyService.isReady()) {
             player.sendMessage(ChatColor.RED + "Vault 经济未就绪，请联系管理员。");
             return;
@@ -193,7 +197,8 @@ public class MarketViewListener implements Listener {
                 }
                 ItemMarketRecord record = optionalRecord.get();
                 ItemStack template = itemSerializer.deserializeFromBase64(record.getItemBase64());
-                int amount = shiftClick ? Math.max(1, template.getMaxStackSize()) : 1;
+                int stackSize = Math.max(1, template.getMaxStackSize());
+                int amount = buyTenStacks ? Math.max(1, stackSize * 10) : (buyOneStack ? stackSize : 1);
 
                 int requestedAmount = amount;
                 int currentPhysical = record.getPhysicalStock();

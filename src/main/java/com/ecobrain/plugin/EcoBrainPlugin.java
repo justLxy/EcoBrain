@@ -72,7 +72,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         com.ecobrain.plugin.rewards.RewardClaimRepository rewardClaimRepository = new com.ecobrain.plugin.rewards.RewardClaimRepository(databaseManager);
         this.rewardsGUI = new com.ecobrain.plugin.rewards.RewardsGUI(this, rewardsManager, repository, rewardClaimRepository);
         com.ecobrain.plugin.rewards.RewardCommandRunner rewardCommandRunner = new com.ecobrain.plugin.rewards.RewardCommandRunner(this);
-        AdminCommand adminCommand = new AdminCommand(this, repository);
+        AdminCommand adminCommand = new AdminCommand(this, repository, itemSerializer);
 
         this.ecoBrainCommand = new EcoBrainCommand(
             this,
