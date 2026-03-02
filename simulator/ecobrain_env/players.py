@@ -64,6 +64,58 @@ class VeteranPlayer(Player):
             
         return 0, 0
 
+class ReplayPlayer(Player):
+    """
+    Driven by probabilities and amounts extracted from a real server's CSV data.
+    """
+    def __init__(self, name, buy_prob, sell_prob, avg_buy_amt, avg_sell_amt):
+        super().__init__(name, 10000000) # Give enough balance
+        self.buy_prob = buy_prob
+        self.sell_prob = sell_prob
+        self.buy_amount = avg_buy_amt
+        self.sell_amount = avg_sell_amt
+        
+    def act(self, amm, step):
+        action_rand = np.random.random()
+        if action_rand < self.buy_prob:
+            cost = amm.simulate_buy(self.buy_amount)
+            if self.balance >= cost:
+                actual_cost = amm.execute_buy(self.buy_amount)
+                self.balance -= actual_cost
+                return self.buy_amount, -actual_cost
+        elif action_rand < self.buy_prob + self.sell_prob:
+            revenue = amm.execute_sell(self.sell_amount)
+            self.balance += revenue
+            return -self.sell_amount, revenue
+            
+        return 0, 0
+
+class ReplayPlayer(Player):
+    """
+    Driven by probabilities and amounts extracted from a real server's CSV data.
+    """
+    def __init__(self, name, buy_prob, sell_prob, avg_buy_amt, avg_sell_amt):
+        super().__init__(name, 10000000) # Give enough balance
+        self.buy_prob = buy_prob
+        self.sell_prob = sell_prob
+        self.buy_amount = avg_buy_amt
+        self.sell_amount = avg_sell_amt
+        
+    def act(self, amm, step):
+        action_rand = np.random.random()
+        if action_rand < self.buy_prob:
+            cost = amm.simulate_buy(self.buy_amount)
+            if self.balance >= cost:
+                actual_cost = amm.execute_buy(self.buy_amount)
+                self.balance -= actual_cost
+                return self.buy_amount, -actual_cost
+        elif action_rand < self.buy_prob + self.sell_prob:
+            revenue = amm.execute_sell(self.sell_amount)
+            self.balance += revenue
+            return -self.sell_amount, revenue
+            
+        return 0, 0
+
 class Arbitrageur(Player):
     """
     Looks for price discrepancies. Buys when price is low and TWAP is high, sells when price is high and TWAP is low.

@@ -1,8 +1,9 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import csv
 from .amm import AMM
-from .players import NewPlayer, VeteranPlayer, Arbitrageur
+from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
 
 class EcoBrainEnv(gym.Env):
     """
@@ -10,10 +11,11 @@ class EcoBrainEnv(gym.Env):
     """
     metadata = {'render_modes': ['human']}
 
-    def __init__(self, value_type="low"):
+    def __init__(self, value_type="low", dataset_path=None):
         super().__init__()
         
         self.value_type = value_type # "low", "mid", "high"
+        self.dataset_path = dataset_path
         
         # Action space: 
         # [0]: Base price multiplier (-20% to +20%, mapped from [-1, 1])
@@ -54,19 +56,25 @@ class EcoBrainEnv(gym.Env):
         
         # Initialize players
         self.players = []
-        if self.value_type == "high":
-            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.01, buy_probability=0.1, sell_amount=1, buy_amount=1)) # Rarely gets boss drops
-            self.players.append(NewPlayer("New1", buy_probability=0.01, sell_probability=0.0, amount=1)) # Very rarely buys
-            self.players.append(Arbitrageur("Arb1", balance=500000))
-        elif self.value_type == "mid":
-            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.4, buy_probability=0.05, sell_amount=16, buy_amount=5))
-            self.players.append(NewPlayer("New1", buy_probability=0.1, sell_probability=0.05, amount=5))
-            self.players.append(Arbitrageur("Arb1", balance=50000))
-        else: # low
-            self.players.append(VeteranPlayer("Veteran1", sell_probability=0.9, buy_probability=0.01, sell_amount=128, buy_amount=10))
-            self.players.append(VeteranPlayer("Veteran2", sell_probability=0.8, buy_probability=0.02, sell_amount=64, buy_amount=10))
-            self.players.append(NewPlayer("New1", buy_probability=0.2, sell_probability=0.1, amount=16))
-            self.players.append(Arbitrageur("Arb1", balance=10000))
+        
+        if self.dataset_path and os.path.exists(self.dataset_path):
+            # Load real online data to create ReplayPlayers
+            self._load_dataset_players()
+            self.players.append(Arbitrageur("Arb1", balance=50000)) # Always keep the arbitrageur to punish bad AI
+        else:
+            if self.value_type == "high":
+                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.01, buy_probability=0.1, sell_amount=1, buy_amount=1)) # Rarely gets boss drops
+                self.players.append(NewPlayer("New1", buy_probability=0.01, sell_probability=0.0, amount=1)) # Very rarely buys
+                self.players.append(Arbitrageur("Arb1", balance=500000))
+            elif self.value_type == "mid":
+                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.4, buy_probability=0.05, sell_amount=16, buy_amount=5))
+                self.players.append(NewPlayer("New1", buy_probability=0.1, sell_probability=0.05, amount=5))
+                self.players.append(Arbitrageur("Arb1", balance=50000))
+            else: # low
+                self.players.append(VeteranPlayer("Veteran1", sell_probability=0.9, buy_probability=0.01, sell_amount=128, buy_amount=10))
+                self.players.append(VeteranPlayer("Veteran2", sell_probability=0.8, buy_probability=0.02, sell_amount=64, buy_amount=10))
+                self.players.append(NewPlayer("New1", buy_probability=0.2, sell_probability=0.1, amount=16))
+                self.players.append(Arbitrageur("Arb1", balance=10000))
             
         self.step_count = 0
         
@@ -80,6 +88,56 @@ class EcoBrainEnv(gym.Env):
         # State: [saturation, flow, inflation, elasticity, volatility, is_ipo]
         return self._get_obs(), {}
         
+    def _load_dataset_players(self):
+        # A simple replay logic: extract average buy/sell frequency and volume from CSV
+        # and create statistical players to mimic the real server's behavior for this value_type.
+        # This makes the training automatic and data-driven without manual coding.
+        try:
+            total_buys = 0
+            total_sells = 0
+            buy_vol = 0
+            sell_vol = 0
+            record_count = 0
+            
+            with open(self.dataset_path, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    record_count += 1
+                    qty = int(row['quantity'])
+                    # Simple heuristic to guess if row belongs to this value type based on total_price/qty
+                    if qty > 0:
+                        price_per_item = float(row['total_price']) / qty
+                        if (self.value_type == "high" and price_per_item < 50000) or \
+                           (self.value_type == "low" and price_per_item > 1000) or \
+                           (self.value_type == "mid" and (price_per_item < 1000 or price_per_item > 50000)):
+                           continue # Skip records that don't match this tier
+                           
+                    if row['trade_type'] == 'BUY':
+                        total_buys += 1
+                        buy_vol += qty
+                    elif row['trade_type'] == 'SELL':
+                        total_sells += 1
+                        sell_vol += qty
+                        
+            if record_count > 0:
+                # Convert to probabilities assuming the CSV covers ~1000 AI cycles
+                buy_prob = min(0.9, total_buys / 1000.0)
+                sell_prob = min(0.9, total_sells / 1000.0)
+                avg_buy_amt = max(1, int(buy_vol / max(1, total_buys)))
+                avg_sell_amt = max(1, int(sell_vol / max(1, total_sells)))
+                
+                print(f"[{self.value_type}] Loaded from CSV: BuyProb={buy_prob:.2f}(amt:{avg_buy_amt}), SellProb={sell_prob:.2f}(amt:{avg_sell_amt})")
+                self.players.append(ReplayPlayer("ReplayData", buy_prob, sell_prob, avg_buy_amt, avg_sell_amt))
+            else:
+                print(f"Warning: Dataset {self.dataset_path} is empty. Falling back to default players.")
+                self.dataset_path = None
+                self.reset() # Re-init without dataset
+                
+        except Exception as e:
+            print(f"Error loading dataset: {e}. Falling back to default players.")
+            self.dataset_path = None
+            self.reset()
+            
     def _get_obs(self):
         saturation = self.amm.current_inventory / max(1, self.amm.target_inventory)
         flow = self.recent_buys - self.recent_sells

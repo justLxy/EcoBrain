@@ -1,17 +1,19 @@
 import os
+import argparse
 import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from ecobrain_env import EcoBrainEnv
 
-# Register envs if needed or just use directly
-import gymnasium as gym
-
-def train_model(value_type="low", total_timesteps=100000):
-    print(f"Training PPO for {value_type}-value items...")
-    
-    env = EcoBrainEnv(value_type=value_type)
+def train_model(value_type="low", total_timesteps=100000, dataset_path=None):
+    if dataset_path and os.path.exists(dataset_path):
+        print(f"Training PPO for {value_type}-value items using real server data from: {dataset_path}")
+        env = EcoBrainEnv(value_type=value_type, dataset_path=dataset_path)
+    else:
+        print(f"Training PPO for {value_type}-value items using simulated data...")
+        env = EcoBrainEnv(value_type=value_type)
+        
     check_env(env)
     
     model = PPO("MlpPolicy", env, verbose=1, 
@@ -79,16 +81,20 @@ def export_to_onnx(model, filename):
     print(f"Exported to {filename}")
 
 if __name__ == "__main__":
-    # In a real scenario we'd train for millions of steps. Here we do a short run to prove the concept.
+    parser = argparse.ArgumentParser(description="EcoBrain 2.0 PPO Training & Export")
+    parser.add_argument("--dataset", type=str, help="Path to the real server CSV data for online fine-tuning", default=None)
+    parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=1000000)
+    args = parser.parse_args()
+
     print("Starting EcoBrain 2.0 PPO Training & Export")
     
-    model_low = train_model(value_type="low", total_timesteps=1000000)
+    model_low = train_model(value_type="low", total_timesteps=args.timesteps, dataset_path=args.dataset)
     export_to_onnx(model_low, "ecobrain_low_value.onnx")
     
-    model_mid = train_model(value_type="mid", total_timesteps=1000000)
+    model_mid = train_model(value_type="mid", total_timesteps=args.timesteps, dataset_path=args.dataset)
     export_to_onnx(model_mid, "ecobrain_mid_value.onnx")
     
-    model_high = train_model(value_type="high", total_timesteps=1000000)
+    model_high = train_model(value_type="high", total_timesteps=args.timesteps, dataset_path=args.dataset)
     export_to_onnx(model_high, "ecobrain_high_value.onnx")
     
     print("All done!")
