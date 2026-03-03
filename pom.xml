@@ -102,6 +102,7 @@
                             <artifactSet>
                                 <includes>
                                     <include>org.xerial:sqlite-jdbc</include>
+                                    <include>com.microsoft.onnxruntime:onnxruntime</include>
                                 </includes>
                             </artifactSet>
                             <!-- 移除不需要的平台架构文件，大幅减小体积 -->
