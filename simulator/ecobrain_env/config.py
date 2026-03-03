@@ -96,6 +96,9 @@ REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 50.0
 REWARD_SCALE = 1e-3
 REWARD_CLIP_ABS = 1e4  # 设为 None 可关闭裁剪
 
+# Penalize overly aggressive control actions (helps avoid pushing base_price/k to extremes early).
+REWARD_ACTION_L1_WEIGHT = 200.0
+
 # ==========================================
 # 各阶级物品参数 (Item Tier Parameters)
 # ==========================================

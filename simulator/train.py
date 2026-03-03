@@ -266,6 +266,12 @@ def train_model(
     log_formats: str | None = None,
     post_eval_episodes: int = 12,
 ):
+    # Reward normalization can hide the effect of strong shaping penalties and slow down convergence
+    # for band-stabilization tasks (especially low/mid). Keep obs normalization but disable reward norm.
+    if value_type in ("low", "mid") and bool(norm_reward):
+        print(f"Note: disabling reward normalization for {value_type} (norm_reward=False) for better band learning.")
+        norm_reward = False
+
     using_real = bool(dataset_path and os.path.exists(dataset_path))
     if using_real:
         print(f"Training PPO for {value_type}-value items using real server data from: {dataset_path}")

@@ -41,6 +41,7 @@ from .config import (
     REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW,
     REWARD_SCALE,
     REWARD_CLIP_ABS,
+    REWARD_ACTION_L1_WEIGHT,
     ECOSYSTEM_RANDOMIZATION,
     MARKET_REGIMES,
     SIMULATED_PLAYER_ARCHETYPES,
@@ -477,6 +478,12 @@ class EcoBrainEnv(gym.Env):
             - float(inflation_penalty)
             - (float(inv_weight) * float(inventory_imbalance))
         )
+
+        # Mild action penalty to discourage saturating controls.
+        try:
+            reward -= float(REWARD_ACTION_L1_WEIGHT) * (abs(float(action[0])) + abs(float(action[1])))
+        except Exception:
+            pass
         
         # Specific shaping to help it learn the difference between garbage and gold
         price = float(self.amm.get_current_price())
