@@ -26,16 +26,22 @@ class NewPlayer(Player):
         action_rand = np.random.random()
         if action_rand < self.buy_probability:
             # Buy
-            cost = amm.simulate_buy(self.amount)
-            if self.balance >= cost:
-                actual_cost = amm.execute_buy(self.amount)
-                self.balance -= actual_cost
-                return self.amount, -actual_cost
+            try:
+                cost = amm.simulate_buy(self.amount)
+                if self.balance >= cost:
+                    actual_cost = amm.execute_buy(self.amount)
+                    self.balance -= actual_cost
+                    return self.amount, -actual_cost
+            except Exception:
+                return 0, 0
         elif action_rand < self.buy_probability + self.sell_probability:
             # Sell
-            revenue = amm.execute_sell(self.amount)
-            self.balance += revenue
-            return -self.amount, revenue
+            try:
+                revenue = amm.execute_sell(self.amount)
+                self.balance += revenue
+                return -self.amount, revenue
+            except Exception:
+                return 0, 0
             
         return 0, 0
 
@@ -55,16 +61,22 @@ class VeteranPlayer(Player):
         action_rand = np.random.random()
         if action_rand < self.buy_probability:
             # Buy
-            cost = amm.simulate_buy(self.buy_amount)
-            if self.balance >= cost:
-                actual_cost = amm.execute_buy(self.buy_amount)
-                self.balance -= actual_cost
-                return self.buy_amount, -actual_cost
+            try:
+                cost = amm.simulate_buy(self.buy_amount)
+                if self.balance >= cost:
+                    actual_cost = amm.execute_buy(self.buy_amount)
+                    self.balance -= actual_cost
+                    return self.buy_amount, -actual_cost
+            except Exception:
+                return 0, 0
         elif action_rand < self.buy_probability + self.sell_probability:
             # Sell
-            revenue = amm.execute_sell(self.sell_amount)
-            self.balance += revenue
-            return -self.sell_amount, revenue
+            try:
+                revenue = amm.execute_sell(self.sell_amount)
+                self.balance += revenue
+                return -self.sell_amount, revenue
+            except Exception:
+                return 0, 0
             
         return 0, 0
 
@@ -82,15 +94,21 @@ class ReplayPlayer(Player):
     def act(self, amm, step):
         action_rand = np.random.random()
         if action_rand < self.buy_prob:
-            cost = amm.simulate_buy(self.buy_amount)
-            if self.balance >= cost:
-                actual_cost = amm.execute_buy(self.buy_amount)
-                self.balance -= actual_cost
-                return self.buy_amount, -actual_cost
+            try:
+                cost = amm.simulate_buy(self.buy_amount)
+                if self.balance >= cost:
+                    actual_cost = amm.execute_buy(self.buy_amount)
+                    self.balance -= actual_cost
+                    return self.buy_amount, -actual_cost
+            except Exception:
+                return 0, 0
         elif action_rand < self.buy_prob + self.sell_prob:
-            revenue = amm.execute_sell(self.sell_amount)
-            self.balance += revenue
-            return -self.sell_amount, revenue
+            try:
+                revenue = amm.execute_sell(self.sell_amount)
+                self.balance += revenue
+                return -self.sell_amount, revenue
+            except Exception:
+                return 0, 0
             
         return 0, 0
 
@@ -110,22 +128,28 @@ class Arbitrageur(Player):
         # If current price is significantly lower than TWAP, buy
         if current_price < twap * 0.8:
             quantity = 64
-            cost = amm.simulate_buy(quantity)
-            if self.balance >= cost:
-                amm.execute_buy(quantity)
-                self.balance -= cost
-                self.inventory += quantity
-                return quantity, -cost
+            try:
+                cost = amm.simulate_buy(quantity)
+                if self.balance >= cost:
+                    amm.execute_buy(quantity)
+                    self.balance -= cost
+                    self.inventory += quantity
+                    return quantity, -cost
+            except Exception:
+                return 0, 0
                 
         # If current price is significantly higher than TWAP and we have inventory, sell
         elif current_price > twap * 1.2 and self.inventory > 0:
             quantity = min(self.inventory, 64)
-            revenue = amm.simulate_sell(quantity)
-            # Only sell if dynamic spread doesn't eat all profits
-            if revenue > quantity * twap:
-                amm.execute_sell(quantity)
-                self.balance += revenue
-                self.inventory -= quantity
-                return -quantity, revenue
+            try:
+                revenue = amm.simulate_sell(quantity)
+                # Only sell if dynamic spread doesn't eat all profits
+                if revenue > quantity * twap:
+                    amm.execute_sell(quantity)
+                    self.balance += revenue
+                    self.inventory -= quantity
+                    return -quantity, revenue
+            except Exception:
+                return 0, 0
                 
         return 0, 0

@@ -5,17 +5,55 @@ EcoBrain 2.0 模拟器全局配置文件 (Simulator Configuration)
 """
 
 # ==========================================
-# 动作空间限制 (Action Space Limits)
+# 动作空间限制 (Action Space Limits) - 对齐插件端 config.yml
 # ==========================================
 # 控制 AI 单次决策所能带来的最大改变幅度。
-ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (0.20 = 20%)
+ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (1.00 = 100%)
 ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
+
+# 插件端二次拦截（安全夹紧）
+PER_CYCLE_MAX_CHANGE_PERCENT = 1.00   # 对齐 ai.tuning.per-cycle-max-change-percent
+MAX_BASE_PRICE = 1_000_000.0          # 对齐 ai.tuning.max-base-price
+MIN_BASE_PRICE = 0.01                # 对齐 economy.ipo.zero-trust 初始锚
+
+K_MIN = 0.2                          # 对齐 ai.tuning.k-min
+K_MAX = 10.0                         # 对齐 ai.tuning.k-max
+
+# ==========================================
+# AI 调度与观测归一 (Align obs with AIScheduler)
+# ==========================================
+# 一个 step 代表插件一次 AI 微观调控周期（默认 15 分钟）
+SCHEDULE_MINUTES = 15                # 对齐 ai.schedule-minutes
+AOV_WINDOW_HOURS = 24                # 对齐 ai.aov-window-hours
+IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trust=false 时）
+
+# ==========================================
+# 风控参数（对齐 CircuitBreaker）
+# ==========================================
+DAILY_LIMIT_PERCENT = 10.0           # 对齐 circuit-breaker.daily-limit-percent（注意：插件侧是“倍数”，非百分数）
+CRITICAL_INVENTORY = 1               # 对齐 circuit-breaker.critical-inventory
+
+# ==========================================
+# vAMM 税费（对齐 AMMCalculator.calculateDynamicSpread）
+# ==========================================
+BASE_SPREAD = 0.05                   # 5% 基础印花税
+MAX_SPREAD = 0.999                   # 插件端最高可扣到 99.9%
+DUMPING_TAX_TRIGGER_MULTIPLIER = 3.0 # 超过 physicalStock * 3 开始征税
+DUMPING_TAX_PER_MULTIPLE = 0.10      # 每超过物理库存 1 倍，额外增加 10% 税
 
 # ==========================================
 # 目标库存自适应设置 (Adaptive Target)
 # ==========================================
 ADAPTIVE_TARGET_ENABLED = True
 ADAPTIVE_TARGET_SMOOTHING_FACTOR = 0.05
+
+# ==========================================
+# Reward 权重（离线训练用；插件端不在线计算 reward）
+# ==========================================
+# 说明：为了减少“训练时用绝对金额、线上用归一化通胀率”造成的尺度断裂，这里用 inflation_rate（=netEmission/AOV）
+REWARD_TRADE_VALUE_WEIGHT = 0.001     # 交易额越大越好（轻权重避免数值爆炸）
+REWARD_INFLATION_RATE_WEIGHT = 25.0   # 惩罚净印钞率（>0 时）
+REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
 
 # ==========================================
 # 各阶级物品参数 (Item Tier Parameters)
