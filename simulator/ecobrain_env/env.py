@@ -411,32 +411,47 @@ class EcoBrainEnv(gym.Env):
         
         # Specific shaping to help it learn the difference between garbage and gold
         tier_cfg = TIERS[self.value_type]
+        price = float(self.amm.get_current_price())
         if self.value_type == "high":
-            # Boss mats: encourage scaling to hundreds of thousands or millions
-            if self.amm.get_current_price() > tier_cfg["price_target"]:
-                reward += tier_cfg["price_reward_2"]
-            elif self.amm.get_current_price() > tier_cfg["price_min"]:
-                reward += tier_cfg["price_reward_1"]
-                
-            # 对齐插件端语义：真实库存枯竭更关键
+            # Hard constraint: must be >= price_min
+            if price < float(tier_cfg["price_min"]):
+                reward -= float(tier_cfg["penalty_out_of_range"])
+            else:
+                # Reward band: >= reward_band_min rewarded; otherwise mild penalty to avoid boundary hugging
+                band_min = float(tier_cfg.get("reward_band_min", tier_cfg["price_min"]))
+                if price >= band_min:
+                    reward += float(tier_cfg.get("reward_in_band", 0.0))
+                else:
+                    reward -= float(tier_cfg.get("penalty_out_of_band", 0.0))
+
+            # 真实库存枯竭惩罚（防被买空）
             if int(self.amm.physical_stock) <= 0:
-                reward -= tier_cfg["empty_stock_penalty"]
+                reward -= float(tier_cfg.get("empty_stock_penalty", 0.0))
                 
         elif self.value_type == "mid":
-            # MythicMobs mats: scale to thousands or tens of thousands
-            if tier_cfg["price_min"] <= self.amm.get_current_price() <= tier_cfg["price_max"]:
-                reward += tier_cfg["price_reward"]
-            if cycle_net_emission > tier_cfg["inflation_penalty_threshold"]:
-                reward -= tier_cfg["inflation_penalty"]
+            # Hard constraint: must stay within [price_min, price_max]
+            if price < float(tier_cfg["price_min"]) or price > float(tier_cfg["price_max"]):
+                reward -= float(tier_cfg["penalty_out_of_range"])
+            else:
+                # Reward band inside hard range (creates buffer gaps)
+                band_min = float(tier_cfg.get("reward_band_min", tier_cfg["price_min"]))
+                band_max = float(tier_cfg.get("reward_band_max", tier_cfg["price_max"]))
+                if band_min <= price <= band_max:
+                    reward += float(tier_cfg.get("reward_in_band", 0.0))
+                else:
+                    reward -= float(tier_cfg.get("penalty_out_of_band", 0.0))
                 
         elif self.value_type == "low":
-            # Vanilla mats: scale to tens of coins, extremely strict on inflation
-            if self.amm.get_current_price() < tier_cfg["price_target"]:
-                reward += tier_cfg.get("price_reward_2", tier_cfg.get("price_reward", 5.0))
-            elif self.amm.get_current_price() < tier_cfg["price_max"]:
-                reward += tier_cfg.get("price_reward_1", 2.0)
-            if cycle_net_emission > tier_cfg["inflation_penalty_threshold"]:
-                reward -= tier_cfg["inflation_penalty"]
+            # Soft range penalties to avoid collapsing to IPO floor (0.01) or drifting above 1000.
+            if price < float(tier_cfg["price_min"]) or price > float(tier_cfg["price_max"]):
+                reward -= float(tier_cfg.get("penalty_out_of_range", 0.0))
+
+            band_min = float(tier_cfg["reward_band_min"])
+            band_max = float(tier_cfg["reward_band_max"])
+            if band_min <= price <= band_max:
+                reward += float(tier_cfg["reward_in_band"])
+            else:
+                reward -= float(tier_cfg["penalty_out_of_band"])
                 
         # 4. Check done
         done = self.step_count >= self.max_steps

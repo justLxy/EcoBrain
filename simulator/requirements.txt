@@ -2,5 +2,6 @@ numpy
 gymnasium
 stable-baselines3
 onnx
+onnxscript
 onnxruntime
 torch

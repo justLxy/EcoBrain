@@ -67,38 +67,50 @@ REWARD_CLIP_ABS = 1e4  # 设为 None 可关闭裁剪
 TIERS = {
     # 极品/高价值物品 (如: 下界之星, Boss掉落物)
     "high": {
-        "target_inventory": 5,         # 理想库存 (更稀缺，让AI知道这东西很难得)
-        "current_inventory": 1,        # 训练开始时的实际库存
-        "price_min": 10000.0,          # 判定为高价值的最低底价
-        "price_max": float('inf'),     # 最高价无上限
-        "price_target": 100000.0,      # (提升目标价) 由于老玩家多且资金多，AI需要敢于把极品卖出天价
-        "price_reward_1": 5.0,         # 达到 price_min 的加分
-        "price_reward_2": 15.0,        # (提升奖励) 鼓励AI把极品卖贵，吸收服务器溢出的金币
-        "empty_stock_penalty": 30.0    # (提升惩罚) 老玩家多，一旦卖便宜瞬间被秒，告诉AI绝对不能贱卖极品
+        "target_inventory": 32,        # 理想库存（你服情：高价值物品也会有一定存量）
+        # 注：在模拟器里 current_inventory 用作初始真实库存 physical_stock（虚拟库存池会在 reset 时初始化为 target_inventory）
+        # 对齐线上常态：初始真实库存尽量贴近 target，减少“开局缺货”噪声
+        "current_inventory": 32,
+        # 目标：高价值物品硬约束 >= 10000（低于则重罚）
+        "price_min": 10000.0,
+        "price_max": float('inf'),
+        "penalty_out_of_range": 5000.0,     # price < price_min 的惩罚（重罚）
+        # 奖励带：>= 15000 奖励；10000~15000 轻罚（形成“断档缓冲”避免贴边抖动）
+        "reward_band_min": 15000.0,
+        "reward_in_band": 3000.0,
+        "penalty_out_of_band": 1500.0,
+        "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
     },
     
     # 中等价值物品 (如: 副本材料, 铁锭, 金锭)
     "mid": {
-        "target_inventory": 1280,      # (调高理想库存) 供大于求，放宽库存容忍度
-        "current_inventory": 640,      # 初始库存也要高
-        "price_min": 1000.0,           
-        "price_max": 10000.0,          
-        "price_reward": 5.0,           
-        "inflation_penalty_threshold": 5000.0, # (收紧通胀容忍度) 老玩家供大于求，如果AI高价回收中等材料会导致发大水
-        "inflation_penalty": 20.0      # (提升通胀惩罚) 让AI学会：面对疯狂倒垃圾的老玩家，必须狠心砸盘降价
+        "target_inventory": 640,      # (调高理想库存) 供大于求，放宽库存容忍度
+        "current_inventory": 640,
+        # 硬约束范围：1000~10000（越界重罚）
+        "price_min": 1000.0,
+        "price_max": 10000.0,
+        "penalty_out_of_range": 4000.0,     # 低于/高于硬区间惩罚（重罚）
+        # 奖励带：1500~9000 奖励；1000~1500 或 9000~10000 轻罚（形成“断档缓冲”）
+        "reward_band_min": 1500.0,
+        "reward_band_max": 9000.0,
+        "reward_in_band": 3000.0,
+        "penalty_out_of_band": 1500.0,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
     "low": {
-        "target_inventory": 3200,      # (大幅调高) 老玩家基建狂魔，低价值物品库存会极其恐怖
-        "current_inventory": 1000,     
-        "price_min": 0.0,              
-        "price_max": 1000.0,           
-        "price_target": 50.0,          # (压低目标价) 供大于求的废品，必须压到极低的价格
-        "price_reward_1": 2.0,         # 达到 price_max 以下的保底加分
-        "price_reward_2": 5.0,         # (提升奖励) 奖励AI成功把垃圾压成白菜价
-        "inflation_penalty_threshold": 200.0, # (极低通胀容忍) 垃圾物品绝对不能成为提款机
-        "inflation_penalty": 50.0      # (最高惩罚) 谁敢高价收垃圾，直接让AI吃满惩罚
+        "target_inventory": 1280,      # (大幅调高) 老玩家基建狂魔，低价值物品库存会极其恐怖
+        "current_inventory": 1280,
+        # 目标：低价值物品长期保持在 1-1000
+        "price_min": 1.0,
+        "price_max": 1000.0,
+        # 奖惩带：10-500 之间奖励；低于 10 或高于 500 惩罚
+        "reward_band_min": 10.0,
+        "reward_band_max": 500.0,
+        "reward_in_band": 3000.0,
+        "penalty_out_of_band": 4000.0,
+        # 软约束：若低于 1 或高于 1000 额外惩罚（避免压到 0.01 或冲破上限）
+        "penalty_out_of_range": 8000.0,
     }
 }
 
@@ -176,7 +188,8 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "type": "VeteranPlayer",
             # 10-20 在线：老玩家占大头，但总人数不会太夸张
             "count": {"dist": "int_uniform", "low": 3, "high": 6},
-            "balance": {"dist": "loguniform", "low": 250_000, "high": 6_000_000},
+            # 服情校准：老玩家资产约 100w~500w
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
             # 极品仍会买，但频率更低（慢节奏）
             "buy_prob": {"dist": "beta", "a": 1.5, "b": 7.0, "min": 0.00, "max": 0.60},
             # 产出/抛售事件相对稀疏，但一旦出现仍可能卖（由 dumping regime 放大）
@@ -188,8 +201,9 @@ SIMULATED_PLAYER_ARCHETYPES = {
         {
             "type": "NewPlayer",
             # 养老服：新人更少
-            "count": {"dist": "int_uniform", "low": 0, "high": 1},
-            "balance": {"dist": "loguniform", "low": 2_000, "high": 30_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            # 服情校准：新人资产约 50w~100w
+            "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 25.0, "min": 0.00, "max": 0.15},
             "sell_prob": {"dist": "beta", "a": 1.0, "b": 60.0, "min": 0.00, "max": 0.05},
             "amount": {"dist": "choice", "values": [1, 1, 1, 2]},
@@ -197,8 +211,9 @@ SIMULATED_PLAYER_ARCHETYPES = {
         # 倒爷：每局可能出现 0~1 个（不要太多，否则训练会变得“只学防倒爷”）
         {
             "type": "Arbitrageur",
-            "count": {"dist": "int_uniform", "low": 0, "high": 1},
-            "balance": {"dist": "loguniform", "low": 150_000, "high": 6_000_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            # 倒爷通常比普通老玩家更有钱（更像压力测试角色）
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 10_000_000},
         },
     ],
     "mid": [
@@ -206,7 +221,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "type": "VeteranPlayer",
             # 养老服中价值：典型“供大于求”，老玩家数量更多、卖压更稳定
             "count": {"dist": "int_uniform", "low": 4, "high": 8},
-            "balance": {"dist": "loguniform", "low": 60_000, "high": 700_000},
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 22.0, "min": 0.00, "max": 0.15},
             "sell_prob": {"dist": "beta", "a": 10.0, "b": 1.7, "min": 0.35, "max": 0.99},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 48, "integer": True},
@@ -216,16 +231,16 @@ SIMULATED_PLAYER_ARCHETYPES = {
         {
             "type": "NewPlayer",
             # 养老服：新人少，需求端更稀薄
-            "count": {"dist": "int_uniform", "low": 0, "high": 1},
-            "balance": {"dist": "loguniform", "low": 800, "high": 20_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
             "buy_prob": {"dist": "beta", "a": 2.0, "b": 10.0, "min": 0.01, "max": 0.70},
             "sell_prob": {"dist": "beta", "a": 2.5, "b": 9.0, "min": 0.00, "max": 0.55},
             "amount": {"dist": "loguniform", "low": 1, "high": 128, "integer": True},
         },
         {
             "type": "Arbitrageur",
-            "count": {"dist": "int_uniform", "low": 0, "high": 1},
-            "balance": {"dist": "loguniform", "low": 60_000, "high": 1_200_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 10_000_000},
         },
     ],
     "low": [
@@ -234,7 +249,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "type": "VeteranPlayer",
             # 养老服低价值：老玩家多、倾销更强
             "count": {"dist": "int_uniform", "low": 5, "high": 10},
-            "balance": {"dist": "loguniform", "low": 20_000, "high": 450_000},
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 40.0, "min": 0.00, "max": 0.12},
             "sell_prob": {"dist": "beta", "a": 14.0, "b": 1.3, "min": 0.55, "max": 0.99},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
@@ -243,16 +258,16 @@ SIMULATED_PLAYER_ARCHETYPES = {
         },
         {
             "type": "NewPlayer",
-            "count": {"dist": "int_uniform", "low": 0, "high": 2},
-            "balance": {"dist": "loguniform", "low": 200, "high": 8_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 3},
+            "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
             "buy_prob": {"dist": "beta", "a": 3.0, "b": 7.0, "min": 0.02, "max": 0.90},
             "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.0, "min": 0.02, "max": 0.90},
             "amount": {"dist": "loguniform", "low": 1, "high": 256, "integer": True},
         },
         {
             "type": "Arbitrageur",
-            "count": {"dist": "int_uniform", "low": 0, "high": 2},
-            "balance": {"dist": "loguniform", "low": 10_000, "high": 500_000},
+            "count": {"dist": "int_uniform", "low": 0, "high": 3},
+            "balance": {"dist": "loguniform", "low": 1_000_000, "high": 10_000_000},
         },
     ],
 }

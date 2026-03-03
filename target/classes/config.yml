@@ -71,7 +71,9 @@ ai:
     high:
       # 高价值物品（如 Boss 掉落物）的判断门槛。交给 ecobrain_high_value.onnx 处理。
       price-threshold: 10000.0  
-      inventory-threshold: 10   
+      # 对齐离线模拟器：高价值默认 target_inventory≈32，且自适应 target 会在 32 附近波动
+      # 因此 inventory-threshold 至少应覆盖到 32，并留一定缓冲，避免冷启动阶段错误路由到 mid。
+      inventory-threshold: 64
     mid:
       # 中等价值物品（如副本材料）的判断门槛。交给 ecobrain_mid_value.onnx 处理。
       price-threshold: 1000.0   

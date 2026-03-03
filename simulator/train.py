@@ -1,5 +1,6 @@
 import os
 import argparse
+import re
 import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
@@ -7,6 +8,7 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList, EvalCallback, StopTrainingOnNoModelImprovement
 from ecobrain_env import EcoBrainEnv
 
 def _select_device(device: str) -> str:
@@ -55,6 +57,69 @@ def _parse_net_arch(net_arch: str | None):
         return None
     return [int(p) for p in parts]
 
+def _safe_makedirs(path: str):
+    if path and not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+
+def _find_latest_checkpoint(checkpoint_dir: str, prefix: str) -> str | None:
+    """
+    Find latest checkpoint path like: {prefix}_checkpoint_123456.zip
+    """
+    if not checkpoint_dir or not os.path.isdir(checkpoint_dir):
+        return None
+    pat = re.compile(rf"^{re.escape(prefix)}_checkpoint_(\d+)\.zip$")
+    best_step = -1
+    best_path = None
+    for name in os.listdir(checkpoint_dir):
+        m = pat.match(name)
+        if not m:
+            continue
+        step = int(m.group(1))
+        if step > best_step:
+            best_step = step
+            best_path = os.path.join(checkpoint_dir, name)
+    return best_path
+
+class SaveModelAndVecNormalizeCallback(BaseCallback):
+    """
+    Periodically save:
+    - model checkpoint (.zip)
+    - VecNormalize statistics (.pkl)
+    Also keeps a 'latest' snapshot for quick resume.
+    """
+    def __init__(self, save_freq: int, checkpoint_dir: str, prefix: str, verbose: int = 0):
+        super().__init__(verbose=verbose)
+        self.save_freq = int(max(1, save_freq))
+        self.checkpoint_dir = checkpoint_dir
+        self.prefix = prefix
+        _safe_makedirs(self.checkpoint_dir)
+
+    def _save(self, step: int):
+        model_path = os.path.join(self.checkpoint_dir, f"{self.prefix}_checkpoint_{step}.zip")
+        vec_path = os.path.join(self.checkpoint_dir, f"{self.prefix}_checkpoint_{step}_vecnormalize.pkl")
+        latest_model = os.path.join(self.checkpoint_dir, f"{self.prefix}_latest.zip")
+        latest_vec = os.path.join(self.checkpoint_dir, f"{self.prefix}_latest_vecnormalize.pkl")
+
+        self.model.save(model_path)
+        self.model.save(latest_model)
+
+        try:
+            env = self.model.get_env()
+            if isinstance(env, VecNormalize):
+                env.save(vec_path)
+                env.save(latest_vec)
+        except Exception:
+            pass
+
+        if self.verbose > 0:
+            print(f"[checkpoint] saved @ {step}: {model_path}")
+
+    def _on_step(self) -> bool:
+        # num_timesteps is global env steps seen by the model
+        if self.num_timesteps % self.save_freq == 0:
+            self._save(self.num_timesteps)
+        return True
+
 
 def train_model(
     value_type="low",
@@ -76,6 +141,12 @@ def train_model(
     vecnorm: bool = True,
     norm_obs: bool = True,
     norm_reward: bool = True,
+    checkpoint_freq: int = 100_000,
+    checkpoint_dir: str = "checkpoints",
+    resume: bool = True,
+    eval_freq: int = 0,
+    eval_episodes: int = 5,
+    early_stop_patience: int = 10,
 ):
     using_real = bool(dataset_path and os.path.exists(dataset_path))
     if using_real:
@@ -157,9 +228,68 @@ def train_model(
     else:
         batch_size = int(batch_size)
     
-    if os.path.exists(model_path):
-        print(f"Found existing model {model_path}, loading and resuming training...")
-        model = PPO.load(model_path, env=env, device=device)
+    # Build callbacks (checkpoint + optional eval/early-stop)
+    callbacks = []
+    if checkpoint_freq and int(checkpoint_freq) > 0:
+        callbacks.append(SaveModelAndVecNormalizeCallback(
+            save_freq=int(checkpoint_freq),
+            checkpoint_dir=checkpoint_dir,
+            prefix=model_name,
+            verbose=1,
+        ))
+
+    if eval_freq and int(eval_freq) > 0:
+        # Eval env: same underlying env but without updating VecNormalize stats
+        eval_env = make_vec_env(
+            EcoBrainEnv,
+            n_envs=1,
+            seed=seed,
+            vec_env_cls=DummyVecEnv,
+            env_kwargs={
+                "value_type": value_type,
+                "dataset_path": dataset_path if using_real else None,
+            },
+        )
+        if vecnorm:
+            if os.path.exists(vecnorm_path):
+                eval_env = VecNormalize.load(vecnorm_path, eval_env)
+            else:
+                eval_env = VecNormalize(eval_env, norm_obs=norm_obs, norm_reward=norm_reward, clip_obs=10.0, clip_reward=10.0, gamma=gamma)
+            eval_env.training = False
+            eval_env.norm_reward = False  # report unnormalized reward for readability
+
+        stop_cb = StopTrainingOnNoModelImprovement(
+            max_no_improvement_evals=max(1, int(early_stop_patience)),
+            min_evals=3,
+            verbose=1,
+        )
+        callbacks.append(EvalCallback(
+            eval_env,
+            callback_after_eval=stop_cb,
+            eval_freq=int(eval_freq),
+            n_eval_episodes=max(1, int(eval_episodes)),
+            best_model_save_path=os.path.join(checkpoint_dir, f"{model_name}_best"),
+            log_path=os.path.join(checkpoint_dir, f"{model_name}_eval"),
+            deterministic=True,
+            render=False,
+            verbose=1,
+        ))
+
+    callback = CallbackList(callbacks) if callbacks else None
+
+    # Resume logic: prefer latest checkpoint if requested
+    load_path = None
+    if resume:
+        if os.path.exists(model_path):
+            load_path = model_path
+        else:
+            latest = _find_latest_checkpoint(checkpoint_dir, model_name)
+            if latest:
+                load_path = latest
+
+    if load_path:
+        print(f"Loading model from {load_path} and resuming training...")
+        model = PPO.load(load_path, env=env, device=device)
     else:
         print(f"No existing model found for {value_type}, starting from scratch...")
         model = PPO(
@@ -178,7 +308,7 @@ def train_model(
             seed=seed,
         )
                 
-    model.learn(total_timesteps=total_timesteps)
+    model.learn(total_timesteps=total_timesteps, callback=callback, reset_num_timesteps=False)
     
     # Save the model
     model.save(model_name)
@@ -199,6 +329,16 @@ class OnnxablePolicy(nn.Module):
         return action
 
 def export_to_onnx(model, filename):
+    # torch>=2.8 uses a newer ONNX exporter that depends on onnxscript
+    try:
+        import onnxscript  # noqa: F401
+    except Exception as e:
+        raise RuntimeError(
+            "ONNX export requires the 'onnxscript' package. "
+            "Install it with: pip install onnxscript "
+            f"(original error: {e})"
+        )
+
     # Extract the PyTorch module from SB3 PPO
     pytorch_policy = model.policy
 
@@ -293,6 +433,13 @@ if __name__ == "__main__":
     parser.add_argument("--no-vecnorm", action="store_true", help="Disable VecNormalize (obs/reward normalization)")
     parser.add_argument("--no-norm-obs", action="store_true", help="Disable observation normalization (VecNormalize)")
     parser.add_argument("--no-norm-reward", action="store_true", help="Disable reward normalization (VecNormalize)")
+    parser.add_argument("--checkpoint-freq", type=int, default=100000, help="Save checkpoint every N timesteps (0=disable)")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Directory to store checkpoints/eval logs")
+    parser.add_argument("--no-resume", action="store_true", help="Do not resume from existing model/checkpoints")
+    parser.add_argument("--eval-freq", type=int, default=0, help="Evaluate every N timesteps (0=disable)")
+    parser.add_argument("--eval-episodes", type=int, default=5, help="Number of eval episodes per evaluation")
+    parser.add_argument("--early-stop-patience", type=int, default=10, help="Stop if no eval improvement for N evals")
+    parser.add_argument("--skip-onnx", action="store_true", help="Skip ONNX export (useful for quick smoke runs)")
     args = parser.parse_args()
 
     print("Starting EcoBrain 2.0 PPO Training & Export")
@@ -322,8 +469,15 @@ if __name__ == "__main__":
         vecnorm=not args.no_vecnorm,
         norm_obs=not args.no_norm_obs,
         norm_reward=not args.no_norm_reward,
+        checkpoint_freq=args.checkpoint_freq,
+        checkpoint_dir=args.checkpoint_dir,
+        resume=not args.no_resume,
+        eval_freq=args.eval_freq,
+        eval_episodes=args.eval_episodes,
+        early_stop_patience=args.early_stop_patience,
     )
-    export_to_onnx(model_low, "ecobrain_low_value.onnx")
+    if not args.skip_onnx:
+        export_to_onnx(model_low, "ecobrain_low_value.onnx")
     
     model_mid = train_model(
         value_type="mid",
@@ -345,8 +499,15 @@ if __name__ == "__main__":
         vecnorm=not args.no_vecnorm,
         norm_obs=not args.no_norm_obs,
         norm_reward=not args.no_norm_reward,
+        checkpoint_freq=args.checkpoint_freq,
+        checkpoint_dir=args.checkpoint_dir,
+        resume=not args.no_resume,
+        eval_freq=args.eval_freq,
+        eval_episodes=args.eval_episodes,
+        early_stop_patience=args.early_stop_patience,
     )
-    export_to_onnx(model_mid, "ecobrain_mid_value.onnx")
+    if not args.skip_onnx:
+        export_to_onnx(model_mid, "ecobrain_mid_value.onnx")
     
     model_high = train_model(
         value_type="high",
@@ -368,7 +529,14 @@ if __name__ == "__main__":
         vecnorm=not args.no_vecnorm,
         norm_obs=not args.no_norm_obs,
         norm_reward=not args.no_norm_reward,
+        checkpoint_freq=args.checkpoint_freq,
+        checkpoint_dir=args.checkpoint_dir,
+        resume=not args.no_resume,
+        eval_freq=args.eval_freq,
+        eval_episodes=args.eval_episodes,
+        early_stop_patience=args.early_stop_patience,
     )
-    export_to_onnx(model_high, "ecobrain_high_value.onnx")
+    if not args.skip_onnx:
+        export_to_onnx(model_high, "ecobrain_high_value.onnx")
     
     print("All done!")
