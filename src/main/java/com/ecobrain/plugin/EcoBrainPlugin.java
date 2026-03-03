@@ -64,7 +64,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.circuitBreaker = new CircuitBreaker(repository, ammCalculator, settings.circuitBreaker());
         this.marketService = new MarketService(this, repository, ammCalculator, circuitBreaker, settings.economy());
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
-        this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui());
+        this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui(), settings.ai());
         this.leaderboardGUI = new LeaderboardGUI();
         this.rewardsManager = new com.ecobrain.plugin.rewards.RewardsManager(this);
         com.ecobrain.plugin.rewards.RewardClaimRepository rewardClaimRepository = new com.ecobrain.plugin.rewards.RewardClaimRepository(databaseManager);
@@ -148,7 +148,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         marketService.updateEconomySettings(settings.economy());
         circuitBreaker.updateSettings(settings.circuitBreaker());
         bulkSellGUI.applySettings(settings.gui());
-        marketViewGUI.applySettings(settings.gui());
+        marketViewGUI.applySettings(settings.gui(), settings.ai());
         ecoBrainCommand.updateCooldown(settings.trade().cooldownMs());
         if (rewardsManager != null) {
             rewardsManager.reload();

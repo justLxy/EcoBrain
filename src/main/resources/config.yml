@@ -135,6 +135,7 @@ gui:
       - ''
       - '        &b价格: &f{price}￥'
       - '        &b库存: &f{physical_stock} / &8理想库存: {target_inventory}'
+      - '        &b品质: {tier}'
       - '        &f&l单击 &7购买 1 个'
       - '        &f&lShift+单击 &7购买 1 组'
       - '        &f&lShift+右键 &7购买 10 组'
