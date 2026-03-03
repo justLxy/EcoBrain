@@ -7,6 +7,7 @@ from collections import deque
 from .amm import AMM
 from .players import Arbitrageur, ReplayPlayer
 from .ecosystem import Regime, build_players_from_archetypes, sample_regime
+from .ecosystem import sample_from_spec
 from .config import (
     TIERS,
     ACTION_BASE_PRICE_MAX_PERCENT,
@@ -21,6 +22,7 @@ from .config import (
     SCHEDULE_MINUTES,
     AOV_WINDOW_HOURS,
     IPO_BASE_PRICE_FALLBACK,
+    IPO_RESET_PROB,
     DAILY_LIMIT_PERCENT,
     CRITICAL_INVENTORY,
     BASE_SPREAD,
@@ -67,7 +69,7 @@ class EcoBrainEnv(gym.Env):
         super().reset(seed=seed)
         
         # Initialize AMM
-        # Zero-trust IPO: start with 0.01 base price
+        # Episode init: mixture of IPO (zero-trust) and Mature items
         
         tier_cfg = TIERS[self.value_type]
         target_inv = tier_cfg["target_inventory"]
@@ -75,14 +77,22 @@ class EcoBrainEnv(gym.Env):
         # physical_stock 代表真实库存，使用 tier_cfg["current_inventory"] 作为冷启动物理盘
         current_inv = target_inv
         physical_init = tier_cfg["current_inventory"]
+
+        is_ipo = bool(float(self.np_random.random()) < float(IPO_RESET_PROB))
+        if is_ipo:
+            base_price = 0.01
+        else:
+            base_price_spec = tier_cfg.get("initial_base_price", 0.01)
+            base_price = float(sample_from_spec(base_price_spec, rng=self.np_random))
+            base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(base_price)))
             
         self.amm = AMM(
-            base_price=0.01, 
+            base_price=base_price, 
             target_inventory=target_inv,
             current_inventory=current_inv,
             k_factor=1.0,
             physical_stock=physical_init,
-            is_ipo=True,
+            is_ipo=is_ipo,
             base_spread=BASE_SPREAD,
             max_spread=MAX_SPREAD,
             dumping_trigger_multiplier=DUMPING_TAX_TRIGGER_MULTIPLIER,
@@ -338,6 +348,17 @@ class EcoBrainEnv(gym.Env):
         self.recent_buy_volume = 0
         self.recent_sell_volume = 0
 
+        # Provide a TWAP hint for this cycle (based on past buckets) so that arbitrageurs
+        # can react to mean reversion like on the real server.
+        try:
+            twap_hint = float(self._compute_twap_price(fallback=float(self.amm.get_current_price())))
+        except Exception:
+            twap_hint = float(self.amm.get_current_price())
+        if hasattr(self.amm, "set_twap_hint"):
+            self.amm.set_twap_hint(twap_hint)
+        else:
+            self.amm.twap_hint = twap_hint
+
         cycle_trade_value_sum = 0.0
         cycle_trade_count = 0
         cycle_trade_qty_sum = 0
@@ -345,6 +366,11 @@ class EcoBrainEnv(gym.Env):
         # Let players act multiple times per AI cycle
         for _ in range(10):
             for p in self.players:
+                if hasattr(p, "tick"):
+                    try:
+                        p.tick()
+                    except Exception:
+                        pass
                 qty, money = p.act(self.amm, self.step_count)
 
                 if qty > 0: # Buy

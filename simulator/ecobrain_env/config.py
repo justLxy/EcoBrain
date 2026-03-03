@@ -28,6 +28,14 @@ AOV_WINDOW_HOURS = 24                # 对齐 ai.aov-window-hours
 IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trust=false 时）
 
 # ==========================================
+# Episode 初始化：IPO vs Mature Item 混合
+# ==========================================
+# 真实服务器里只有“新物品”才会走 0.01 的 zero-trust IPO；
+# 大多数存量物品处于 Mature 状态（base_price 已经被市场发现）。
+# 训练时每个 episode 相当于抽样一种“物品状态”，避免总是从 0.01 开局导致学不到区间定价。
+IPO_RESET_PROB = 0.05  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
+
+# ==========================================
 # 风控参数（对齐 CircuitBreaker）
 # ==========================================
 DAILY_LIMIT_PERCENT = 10.0           # 对齐 circuit-breaker.daily-limit-percent（注意：插件侧是“倍数”，非百分数）
@@ -71,6 +79,8 @@ TIERS = {
         # 注：在模拟器里 current_inventory 用作初始真实库存 physical_stock（虚拟库存池会在 reset 时初始化为 target_inventory）
         # 对齐线上常态：初始真实库存尽量贴近 target，减少“开局缺货”噪声
         "current_inventory": 32,
+        # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
+        "initial_base_price": {"dist": "loguniform", "low": 10000.0, "high": 1_000_000.0},
         # 目标：高价值物品硬约束 >= 10000（低于则重罚）
         "price_min": 10000.0,
         "price_max": float('inf'),
@@ -86,6 +96,8 @@ TIERS = {
     "mid": {
         "target_inventory": 640,      # (调高理想库存) 供大于求，放宽库存容忍度
         "current_inventory": 640,
+        # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
+        "initial_base_price": {"dist": "loguniform", "low": 1000.0, "high": 10000.0},
         # 硬约束范围：1000~10000（越界重罚）
         "price_min": 1000.0,
         "price_max": 10000.0,
@@ -101,6 +113,8 @@ TIERS = {
     "low": {
         "target_inventory": 1280,      # (大幅调高) 老玩家基建狂魔，低价值物品库存会极其恐怖
         "current_inventory": 1280,
+        # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
+        "initial_base_price": {"dist": "loguniform", "low": 1.0, "high": 1000.0},
         # 目标：低价值物品长期保持在 1-1000
         "price_min": 1.0,
         "price_max": 1000.0,
@@ -190,12 +204,19 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "count": {"dist": "int_uniform", "low": 3, "high": 6},
             # 服情校准：老玩家资产约 100w~500w
             "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
+            # 初始持仓 + 产出/消耗（供给来自“产出”，而不是无限卖出）
+            "initial_item_inventory": {"dist": "int_uniform", "low": 0, "high": 3},
+            "produce_lambda": {"dist": "uniform", "low": 0.00, "high": 0.08},
+            "consume_lambda": {"dist": "uniform", "low": 0.00, "high": 0.05},
             # 极品仍会买，但频率更低（慢节奏）
             "buy_prob": {"dist": "beta", "a": 1.5, "b": 7.0, "min": 0.00, "max": 0.60},
             # 产出/抛售事件相对稀疏，但一旦出现仍可能卖（由 dumping regime 放大）
             "sell_prob": {"dist": "beta", "a": 1.2, "b": 10.0, "min": 0.00, "max": 0.45},
             "buy_amount": {"dist": "choice", "values": [1, 1, 2, 3]},
             "sell_amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+            # 只有持仓低于目标才会买；持仓高于阈值才会卖（更像真实玩家）
+            "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 2},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 0, "high": 4},
         },
         # 新玩家：买得起的不多
         {
@@ -204,9 +225,14 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "count": {"dist": "int_uniform", "low": 0, "high": 2},
             # 服情校准：新人资产约 50w~100w
             "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
+            "initial_item_inventory": {"dist": "int_uniform", "low": 0, "high": 1},
+            "produce_lambda": {"dist": "uniform", "low": 0.00, "high": 0.03},
+            "consume_lambda": {"dist": "uniform", "low": 0.01, "high": 0.08},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 25.0, "min": 0.00, "max": 0.15},
             "sell_prob": {"dist": "beta", "a": 1.0, "b": 60.0, "min": 0.00, "max": 0.05},
             "amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+            "buy_inventory_target": {"dist": "int_uniform", "low": 1, "high": 4},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 0, "high": 2},
         },
         # 倒爷：每局可能出现 0~1 个（不要太多，否则训练会变得“只学防倒爷”）
         {
@@ -222,20 +248,31 @@ SIMULATED_PLAYER_ARCHETYPES = {
             # 养老服中价值：典型“供大于求”，老玩家数量更多、卖压更稳定
             "count": {"dist": "int_uniform", "low": 4, "high": 8},
             "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
+            "initial_item_inventory": {"dist": "int_uniform", "low": 16, "high": 128},
+            # 供大于求：净产出略大于净消耗（但不再是“无限卖出”）
+            "produce_lambda": {"dist": "uniform", "low": 0.20, "high": 0.90},
+            "consume_lambda": {"dist": "uniform", "low": 0.05, "high": 0.35},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 22.0, "min": 0.00, "max": 0.15},
             "sell_prob": {"dist": "beta", "a": 10.0, "b": 1.7, "min": 0.35, "max": 0.99},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 48, "integer": True},
             # 10-20 在线：中价值倾销一般不会太离谱，但仍保留长尾
             "sell_amount": {"dist": "loguniform", "low": 32, "high": 1024, "integer": True},
+            "buy_inventory_target": {"dist": "int_uniform", "low": 8, "high": 64},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 64, "high": 512},
         },
         {
             "type": "NewPlayer",
             # 养老服：新人少，需求端更稀薄
             "count": {"dist": "int_uniform", "low": 0, "high": 2},
             "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
+            "initial_item_inventory": {"dist": "int_uniform", "low": 0, "high": 64},
+            "produce_lambda": {"dist": "uniform", "low": 0.00, "high": 0.25},
+            "consume_lambda": {"dist": "uniform", "low": 0.10, "high": 0.60},
             "buy_prob": {"dist": "beta", "a": 2.0, "b": 10.0, "min": 0.01, "max": 0.70},
             "sell_prob": {"dist": "beta", "a": 2.5, "b": 9.0, "min": 0.00, "max": 0.55},
             "amount": {"dist": "loguniform", "low": 1, "high": 128, "integer": True},
+            "buy_inventory_target": {"dist": "int_uniform", "low": 16, "high": 128},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 64, "high": 256},
         },
         {
             "type": "Arbitrageur",
@@ -250,19 +287,33 @@ SIMULATED_PLAYER_ARCHETYPES = {
             # 养老服低价值：老玩家多、倾销更强
             "count": {"dist": "int_uniform", "low": 5, "high": 10},
             "balance": {"dist": "loguniform", "low": 1_000_000, "high": 5_000_000},
+            "initial_item_inventory": {"dist": "int_uniform", "low": 256, "high": 4096},
+            # 供大于求的核心：持续产出（自动化农场/仓库清理），净产出>净消耗
+            # 注意：每个 AI step 内会有 10 次 tick，所以这里的 lambda 是“每 tick 期望”
+            "produce_lambda": {"dist": "uniform", "low": 2.0, "high": 10.0},
+            "consume_lambda": {"dist": "uniform", "low": 0.2, "high": 1.2},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 40.0, "min": 0.00, "max": 0.12},
             "sell_prob": {"dist": "beta", "a": 14.0, "b": 1.3, "min": 0.55, "max": 0.99},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
             # 低价值倾销长尾仍然保留（自动化农场/清仓），但让常态更温和
             "sell_amount": {"dist": "loguniform", "low": 128, "high": 8192, "integer": True},
+            # 老玩家通常不会为了“囤低价垃圾”去买；但会在库存非常低时补一点
+            "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 128},
+            # 只有库存显著堆积才会倾销（避免每 tick 都卖、也更贴近“攒一仓库再卖”）
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 256, "high": 4096},
         },
         {
             "type": "NewPlayer",
             "count": {"dist": "int_uniform", "low": 0, "high": 3},
             "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
+            "initial_item_inventory": {"dist": "int_uniform", "low": 0, "high": 128},
+            "produce_lambda": {"dist": "uniform", "low": 0.0, "high": 1.5},
+            "consume_lambda": {"dist": "uniform", "low": 0.5, "high": 3.0},
             "buy_prob": {"dist": "beta", "a": 3.0, "b": 7.0, "min": 0.02, "max": 0.90},
             "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.0, "min": 0.02, "max": 0.90},
             "amount": {"dist": "loguniform", "low": 1, "high": 256, "integer": True},
+            "buy_inventory_target": {"dist": "int_uniform", "low": 32, "high": 256},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 128, "high": 512},
         },
         {
             "type": "Arbitrageur",

@@ -134,12 +134,17 @@ def build_players_from_archetypes(
         for i in range(count):
             name = str(arch.get("name", f"{p_type}_{idx}_{i}"))
             balance = float(sample_from_spec(arch.get("balance", 1000.0), rng))
+            item_inventory = int(sample_from_spec(arch.get("initial_item_inventory", 0), rng))
+            produce_lambda = float(sample_from_spec(arch.get("produce_lambda", 0.0), rng))
+            consume_lambda = float(sample_from_spec(arch.get("consume_lambda", 0.0), rng))
 
             if p_type == "VeteranPlayer":
                 buy_prob = float(sample_from_spec(arch.get("buy_prob", 0.02), rng))
                 sell_prob = float(sample_from_spec(arch.get("sell_prob", 0.8), rng))
                 buy_amount = int(sample_from_spec(arch.get("buy_amount", 10), rng))
                 sell_amount = int(sample_from_spec(arch.get("sell_amount", 64), rng))
+                buy_inventory_target = int(sample_from_spec(arch.get("buy_inventory_target", 0), rng))
+                sell_inventory_threshold = int(sample_from_spec(arch.get("sell_inventory_threshold", 0), rng))
 
                 buy_prob = _apply_regime_prob(buy_prob, regime.buy_prob_mult)
                 sell_prob = _apply_regime_prob(sell_prob, regime.sell_prob_mult)
@@ -154,6 +159,11 @@ def build_players_from_archetypes(
                         sell_probability=sell_prob,
                         buy_amount=buy_amount,
                         sell_amount=sell_amount,
+                        buy_inventory_target=buy_inventory_target,
+                        sell_inventory_threshold=sell_inventory_threshold,
+                        item_inventory=item_inventory,
+                        produce_lambda=produce_lambda,
+                        consume_lambda=consume_lambda,
                         rng=rng,
                     )
                 )
@@ -161,6 +171,8 @@ def build_players_from_archetypes(
                 buy_prob = float(sample_from_spec(arch.get("buy_prob", 0.05), rng))
                 sell_prob = float(sample_from_spec(arch.get("sell_prob", 0.05), rng))
                 amount = int(sample_from_spec(arch.get("amount", 5), rng))
+                buy_inventory_target = int(sample_from_spec(arch.get("buy_inventory_target", 0), rng))
+                sell_inventory_threshold = int(sample_from_spec(arch.get("sell_inventory_threshold", 0), rng))
 
                 buy_prob = _apply_regime_prob(buy_prob, regime.buy_prob_mult)
                 sell_prob = _apply_regime_prob(sell_prob, regime.sell_prob_mult)
@@ -173,6 +185,11 @@ def build_players_from_archetypes(
                         buy_probability=buy_prob,
                         sell_probability=sell_prob,
                         amount=amount,
+                        buy_inventory_target=buy_inventory_target,
+                        sell_inventory_threshold=sell_inventory_threshold,
+                        item_inventory=item_inventory,
+                        produce_lambda=produce_lambda,
+                        consume_lambda=consume_lambda,
                         rng=rng,
                     )
                 )

@@ -25,6 +25,9 @@ class AMM:
         self.dumping_tax_per_multiple = float(dumping_tax_per_multiple)
         self.critical_inventory = int(critical_inventory)
         self.frozen = False
+        # Optional TWAP hint injected by env (used by Arbitrageur and future logic).
+        # If unset, fallback to current price (plugin's old behavior).
+        self.twap_hint = None
 
     def set_frozen(self, frozen: bool):
         self.frozen = bool(frozen)
@@ -34,8 +37,24 @@ class AMM:
         return self.base_price * (self.target_inventory / current_inventory) ** self.k_factor
 
     def get_twap(self):
-        # 插件端 getTwapPrice() 近似=当前价
-        return self.get_current_price()
+        hint = self.twap_hint
+        if hint is None:
+            # 插件端旧行为：getTwapPrice() 近似=当前价
+            return self.get_current_price()
+        try:
+            hint_f = float(hint)
+        except Exception:
+            return self.get_current_price()
+        return hint_f if hint_f > 0 else self.get_current_price()
+
+    def set_twap_hint(self, twap_price: float | None):
+        if twap_price is None:
+            self.twap_hint = None
+            return
+        try:
+            self.twap_hint = float(twap_price)
+        except Exception:
+            self.twap_hint = None
 
     def calculate_dynamic_spread(self, sell_amount: int) -> float:
         """
