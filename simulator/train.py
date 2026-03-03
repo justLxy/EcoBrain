@@ -4,45 +4,157 @@ import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from ecobrain_env import EcoBrainEnv
 
-def train_model(value_type="low", total_timesteps=100000, dataset_path=None):
-    if dataset_path and os.path.exists(dataset_path):
+def _select_device(device: str) -> str:
+    device = (device or "auto").lower()
+    if device == "auto":
+        if torch.backends.mps.is_available():
+            return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    if device == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("device=mps requested but torch.backends.mps.is_available() is False")
+        return "mps"
+    if device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("device=cuda requested but torch.cuda.is_available() is False")
+        return "cuda"
+    if device == "cpu":
+        return "cpu"
+    raise ValueError(f"Unknown device: {device!r} (expected: auto/cpu/cuda/mps)")
+
+
+def _get_cpu_count() -> int:
+    try:
+        return int(os.cpu_count() or 1)
+    except Exception:
+        return 1
+
+
+def _auto_n_envs(device: str, n_envs_cap: int) -> int:
+    cpu_count = _get_cpu_count()
+    # Leave 1 core for the main process / OS, if possible.
+    desired = cpu_count - 1 if cpu_count > 1 else 1
+    # Cap to avoid accidental process explosions on very large machines.
+    cap = max(1, int(n_envs_cap))
+    # On GPU, env stepping is still CPU-bound; we keep the same heuristic.
+    return max(1, min(desired, cap))
+
+
+def _parse_net_arch(net_arch: str | None):
+    if not net_arch:
+        return None
+    parts = [p.strip() for p in net_arch.split(",") if p.strip()]
+    if not parts:
+        return None
+    return [int(p) for p in parts]
+
+
+def train_model(
+    value_type="low",
+    total_timesteps=100000,
+    dataset_path=None,
+    device: str = "auto",
+    n_envs: int = 0,
+    vec_env: str = "auto",
+    learning_rate: float = 3e-4,
+    n_steps: int = 2048,
+    batch_size: int = 0,
+    n_epochs: int = 10,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+    clip_range: float = 0.2,
+    seed: int | None = None,
+    net_arch: str | None = None,
+    n_envs_cap: int = 64,
+):
+    using_real = bool(dataset_path and os.path.exists(dataset_path))
+    if using_real:
         print(f"Training PPO for {value_type}-value items using real server data from: {dataset_path}")
-        env = EcoBrainEnv(value_type=value_type, dataset_path=dataset_path)
     else:
         print(f"Training PPO for {value_type}-value items using simulated data...")
-        env = EcoBrainEnv(value_type=value_type)
-        
-    check_env(env)
-    
-    # Define device: use MPS for Apple Silicon, CUDA for NVIDIA, otherwise CPU
-    if torch.backends.mps.is_available():
-        device = "mps"
-    elif torch.cuda.is_available():
-        device = "cuda"
+
+    check_env(EcoBrainEnv(value_type=value_type, dataset_path=dataset_path if using_real else None))
+
+    device = _select_device(device)
+
+    # n_envs=0 means "auto"
+    if n_envs is None or int(n_envs) <= 0:
+        n_envs = _auto_n_envs(device=device, n_envs_cap=n_envs_cap)
+        print(f"Auto n_envs selected: {n_envs} (cpu_count={_get_cpu_count()}, cap={n_envs_cap})")
     else:
-        device = "cpu"
-        
-    print(f"Using device: {device}")
+        n_envs = max(1, int(n_envs))
+
+    vec_env = (vec_env or "auto").lower()
+    if vec_env == "auto":
+        vec_env_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
+    elif vec_env in ("subproc", "subprocess"):
+        vec_env_cls = SubprocVecEnv
+    elif vec_env in ("dummy", "sync"):
+        vec_env_cls = DummyVecEnv
+    else:
+        raise ValueError(f"Unknown vec_env: {vec_env!r} (expected: auto/dummy/subproc)")
+
+    env = make_vec_env(
+        EcoBrainEnv,
+        n_envs=n_envs,
+        seed=seed,
+        vec_env_cls=vec_env_cls,
+        env_kwargs={
+            "value_type": value_type,
+            "dataset_path": dataset_path if using_real else None,
+        },
+    )
+
+    print(f"Using device: {device} (n_envs={n_envs}, vec_env={vec_env_cls.__name__})")
 
     model_name = f"ecobrain_ppo_{value_type}"
     model_path = f"{model_name}.zip"
+
+    policy_kwargs = {}
+    parsed_arch = _parse_net_arch(net_arch)
+    if parsed_arch:
+        policy_kwargs["net_arch"] = parsed_arch
+
+    # batch_size=0 means "auto" (choose something that scales with n_envs but stays reasonable)
+    if batch_size is None or int(batch_size) <= 0:
+        # Prefer larger minibatches on GPU to improve utilization.
+        if device in ("cuda", "mps"):
+            batch_size = max(256, min(2048, n_envs * 64))
+        else:
+            batch_size = max(64, min(1024, n_envs * 64))
+        # Keep it divisible by 64 for typical MLP performance.
+        batch_size = int(batch_size // 64) * 64
+        batch_size = max(64, int(batch_size))
+        print(f"Auto batch_size selected: {batch_size}")
+    else:
+        batch_size = int(batch_size)
     
     if os.path.exists(model_path):
         print(f"Found existing model {model_path}, loading and resuming training...")
         model = PPO.load(model_path, env=env, device=device)
     else:
         print(f"No existing model found for {value_type}, starting from scratch...")
-        model = PPO("MlpPolicy", env, verbose=1, 
-                    learning_rate=3e-4, 
-                    n_steps=2048, 
-                    batch_size=64, 
-                    n_epochs=10, 
-                    gamma=0.99, 
-                    gae_lambda=0.95, 
-                    clip_range=0.2,
-                    device=device)
+        model = PPO(
+            "MlpPolicy",
+            env,
+            verbose=1,
+            learning_rate=learning_rate,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            n_epochs=n_epochs,
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            clip_range=clip_range,
+            device=device,
+            policy_kwargs=policy_kwargs or None,
+            seed=seed,
+        )
                 
     model.learn(total_timesteps=total_timesteps)
     
@@ -107,17 +219,89 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EcoBrain 2.0 PPO Training & Export")
     parser.add_argument("--dataset", type=str, help="Path to the real server CSV data for online fine-tuning", default=None)
     parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=100000)
+    parser.add_argument("--device", type=str, default="auto", help="auto/cpu/cuda/mps")
+    parser.add_argument("--n-envs", type=int, default=0, help="Number of parallel envs; 0 = auto (CPU utilization key)")
+    parser.add_argument("--n-envs-cap", type=int, default=64, help="Safety cap for auto n_envs (avoid too many processes)")
+    parser.add_argument("--vec-env", type=str, default="auto", help="auto/dummy/subproc")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--num-threads", type=int, default=0, help="Torch intra-op threads; 0 = don't set")
+    parser.add_argument("--num-interop-threads", type=int, default=0, help="Torch inter-op threads; 0 = don't set")
+
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--n-steps", type=int, default=2048)
+    parser.add_argument("--batch-size", type=int, default=0, help="0 = auto")
+    parser.add_argument("--n-epochs", type=int, default=10)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gae-lambda", type=float, default=0.95)
+    parser.add_argument("--clip-range", type=float, default=0.2)
+    parser.add_argument("--net-arch", type=str, default="", help="Comma-separated hidden sizes for MlpPolicy, e.g. 256,256,256")
     args = parser.parse_args()
 
     print("Starting EcoBrain 2.0 PPO Training & Export")
+
+    if args.num_threads and args.num_threads > 0:
+        torch.set_num_threads(int(args.num_threads))
+    if args.num_interop_threads and args.num_interop_threads > 0:
+        torch.set_num_interop_threads(int(args.num_interop_threads))
     
-    model_low = train_model(value_type="low", total_timesteps=args.timesteps, dataset_path=args.dataset)
+    model_low = train_model(
+        value_type="low",
+        total_timesteps=args.timesteps,
+        dataset_path=args.dataset,
+        device=args.device,
+        n_envs=args.n_envs,
+        vec_env=args.vec_env,
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_range=args.clip_range,
+        seed=args.seed,
+        net_arch=args.net_arch or None,
+        n_envs_cap=args.n_envs_cap,
+    )
     export_to_onnx(model_low, "ecobrain_low_value.onnx")
     
-    model_mid = train_model(value_type="mid", total_timesteps=args.timesteps, dataset_path=args.dataset)
+    model_mid = train_model(
+        value_type="mid",
+        total_timesteps=args.timesteps,
+        dataset_path=args.dataset,
+        device=args.device,
+        n_envs=args.n_envs,
+        vec_env=args.vec_env,
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_range=args.clip_range,
+        seed=args.seed,
+        net_arch=args.net_arch or None,
+        n_envs_cap=args.n_envs_cap,
+    )
     export_to_onnx(model_mid, "ecobrain_mid_value.onnx")
     
-    model_high = train_model(value_type="high", total_timesteps=args.timesteps, dataset_path=args.dataset)
+    model_high = train_model(
+        value_type="high",
+        total_timesteps=args.timesteps,
+        dataset_path=args.dataset,
+        device=args.device,
+        n_envs=args.n_envs,
+        vec_env=args.vec_env,
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_range=args.clip_range,
+        seed=args.seed,
+        net_arch=args.net_arch or None,
+        n_envs_cap=args.n_envs_cap,
+    )
     export_to_onnx(model_high, "ecobrain_high_value.onnx")
     
     print("All done!")

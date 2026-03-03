@@ -25,6 +25,7 @@ com/ecobrain/plugin/rewards/RewardsGUI$1.class
 com/ecobrain/plugin/rewards/RewardsListener.class
 com/ecobrain/plugin/gui/LeaderboardGUI.class
 com/ecobrain/plugin/gui/BulkSellGUI.class
+com/ecobrain/plugin/rewards/RewardsGUI$RewardSlotModel.class
 com/ecobrain/plugin/command/EcoBrainCommand.class
 com/ecobrain/plugin/rewards/RewardsGUI$Session.class
 com/ecobrain/plugin/ai/OnnxModelRunner.class

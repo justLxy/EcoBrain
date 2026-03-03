@@ -111,28 +111,6 @@ public final class RewardsGUI {
             Set<String> claimed = claimRepository.getClaimedRewardIds(uuid);
 
             String title = color(cfg.gui().title());
-            Inventory inv = Bukkit.createInventory(player, cfg.gui().size(), title);
-            Map<Integer, String> slotMap = new HashMap<>();
-
-            // border
-            ItemStack border = namedItem(cfg.gui().borderMaterial(), color(cfg.gui().borderName()));
-            for (int i = 0; i < cfg.gui().size(); i++) {
-                int row = i / 9;
-                int col = i % 9;
-                if (row == 0 || row == (cfg.gui().size() / 9) - 1 || col == 0 || col == 8) {
-                    inv.setItem(i, border);
-                }
-            }
-
-            // back
-            inv.setItem(cfg.gui().backSlot(), namedItem(cfg.gui().backMaterial(), color(cfg.gui().backName())));
-
-            // category tabs (top row)
-            placeCategoryTab(inv, CAT_ALL_SLOT, Category.ALL, category);
-            placeCategoryTab(inv, CAT_SELL_MONEY_SLOT, Category.SELL_MONEY, category);
-            placeCategoryTab(inv, CAT_BUY_MONEY_SLOT, Category.BUY_MONEY, category);
-
-            // paging
             List<Integer> contentSlots = getContentSlots(cfg.gui().size());
             int perPage = contentSlots.size(); // 54-sized inventory => 28
             List<RewardDefinition> filtered = cfg.rewards().stream()
@@ -144,26 +122,8 @@ public final class RewardsGUI {
             int start = (safePage - 1) * perPage;
             int end = Math.min(start + perPage, total);
 
-            if (safePage > 1) {
-                ItemStack prev = namedItem(Material.ARROW, ChatColor.YELLOW + "上一页");
-                ItemMeta prevMeta = prev.getItemMeta();
-                if (prevMeta != null) {
-                    prevMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
-                    prev.setItemMeta(prevMeta);
-                }
-                inv.setItem(PREV_PAGE_SLOT, prev);
-            }
-            if (safePage < maxPage) {
-                ItemStack next = namedItem(Material.ARROW, ChatColor.YELLOW + "下一页");
-                ItemMeta nextMeta = next.getItemMeta();
-                if (nextMeta != null) {
-                    nextMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
-                    next.setItemMeta(nextMeta);
-                }
-                inv.setItem(NEXT_PAGE_SLOT, next);
-            }
-
-            // rewards for this page
+            Map<Integer, String> slotMap = new HashMap<>();
+            List<RewardSlotModel> models = new ArrayList<>();
             int slotIdx = 0;
             for (int i = start; i < end; i++) {
                 RewardDefinition def = filtered.get(i);
@@ -172,43 +132,94 @@ public final class RewardsGUI {
                 Progress p = progressFor(def.type(), def.target(), sellMoney, sellQty, sellRank, buyMoney, buyQty, buyRank);
                 boolean unlocked = p.progress() >= p.target();
                 boolean isClaimed = claimed.contains(def.id());
-
-                String statusText = isClaimed
-                    ? ChatColor.GREEN + "已领取"
-                    : (unlocked ? ChatColor.YELLOW + "可领取" : ChatColor.RED + "未达成");
-
-                ItemStack item = new ItemStack(def.displayMaterial() == null ? Material.PAPER : def.displayMaterial());
-                ItemMeta meta = item.getItemMeta();
-                if (meta != null) {
-                    meta.setDisplayName(color(replaceVars(def.displayName(), p, statusText)));
-                    List<String> lore = new ArrayList<>();
-                    for (String line : def.displayLore()) {
-                        lore.add(color(replaceVars(line, p, statusText)));
-                    }
-                    if (lore.isEmpty()) {
-                        lore.add(ChatColor.GRAY + "进度: " + ChatColor.WHITE + formatProgress(p) + ChatColor.GRAY + "/" + ChatColor.WHITE + formatTarget(p));
-                        lore.add(ChatColor.GRAY + "榜位: " + ChatColor.GOLD + (p.rank() <= 0 ? "-" : p.rank()));
-                        lore.add(ChatColor.GRAY + "状态: " + statusText);
-                    }
-                    meta.setLore(lore);
-                    meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
-                    if (unlocked && !isClaimed) {
-                        meta.addEnchant(org.bukkit.enchantments.Enchantment.LUCK, 1, true);
-                        meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-                    }
-                    item.setItemMeta(meta);
-                }
-
-                inv.setItem(slot, item);
                 slotMap.put(slot, def.id());
+                models.add(new RewardSlotModel(slot, def, p, unlocked, isClaimed));
             }
 
             Session session = new Session(cfg.gui().size(), title, category, safePage, maxPage, Map.copyOf(slotMap));
             sessions.put(uuid, session);
 
-            Bukkit.getScheduler().runTask(plugin, () -> player.openInventory(inv));
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Inventory inv = Bukkit.createInventory(player, cfg.gui().size(), title);
+
+                // border
+                ItemStack border = namedItem(cfg.gui().borderMaterial(), color(cfg.gui().borderName()));
+                for (int i = 0; i < cfg.gui().size(); i++) {
+                    int row = i / 9;
+                    int col = i % 9;
+                    if (row == 0 || row == (cfg.gui().size() / 9) - 1 || col == 0 || col == 8) {
+                        inv.setItem(i, border);
+                    }
+                }
+
+                // back
+                inv.setItem(cfg.gui().backSlot(), namedItem(cfg.gui().backMaterial(), color(cfg.gui().backName())));
+
+                // category tabs (top row)
+                placeCategoryTab(inv, CAT_ALL_SLOT, Category.ALL, category);
+                placeCategoryTab(inv, CAT_SELL_MONEY_SLOT, Category.SELL_MONEY, category);
+                placeCategoryTab(inv, CAT_BUY_MONEY_SLOT, Category.BUY_MONEY, category);
+
+                // paging
+                if (safePage > 1) {
+                    ItemStack prev = namedItem(Material.ARROW, ChatColor.YELLOW + "上一页");
+                    ItemMeta prevMeta = prev.getItemMeta();
+                    if (prevMeta != null) {
+                        prevMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
+                        prev.setItemMeta(prevMeta);
+                    }
+                    inv.setItem(PREV_PAGE_SLOT, prev);
+                }
+                if (safePage < maxPage) {
+                    ItemStack next = namedItem(Material.ARROW, ChatColor.YELLOW + "下一页");
+                    ItemMeta nextMeta = next.getItemMeta();
+                    if (nextMeta != null) {
+                        nextMeta.setLore(List.of(ChatColor.GRAY + "第 " + safePage + " / " + maxPage + " 页"));
+                        next.setItemMeta(nextMeta);
+                    }
+                    inv.setItem(NEXT_PAGE_SLOT, next);
+                }
+
+                // rewards for this page
+                for (RewardSlotModel model : models) {
+                    RewardDefinition def = model.def();
+                    Progress p = model.progress();
+                    boolean unlocked = model.unlocked();
+                    boolean isClaimed = model.claimed();
+                    String statusText = isClaimed
+                        ? ChatColor.GREEN + "已领取"
+                        : (unlocked ? ChatColor.YELLOW + "可领取" : ChatColor.RED + "未达成");
+
+                    ItemStack item = new ItemStack(def.displayMaterial() == null ? Material.PAPER : def.displayMaterial());
+                    ItemMeta meta = item.getItemMeta();
+                    if (meta != null) {
+                        meta.setDisplayName(color(replaceVars(def.displayName(), p, statusText)));
+                        List<String> lore = new ArrayList<>();
+                        for (String line : def.displayLore()) {
+                            lore.add(color(replaceVars(line, p, statusText)));
+                        }
+                        if (lore.isEmpty()) {
+                            lore.add(ChatColor.GRAY + "进度: " + ChatColor.WHITE + formatProgress(p) + ChatColor.GRAY + "/" + ChatColor.WHITE + formatTarget(p));
+                            lore.add(ChatColor.GRAY + "榜位: " + ChatColor.GOLD + (p.rank() <= 0 ? "-" : p.rank()));
+                            lore.add(ChatColor.GRAY + "状态: " + statusText);
+                        }
+                        meta.setLore(lore);
+                        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+                        if (unlocked && !isClaimed) {
+                            meta.addEnchant(org.bukkit.enchantments.Enchantment.LUCK, 1, true);
+                            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                        }
+                        item.setItemMeta(meta);
+                    }
+                    inv.setItem(model.slot(), item);
+                }
+
+                player.openInventory(inv);
+            });
         });
     }
+
+    private record RewardSlotModel(int slot, RewardDefinition def, Progress progress, boolean unlocked, boolean claimed) {}
 
     public Optional<Category> categoryAtSlot(int slot) {
         return switch (slot) {

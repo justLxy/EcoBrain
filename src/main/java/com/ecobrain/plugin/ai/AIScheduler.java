@@ -382,8 +382,10 @@ public class AIScheduler {
         // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
         // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
         if (item.getPhysicalStock() <= 1) {
-            ItemNameInfo nameInfo = itemNameInfo(item);
-            if (nameInfo.hasCustomDisplayName()) {
+            // Bukkit ItemMeta 相关操作必须在主线程执行
+            ItemNameInfo nameInfo = itemNameInfoSync(item);
+            // 保护：带自定义名字的物品可能是服内重要道具，不做自动销毁
+            if (!nameInfo.hasCustomDisplayName()) {
             long lastTrade = repository.queryLastTradeTime(item.getItemHash());
             if (lastTrade <= 0L) {
                 // 无任何交易记录时，绝不自动销毁（避免正常物品被误删）
@@ -446,6 +448,14 @@ public class AIScheduler {
         } catch (Exception ignored) {
         }
         return new ItemNameInfo("Unknown Item", false);
+    }
+
+    private ItemNameInfo itemNameInfoSync(ItemMarketRecord record) {
+        try {
+            return Bukkit.getScheduler().callSyncMethod(plugin, () -> itemNameInfo(record)).get();
+        } catch (Exception ignored) {
+            return new ItemNameInfo("Unknown Item", false);
+        }
     }
 
     private String readableItemName(ItemMarketRecord record) {

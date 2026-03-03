@@ -8,8 +8,6 @@ import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.safety.CircuitBreaker;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import org.bukkit.plugin.java.JavaPlugin;
-
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -63,13 +61,13 @@ public class MarketService {
             
             // 修复：IPO 时，virtualInitialInventory 应该等于 dynamicTarget，否则会导致开局饱和度异常
             // 比如卖 1000 个，dynamicTarget=2000，如果 virtualInitialInventory 还是 64，开局价格就会暴涨
-            repository.upsertIpo(hash, base64, initialBasePrice, economySettings.ipoKFactor(),
+            boolean insertedNow = repository.upsertIpo(hash, base64, initialBasePrice, economySettings.ipoKFactor(),
                 dynamicTarget,
                 dynamicTarget, // 这里原本是 virtualInitialInventory，现在改为 dynamicTarget，让初始饱和度为 100%
                 Math.max(0, firstSellQuantity));
-            ItemMarketRecord inserted = repository.findByHash(hash)
+            ItemMarketRecord insertedRecord = repository.findByHash(hash)
                 .orElseThrow(() -> new IllegalStateException("IPO insert failed"));
-            return new IpoState(inserted, true);
+            return new IpoState(insertedRecord, insertedNow);
         }, runnable -> plugin.getServer().getScheduler().runTaskAsynchronously(plugin, runnable));
     }
 
@@ -97,6 +95,47 @@ public class MarketService {
         }
         TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);
+    }
+
+    /**
+     * 买入前的“库存预留”：
+     * 通过原子扣减 physical_stock 防止并发超卖。成功后，调用方再进行扣款与发货。
+     *
+     * @return true 表示预留成功
+     */
+    public boolean reservePhysicalStockForBuy(String itemHash, int amount) {
+        int critical = 0;
+        try {
+            critical = fullSettingsCriticalInventorySafe();
+        } catch (Exception ignored) {
+        }
+        return repository.tryReservePhysicalStockForBuy(itemHash, amount, critical);
+    }
+
+    /**
+     * 取消买入（扣款失败/背包不足/异常）时归还预留库存。
+     */
+    public void cancelReservedBuy(String itemHash, int amount) {
+        repository.releaseReservedPhysicalStock(itemHash, amount);
+    }
+
+    /**
+     * 预留成功后的买入结算：只更新虚拟库存池 + 记录成交，不再扣 physical_stock。
+     */
+    public void settleBuyAfterReservation(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
+        repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
+        long now = System.currentTimeMillis();
+        repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
+        if (player != null) {
+            repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
+        }
+    }
+
+    private int fullSettingsCriticalInventorySafe() {
+        // MarketService 本身不持有 PluginSettings 全量快照，这里以 config 读值为准：
+        // - 调用发生在异步线程
+        // - 该值会在 /ecobrain reload 后更新到 Bukkit config
+        return plugin.getConfig().getInt("circuit-breaker.critical-inventory", 2);
     }
 
     /**

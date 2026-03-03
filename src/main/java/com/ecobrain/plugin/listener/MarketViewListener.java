@@ -98,7 +98,8 @@ public class MarketViewListener implements Listener {
         // Simple anti-spam for all clicks in this GUI
         long now = System.currentTimeMillis();
         Long lastClick = clickCooldown.get(player.getUniqueId());
-        if (lastClick != null && now - lastClick < 200) {
+        long cooldownMs = Math.max(200L, plugin.getConfig().getLong("trade.cooldown-ms", 1000L));
+        if (lastClick != null && now - lastClick < cooldownMs) {
             event.setCancelled(true);
             return;
         }
@@ -224,31 +225,7 @@ public class MarketViewListener implements Listener {
         }
         event.setCancelled(true);
         String msg = event.getMessage() == null ? "" : event.getMessage().trim();
-        if (msg.equalsIgnoreCase("cancel") || msg.equalsIgnoreCase("c") || msg.equalsIgnoreCase("取消")) {
-            pendingBuyInput.remove(player.getUniqueId());
-            player.sendMessage(ChatColor.YELLOW + "已取消自定义购买。");
-            return;
-        }
-        int amount;
-        try {
-            amount = Integer.parseInt(msg);
-        } catch (NumberFormatException e) {
-            player.sendMessage(ChatColor.YELLOW + "请输入一个正整数数量，或输入 cancel 取消。");
-            return;
-        }
-        if (amount <= 0) {
-            player.sendMessage(ChatColor.YELLOW + "数量必须是正整数，或输入 cancel 取消。");
-            return;
-        }
-        // prevent stale pending forever
-        if (System.currentTimeMillis() - pending.createdAtMillis > 60_000L) {
-            pendingBuyInput.remove(player.getUniqueId());
-            player.sendMessage(ChatColor.YELLOW + "输入已超时，请重新右键选择物品。");
-            return;
-        }
-        pendingBuyInput.remove(player.getUniqueId());
-        int finalAmount = Math.min(10000, amount);
-        Bukkit.getScheduler().runTask(plugin, () -> startBuyFlow(player, pending.itemHash, finalAmount, BuyMode.EXACT, pending.page, -1));
+        Bukkit.getScheduler().runTask(plugin, () -> handlePendingChatSync(player, pending, msg));
     }
 
     @EventHandler
@@ -378,6 +355,8 @@ public class MarketViewListener implements Listener {
         ItemStack offhandSnapshot = offhand == null ? null : offhand.clone();
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            boolean reserved = false;
+            int reservedAmount = 0;
             try {
                 Optional<ItemMarketRecord> optionalRecord = repository.findByHash(itemHash);
                 if (optionalRecord.isEmpty()) {
@@ -431,20 +410,33 @@ public class MarketViewListener implements Listener {
                 }
 
                 MarketService.TradeQuote quote = marketService.quoteBuy(record, finalAmount);
+                // 关键：先原子预留真实库存，防止并发超卖
+                reservedAmount = finalAmount;
+                reserved = marketService.reservePhysicalStockForBuy(itemHash, reservedAmount);
+                if (!reserved) {
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        player.sendMessage(ChatColor.RED + "购买失败：库存不足或触发熔断保护，请稍后重试。");
+                        releaseLock(player);
+                    });
+                    return;
+                }
                 int finalAmount1 = finalAmount;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
                         int currentMax = computeMaxAddable(player.getInventory(), template);
                         if (currentMax < finalAmount1) {
                             player.sendMessage(ChatColor.RED + "背包空间不足，交易已取消。（可放: " + currentMax + " 个）");
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
                         if (economyService.getBalance(player) < quote.totalPrice()) {
                             player.sendMessage(ChatColor.RED + "金币不足，需要 " + String.format("%.2f", quote.totalPrice()));
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
                         if (!economyService.withdraw(player, quote.totalPrice())) {
                             player.sendMessage(ChatColor.RED + "扣款失败，交易取消。");
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
 
@@ -464,7 +456,7 @@ public class MarketViewListener implements Listener {
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
                         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                            marketService.settleBuy(player, itemHash, record, quote, finalAmount1);
+                            marketService.settleBuyAfterReservation(player, itemHash, record, quote, finalAmount1);
                             // 关键：不要“重开并重新排序”，否则库存/价格变化会让物品换位置，玩家连续点击旧位置可能误买。
                             // - 若购买来自 GUI 点击：原地刷新被点击的槽位
                             // - 若购买来自聊天输入（GUI 已关闭）：照常重开页面（此时玩家不会在旧位置连点）
@@ -497,12 +489,47 @@ public class MarketViewListener implements Listener {
                     }
                 });
             } catch (Exception e) {
+                if (reserved) {
+                    int finalReservedAmount = reservedAmount;
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalReservedAmount));
+                }
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     player.sendMessage(ChatColor.RED + "购买失败: " + e.getMessage());
                     releaseLock(player);
                 });
             }
         });
+    }
+
+    private void handlePendingChatSync(Player player, PendingBuyInput pending, String msg) {
+        if (player == null || pending == null) {
+            return;
+        }
+        if (msg.equalsIgnoreCase("cancel") || msg.equalsIgnoreCase("c") || msg.equalsIgnoreCase("取消")) {
+            pendingBuyInput.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.YELLOW + "已取消自定义购买。");
+            return;
+        }
+        int amount;
+        try {
+            amount = Integer.parseInt(msg);
+        } catch (NumberFormatException e) {
+            player.sendMessage(ChatColor.YELLOW + "请输入一个正整数数量，或输入 cancel 取消。");
+            return;
+        }
+        if (amount <= 0) {
+            player.sendMessage(ChatColor.YELLOW + "数量必须是正整数，或输入 cancel 取消。");
+            return;
+        }
+        // prevent stale pending forever
+        if (System.currentTimeMillis() - pending.createdAtMillis > 60_000L) {
+            pendingBuyInput.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.YELLOW + "输入已超时，请重新右键选择物品。");
+            return;
+        }
+        pendingBuyInput.remove(player.getUniqueId());
+        int finalAmount = Math.min(10000, amount);
+        startBuyFlow(player, pending.itemHash, finalAmount, BuyMode.EXACT, pending.page, -1);
     }
 
     private ItemStack[] cloneContents(ItemStack[] source) {

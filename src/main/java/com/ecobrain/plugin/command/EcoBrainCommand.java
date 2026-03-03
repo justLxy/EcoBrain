@@ -53,6 +53,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
     private final AdminCommand adminCommand;
     private volatile long cooldownMs;
     private final ConcurrentHashMap<String, Long> playerActionLock = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> playerLastActionAt = new ConcurrentHashMap<>();
 
     public EcoBrainCommand(JavaPlugin plugin, ItemSerializer itemSerializer, ItemMarketRepository repository,
                            MarketService marketService, EconomyService economyService, BulkSellGUI bulkSellGUI,
@@ -211,7 +212,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                     }
                 });
             } catch (Exception e) {
-                player.sendMessage(ChatColor.RED + "出售失败: " + e.getMessage());
+                sendMessageSync(player, ChatColor.RED + "出售失败: " + e.getMessage());
                 releaseLock(player);
             }
         });
@@ -246,12 +247,14 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         }
         ItemStack snapshot = hand.clone();
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            boolean reserved = false;
+            String hash = null;
             try {
                 String base64 = itemSerializer.serializeToBase64(snapshot.asOne());
-                String hash = itemSerializer.sha256(base64);
+                hash = itemSerializer.sha256(base64);
                 Optional<ItemMarketRecord> optionalRecord = repository.findByHash(hash);
                 if (optionalRecord.isEmpty()) {
-                    player.sendMessage(ChatColor.RED + "市场没有收录该物品，请先由玩家卖出触发 IPO。");
+                    sendMessageSync(player, ChatColor.RED + "市场没有收录该物品，请先由玩家卖出触发 IPO。");
                     releaseLock(player);
                     return;
                 }
@@ -262,7 +265,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
 
                 // 1. 如果当前库存【已经】触发熔断，直接一票否决
                 if (currentPhysical <= criticalLimit) {
-                    player.sendMessage(ChatColor.RED + "系统展柜保护机制：该物品库存已达红线，暂停出售！");
+                    sendMessageSync(player, ChatColor.RED + "系统展柜保护机制：该物品库存已达红线，暂停出售！");
                     releaseLock(player);
                     return;
                 }
@@ -270,27 +273,39 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                 // 2. 如果购买后，会导致库存跌破熔断线（穿仓）
                 if (currentPhysical - requestedAmount < criticalLimit) {
                     int maxCanBuy = currentPhysical - criticalLimit; // 计算出最多能买多少个
-                    player.sendMessage(ChatColor.RED + "购买失败！系统最多只能再向您出售 " + maxCanBuy + " 个该物品。");
+                    sendMessageSync(player, ChatColor.RED + "购买失败！系统最多只能再向您出售 " + maxCanBuy + " 个该物品。");
                     releaseLock(player);
                     return;
                 }
                 MarketService.TradeQuote quote = marketService.quoteBuy(record, amount);
 
+                // 3. 关键：先原子预留真实库存，防止并发超卖
+                reserved = marketService.reservePhysicalStockForBuy(hash, amount);
+                if (!reserved) {
+                    sendMessageSync(player, ChatColor.RED + "购买失败：库存不足或触发熔断保护，请稍后重试。");
+                    releaseLock(player);
+                    return;
+                }
+
+                String finalHash = hash;
+                int finalAmount = amount;
+                ItemMarketRecord finalRecord = record;
+                MarketService.TradeQuote finalQuote = quote;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
-                        if (economyService.getBalance(player) < quote.totalPrice()) {
-                            player.sendMessage(ChatColor.RED + "金币不足，需要 " + String.format("%.2f", quote.totalPrice()));
-                            releaseLock(player);
+                        if (economyService.getBalance(player) < finalQuote.totalPrice()) {
+                            player.sendMessage(ChatColor.RED + "金币不足，需要 " + String.format("%.2f", finalQuote.totalPrice()));
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
                             return;
                         }
-                        if (!economyService.withdraw(player, quote.totalPrice())) {
+                        if (!economyService.withdraw(player, finalQuote.totalPrice())) {
                             player.sendMessage(ChatColor.RED + "扣款失败，交易取消。");
-                            releaseLock(player);
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
                             return;
                         }
-                        ItemStack item = itemSerializer.deserializeFromBase64(record.getItemBase64());
-                        item.setAmount(Math.min(item.getMaxStackSize(), amount));
-                        int rest = amount;
+                        ItemStack item = itemSerializer.deserializeFromBase64(finalRecord.getItemBase64());
+                        item.setAmount(Math.min(item.getMaxStackSize(), finalAmount));
+                        int rest = finalAmount;
                         while (rest > 0) {
                             ItemStack part = item.clone();
                             int stack = Math.min(part.getMaxStackSize(), rest);
@@ -303,14 +318,19 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             }
                             rest -= stack;
                         }
-                        player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuy(player, hash, record, quote, amount));
+                        player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", finalQuote.totalPrice()) + " 金币。");
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuyAfterReservation(player, finalHash, finalRecord, finalQuote, finalAmount));
                     } finally {
                         releaseLock(player);
                     }
                 });
             } catch (Exception e) {
-                player.sendMessage(ChatColor.RED + "购买失败: " + e.getMessage());
+                sendMessageSync(player, ChatColor.RED + "购买失败: " + e.getMessage());
+                if (reserved && hash != null) {
+                    String finalHash = hash;
+                    int finalAmount = amount;
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
+                }
                 releaseLock(player);
             }
         });
@@ -408,11 +428,25 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
 
     private boolean tryAcquireLock(Player player) {
         String key = player.getUniqueId().toString();
-        return playerActionLock.putIfAbsent(key, System.currentTimeMillis()) == null;
+        long now = System.currentTimeMillis();
+        Long last = playerLastActionAt.get(key);
+        if (last != null && cooldownMs > 0L && (now - last) < cooldownMs) {
+            return false;
+        }
+        return playerActionLock.putIfAbsent(key, now) == null;
     }
 
     private void releaseLock(Player player) {
-        playerActionLock.remove(player.getUniqueId().toString());
+        String key = player.getUniqueId().toString();
+        playerActionLock.remove(key);
+        playerLastActionAt.put(key, System.currentTimeMillis());
+    }
+
+    private void sendMessageSync(Player player, String message) {
+        if (player == null || message == null) {
+            return;
+        }
+        Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(message));
     }
 
     @Override

@@ -65,8 +65,8 @@ public class ItemMarketRepository {
     /**
      * IPO 冷启动写入。若已存在则保持原记录不变。
      */
-    public void upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor,
-                          int targetInventory, int currentInventory, int physicalStock) {
+    public boolean upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor,
+                             int targetInventory, int currentInventory, int physicalStock) {
         String sql = """
             INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock)
             VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -81,8 +81,9 @@ public class ItemMarketRepository {
             statement.setInt(5, targetInventory);
             statement.setInt(6, Math.max(1, currentInventory));
             statement.setInt(7, Math.max(0, physicalStock));
-            statement.executeUpdate();
+            int rows = statement.executeUpdate();
             initializeRiskIfMissing(itemHash, basePrice, connection);
+            return rows > 0;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to insert IPO record", e);
         }
@@ -98,6 +99,62 @@ public class ItemMarketRepository {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update stocks", e);
+        }
+    }
+
+    /**
+     * 买入的“库存预留”：
+     * 先在异步线程里原子扣减 physical_stock，避免并发买入导致超卖/负库存。
+     *
+     * @return true 表示预留成功；false 表示库存不足或会跌破熔断线
+     */
+    public boolean tryReservePhysicalStockForBuy(String itemHash, int amount, int criticalInventory) {
+        String sql = """
+            UPDATE ecobrain_items
+            SET physical_stock = physical_stock - ?
+            WHERE item_hash = ?
+              AND (physical_stock - ?) >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, Math.max(0, amount));
+            statement.setString(2, itemHash);
+            statement.setInt(3, Math.max(0, amount));
+            statement.setInt(4, Math.max(0, criticalInventory));
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to reserve physical stock", e);
+        }
+    }
+
+    /**
+     * 预留失败/取消购买时，归还已预留的 physical_stock。
+     */
+    public void releaseReservedPhysicalStock(String itemHash, int amount) {
+        String sql = "UPDATE ecobrain_items SET physical_stock = physical_stock + ? WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, Math.max(0, amount));
+            statement.setString(2, itemHash);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to release reserved physical stock", e);
+        }
+    }
+
+    /**
+     * 预留成功后，仅更新虚拟库存池（current_inventory）。
+     * physical_stock 已在 reserve 阶段扣减，这里绝不能再扣一次。
+     */
+    public void updateVirtualInventoryOnly(String itemHash, int newVirtualInventory) {
+        String sql = "UPDATE ecobrain_items SET current_inventory = ? WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, Math.max(1, newVirtualInventory));
+            statement.setString(2, itemHash);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to update virtual inventory", e);
         }
     }
 

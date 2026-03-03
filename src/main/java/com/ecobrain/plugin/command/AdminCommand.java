@@ -46,9 +46,9 @@ public class AdminCommand {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 try {
                     String fileName = repository.exportTransactionDataForTraining(plugin.getDataFolder());
-                    sender.sendMessage(ChatColor.GREEN + "成功导出交易日志数据到: " + fileName);
+                    sendMessageSync(sender, ChatColor.GREEN + "成功导出交易日志数据到: " + fileName);
                 } catch (Exception e) {
-                    sender.sendMessage(ChatColor.RED + "导出数据失败: " + e.getMessage());
+                    sendMessageSync(sender, ChatColor.RED + "导出数据失败: " + e.getMessage());
                 }
             });
             return true;
@@ -59,9 +59,9 @@ public class AdminCommand {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 try {
                     int rows = repository.clearLeaderboard();
-                    sender.sendMessage(ChatColor.GREEN + "已清空交易排行榜数据。" + (rows > 0 ? (" 删除行数=" + rows) : ""));
+                    sendMessageSync(sender, ChatColor.GREEN + "已清空交易排行榜数据。" + (rows > 0 ? (" 删除行数=" + rows) : ""));
                 } catch (Exception e) {
-                    sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                    sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                 }
             });
             return true;
@@ -101,7 +101,7 @@ public class AdminCommand {
                         
                         var recordOpt = repository.findByHash(hash);
                         if (recordOpt.isEmpty()) {
-                            player.sendMessage(ChatColor.RED + "该物品尚未在市场中被收录（未发生过交易），请先由玩家卖出一次触发 IPO。");
+                            sendMessageSync(player, ChatColor.RED + "该物品尚未在市场中被收录（未发生过交易），请先由玩家卖出一次触发 IPO。");
                             return;
                         }
                         
@@ -113,10 +113,10 @@ public class AdminCommand {
                             newTarget
                         );
                         
-                        player.sendMessage(ChatColor.GREEN + "成功！已将主手物品的目标库存修改为: " + newTarget);
-                        player.sendMessage(ChatColor.GREEN + "AI 会在下一个调控周期自动根据新的目标库存重新判定该物品的阶级(High/Mid/Low)。");
+                        sendMessageSync(player, ChatColor.GREEN + "成功！已将主手物品的目标库存修改为: " + newTarget);
+                        sendMessageSync(player, ChatColor.GREEN + "AI 会在下一个调控周期自动根据新的目标库存重新判定该物品的阶级(High/Mid/Low)。");
                     } catch (Exception e) {
-                        player.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                        sendMessageSync(player, ChatColor.RED + "执行失败: " + e.getMessage());
                     }
                 });
                 return true;
@@ -130,9 +130,9 @@ public class AdminCommand {
                 plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                     try {
                         repository.deleteByHash(hash);
-                        sender.sendMessage(ChatColor.GREEN + "已清除物品市场档案: " + hash);
+                        sendMessageSync(sender, ChatColor.GREEN + "已清除物品市场档案: " + hash);
                     } catch (Exception e) {
-                        sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                        sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                     }
                 });
                 return true;
@@ -146,9 +146,9 @@ public class AdminCommand {
                 plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                     try {
                         repository.setFrozen(hash, true);
-                        sender.sendMessage(ChatColor.RED + "已冻结: " + hash);
+                        sendMessageSync(sender, ChatColor.RED + "已冻结: " + hash);
                     } catch (Exception e) {
-                        sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                        sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                     }
                 });
                 return true;
@@ -159,9 +159,9 @@ public class AdminCommand {
                     plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                         try {
                             int rows = repository.setAllFrozen(false);
-                            sender.sendMessage(ChatColor.GREEN + "已解冻所有物品。" + (rows > 0 ? (" 更新行数=" + rows) : ""));
+                            sendMessageSync(sender, ChatColor.GREEN + "已解冻所有物品。" + (rows > 0 ? (" 更新行数=" + rows) : ""));
                         } catch (Exception e) {
-                            sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                            sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                         }
                     });
                     return true;
@@ -173,9 +173,9 @@ public class AdminCommand {
                     plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                         try {
                             repository.setFrozen(hash, false);
-                            sender.sendMessage(ChatColor.GREEN + "已解冻: " + hash);
+                            sendMessageSync(sender, ChatColor.GREEN + "已解冻: " + hash);
                         } catch (Exception e) {
-                            sender.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                            sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                         }
                     });
                     return true;
@@ -197,9 +197,9 @@ public class AdminCommand {
                         String base64 = itemSerializer.serializeToBase64(snapshot);
                         String hash = itemSerializer.sha256(base64);
                         repository.setFrozen(hash, false);
-                        player.sendMessage(ChatColor.GREEN + "已解冻主手物品，对应 hash=" + hash);
+                        sendMessageSync(player, ChatColor.GREEN + "已解冻主手物品，对应 hash=" + hash);
                     } catch (Exception e) {
-                        player.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                        sendMessageSync(player, ChatColor.RED + "执行失败: " + e.getMessage());
                     }
                 });
                 return true;
@@ -209,5 +209,12 @@ public class AdminCommand {
                 return true;
             }
         }
+    }
+
+    private void sendMessageSync(CommandSender sender, String message) {
+        if (sender == null || message == null) {
+            return;
+        }
+        plugin.getServer().getScheduler().runTask(plugin, () -> sender.sendMessage(message));
     }
 }
