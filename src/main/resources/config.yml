@@ -74,10 +74,25 @@ ai:
       # 对齐离线模拟器：高价值默认 target_inventory≈32，且自适应 target 会在 32 附近波动
       # 因此 inventory-threshold 至少应覆盖到 32，并留一定缓冲，避免冷启动阶段错误路由到 mid。
       inventory-threshold: 64
+      # 与离线训练保持一致：按 tier 限制 k 的动作幅度与上下限（防止“靠 k 走捷径”）
+      tuning:
+        k-delta: 0.30
+        k-min: 0.2
+        k-max: 6.0
     mid:
       # 中等价值物品（如副本材料）的判断门槛。交给 ecobrain_mid_value.onnx 处理。
       price-threshold: 1000.0   
       inventory-threshold: 640  
+      tuning:
+        k-delta: 0.20
+        k-min: 0.2
+        k-max: 4.0
+    low:
+      # 低价值物品不需要阈值（默认兜底），这里只放 tuning 限制以对齐离线训练。
+      tuning:
+        k-delta: 0.10
+        k-min: 0.2
+        k-max: 3.0
     # 都不满足的，就是泥土小麦之类的破烂，全丢给 ecobrain_low_value.onnx 处理。
     
   tuning:

@@ -326,17 +326,21 @@ class EcoBrainEnv(gym.Env):
         
         # 1. Apply AI action
         raw_mult = 1.0 + (float(action[0]) * float(ACTION_BASE_PRICE_MAX_PERCENT))
-        raw_k_delta = float(action[1]) * float(ACTION_K_FACTOR_MAX_DELTA)
+        tier_cfg = TIERS[self.value_type]
+        k_delta_cap = float(tier_cfg.get("action_k_max_delta", ACTION_K_FACTOR_MAX_DELTA))
+        raw_k_delta = float(action[1]) * float(k_delta_cap)
 
         # Align with plugin: clamp multiplier and kDelta per-cycle
         limit = max(0.0, float(PER_CYCLE_MAX_CHANGE_PERCENT))
         safe_mult = max(1.0 - limit, min(1.0 + limit, raw_mult))
-        safe_k_delta = max(-float(ACTION_K_FACTOR_MAX_DELTA), min(float(ACTION_K_FACTOR_MAX_DELTA), raw_k_delta))
+        safe_k_delta = max(-float(k_delta_cap), min(float(k_delta_cap), raw_k_delta))
 
         self.amm.apply_ai_action(safe_mult, safe_k_delta)
         # Hard bounds (plugin aligned)
         self.amm.base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(self.amm.base_price)))
-        self.amm.k_factor = max(float(K_MIN), min(float(K_MAX), float(self.amm.k_factor)))
+        k_min = float(tier_cfg.get("k_min", K_MIN))
+        k_max = float(tier_cfg.get("k_max", K_MAX))
+        self.amm.k_factor = max(float(k_min), min(float(k_max), float(self.amm.k_factor)))
 
         # Update circuit breaker flag for this cycle (affects AMM.execute_buy)
         self._check_and_update_daily_limit()
@@ -436,7 +440,6 @@ class EcoBrainEnv(gym.Env):
         )
         
         # Specific shaping to help it learn the difference between garbage and gold
-        tier_cfg = TIERS[self.value_type]
         price = float(self.amm.get_current_price())
         if self.value_type == "high":
             # Hard constraint: must stay within [price_min, price_max]

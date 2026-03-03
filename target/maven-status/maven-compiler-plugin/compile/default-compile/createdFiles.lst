@@ -7,6 +7,7 @@ com/ecobrain/plugin/config/PluginSettings.class
 com/ecobrain/plugin/gui/MarketViewGUI$ItemCategory.class
 com/ecobrain/plugin/ai/AIScheduler$SurgeType.class
 com/ecobrain/plugin/listener/MarketViewListener$BuyMode.class
+com/ecobrain/plugin/config/PluginSettings$Tier.class
 com/ecobrain/plugin/config/PluginSettings$Gui.class
 com/ecobrain/plugin/rewards/RewardsGUI$Category.class
 com/ecobrain/plugin/model/PlayerStat.class
@@ -17,6 +18,7 @@ com/ecobrain/plugin/ai/AIScheduler$ItemNameInfo.class
 com/ecobrain/plugin/service/MarketService$1.class
 com/ecobrain/plugin/rewards/RewardsGUI$Progress.class
 com/ecobrain/plugin/rewards/RewardsConfig.class
+com/ecobrain/plugin/config/PluginSettings$TierTuning.class
 com/ecobrain/plugin/service/EconomyService.class
 com/ecobrain/plugin/safety/CircuitBreaker$BuyCheckResult.class
 com/ecobrain/plugin/rewards/RewardCommandRunner.class

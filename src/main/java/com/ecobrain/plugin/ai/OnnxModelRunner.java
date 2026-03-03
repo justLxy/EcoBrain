@@ -65,9 +65,10 @@ public class OnnxModelRunner {
     /**
      * @param obs [saturation, flow, inflation, elasticity, volatility, is_ipo]
      * @param valueType "low", "mid", or "high"
+     * @param kDeltaMax maximum absolute k delta per cycle (tier-specific)
      * @return double[] {basePriceMultiplier, kDelta}
      */
-    public double[] predictAction(float[] obs, String valueType) {
+    public double[] predictAction(float[] obs, String valueType, double kDeltaMax) {
         OrtSession session;
         switch (valueType) {
             case "high":
@@ -97,15 +98,17 @@ public class OnnxModelRunner {
             // Output should be a float array of shape [1, 2] -> action
             float[][] output = (float[][]) result.get(0).getValue();
             
-            // Map the actions back from [-1, 1] as defined in our PPO env
-            float actionBaseMultRaw = output[0][0];
-            float actionKDeltaRaw = output[0][1];
+            // Our ONNX exports the actor's mean actions (pre-squash). SB3 PPO uses tanh-squash
+            // for continuous actions, so we apply tanh here to recover [-1, 1].
+            double actionBaseMultRaw = Math.tanh((double) output[0][0]);
+            double actionKDeltaRaw = Math.tanh((double) output[0][1]);
 
             // Action 0: mapped based on training config.py (1.00 = 100%)
             double basePriceMultiplier = 1.0 + (actionBaseMultRaw * 1.00);
             
-            // Action 1: mapped based on training config.py (1.00 = 1.0 K delta)
-            double kDelta = actionKDeltaRaw * 1.00;
+            // Action 1: mapped based on tier-specific training cap
+            double safeCap = Math.max(0.0D, kDeltaMax);
+            double kDelta = actionKDeltaRaw * safeCap;
 
             tensor.close();
             result.close();

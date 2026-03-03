@@ -81,6 +81,10 @@ TIERS = {
         "current_inventory": 32,
         # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
         "initial_base_price": {"dist": "loguniform", "low": 10000.0, "high": 1_000_000.0},
+        # 限制“走捷径”：高价值允许更灵活的曲线，但仍限制单步 k 变化与 k 上界
+        "action_k_max_delta": 0.30,  # 每个 step 最大 k 微调幅度（建议 < 1.0，避免靠 k 把价格打穿/打飞）
+        "k_min": 0.2,
+        "k_max": 6.0,
         # 目标：允许短期掉到 10000，但长期希望回到 15000~1e8 的奖励带
         "price_min": 10000.0,
         "price_max": 100_000_000.0,
@@ -99,6 +103,10 @@ TIERS = {
         "current_inventory": 640,
         # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
         "initial_base_price": {"dist": "loguniform", "low": 1000.0, "high": 10000.0},
+        # 限制“走捷径”：中价值以维稳为主，k 变化要更保守
+        "action_k_max_delta": 0.20,
+        "k_min": 0.2,
+        "k_max": 4.0,
         # 硬约束范围：1000~10000（越界重罚）
         "price_min": 1000.0,
         "price_max": 10000.0,
@@ -116,6 +124,10 @@ TIERS = {
         "current_inventory": 1280,
         # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
         "initial_base_price": {"dist": "loguniform", "low": 1.0, "high": 1000.0},
+        # 限制“走捷径”：低价值最容易靠 k 把价格压穿到接近 0，因此强收紧 k
+        "action_k_max_delta": 0.10,
+        "k_min": 0.2,
+        "k_max": 3.0,
         # 目标：低价值物品长期保持在 1-1000
         "price_min": 1.0,
         "price_max": 1000.0,

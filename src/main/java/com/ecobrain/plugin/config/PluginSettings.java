@@ -83,10 +83,34 @@ public class PluginSettings {
             c.getInt("ai.tuning.glut-no-trade-cooldown-cycles", 4),
             c.getDouble("ai.tuning.max-base-price", 5000000.0D),
             new Tiers(
-                c.getDouble("ai.tiers.high.price-threshold", 50000.0D),
-                c.getInt("ai.tiers.high.inventory-threshold", 10),
-                c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
-                c.getInt("ai.tiers.mid.inventory-threshold", 100)
+                new Tier(
+                    c.getDouble("ai.tiers.high.price-threshold", 50000.0D),
+                    c.getInt("ai.tiers.high.inventory-threshold", 10),
+                    new TierTuning(
+                        c.getDouble("ai.tiers.high.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
+                        c.getDouble("ai.tiers.high.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
+                        c.getDouble("ai.tiers.high.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
+                    )
+                ),
+                new Tier(
+                    c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
+                    c.getInt("ai.tiers.mid.inventory-threshold", 100),
+                    new TierTuning(
+                        c.getDouble("ai.tiers.mid.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
+                        c.getDouble("ai.tiers.mid.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
+                        c.getDouble("ai.tiers.mid.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
+                    )
+                ),
+                new Tier(
+                    // low is a fallback bucket; thresholds unused
+                    c.getDouble("ai.tiers.low.price-threshold", 0.0D),
+                    c.getInt("ai.tiers.low.inventory-threshold", Integer.MIN_VALUE),
+                    new TierTuning(
+                        c.getDouble("ai.tiers.low.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
+                        c.getDouble("ai.tiers.low.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
+                        c.getDouble("ai.tiers.low.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
+                    )
+                )
             ),
             new AdaptiveTarget(
                 c.getBoolean("ai.adaptive-target.enabled", true),
@@ -133,10 +157,16 @@ public class PluginSettings {
 
     public record AdaptiveTarget(boolean enabled, double smoothingFactor) {}
 
-    public record Tiers(
-        double highPriceThreshold, int highInventoryThreshold,
-        double midPriceThreshold, int midInventoryThreshold
-    ) {}
+    public record Tier(double priceThreshold, int inventoryThreshold, TierTuning tuning) {}
+
+    public record TierTuning(double kDelta, double kMin, double kMax) {}
+
+    public record Tiers(Tier high, Tier mid, Tier low) {
+        public double highPriceThreshold() { return high.priceThreshold(); }
+        public int highInventoryThreshold() { return high.inventoryThreshold(); }
+        public double midPriceThreshold() { return mid.priceThreshold(); }
+        public int midInventoryThreshold() { return mid.inventoryThreshold(); }
+    }
 
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,

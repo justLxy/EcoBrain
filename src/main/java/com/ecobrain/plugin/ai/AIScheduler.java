@@ -195,16 +195,17 @@ public class AIScheduler {
 
             // 4. 为【当前周期】做决策 At
             double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
+            String valueType;
+            if (item.getBasePrice() >= settings.tiers().highPriceThreshold() || item.getTargetInventory() <= settings.tiers().highInventoryThreshold()) {
+                valueType = "high";
+            } else if (item.getBasePrice() >= settings.tiers().midPriceThreshold() || item.getTargetInventory() <= settings.tiers().midInventoryThreshold()) {
+                valueType = "mid";
+            } else {
+                valueType = "low";
+            }
             if (hasRecentTrade) {
-                String valueType;
-                if (item.getBasePrice() >= settings.tiers().highPriceThreshold() || item.getTargetInventory() <= settings.tiers().highInventoryThreshold()) {
-                    valueType = "high";
-                } else if (item.getBasePrice() >= settings.tiers().midPriceThreshold() || item.getTargetInventory() <= settings.tiers().midInventoryThreshold()) {
-                    valueType = "mid";
-                } else {
-                    valueType = "low";
-                }
-                action = onnxModelRunner.predictAction(obs, valueType);
+                PluginSettings.TierTuning tuning = tierTuningFor(valueType);
+                action = onnxModelRunner.predictAction(obs, valueType, tuning.kDelta());
             }
 
             // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
@@ -241,7 +242,7 @@ public class AIScheduler {
             }
 
             // 5. 应用最终动作
-            TuningResult result = applyActionToItem(item, action, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
+            TuningResult result = applyActionToItem(item, action, valueType, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
 
             if (result != null) {
                 String actionName = String.format("MULT:%.2f K:%.2f", action[0], action[1]);
@@ -352,9 +353,27 @@ public class AIScheduler {
 
     private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, boolean isGlut, boolean isScarcity,
                                           boolean noSupplyDecay, double ipoAnchorBase) {
+        return applyActionToItem(item, action, "low", isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
+    }
+
+    private PluginSettings.TierTuning tierTuningFor(String valueType) {
+        if (valueType == null) {
+            return settings.tiers().low().tuning();
+        }
+        return switch (valueType) {
+            case "high" -> settings.tiers().high().tuning();
+            case "mid" -> settings.tiers().mid().tuning();
+            default -> settings.tiers().low().tuning();
+        };
+    }
+
+    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType, boolean isGlut, boolean isScarcity,
+                                          boolean noSupplyDecay, double ipoAnchorBase) {
         if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5 && !isGlut && !isScarcity && !noSupplyDecay) {
             return null;
         }
+
+        PluginSettings.TierTuning tierTuning = tierTuningFor(valueType);
 
         SurgeType surgeType = SurgeType.NONE;
         double oldBase = item.getBasePrice();
@@ -368,14 +387,14 @@ public class AIScheduler {
             double priceRate = settings.forceCrashMultiplier();
             newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
             newBasePrice = Math.max(0.01, newBasePrice);
-            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+            newK = clamp(oldK - tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
         } else if (isScarcity) {
             surgeType = SurgeType.SCARCITY_SURGE;
             double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
             double priceRate = settings.forceSurgeMultiplier();
             newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
             newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
-            newK = clamp(oldK + settings.kDelta(), settings.kMin(), settings.kMax());
+            newK = clamp(oldK + tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
         } else if (noSupplyDecay) {
             if (oldBase <= ipoAnchorBase) {
                 return null;
@@ -384,7 +403,7 @@ public class AIScheduler {
             double targetBase = Math.max(ipoAnchorBase, oldBase * 0.95D);
             newBasePrice = clamp(targetBase, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
             newBasePrice = Math.max(ipoAnchorBase, Math.min(newBasePrice, settings.maxBasePrice()));
-            newK = clamp(oldK - settings.kDelta(), settings.kMin(), settings.kMax());
+            newK = clamp(oldK - tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
         } else {
             // Apply ONNX continuous action
             double priceMult = action[0];
@@ -396,8 +415,8 @@ public class AIScheduler {
             newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
             
             // Limit K factor changes
-            double safeKDelta = clamp(kDelta, -settings.kDelta(), settings.kDelta());
-            newK = clamp(oldK + safeKDelta, settings.kMin(), settings.kMax());
+            double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());
+            newK = clamp(oldK + safeKDelta, tierTuning.kMin(), tierTuning.kMax());
         }
 
         // --- 防垃圾回收机制（按时间过期） ---
