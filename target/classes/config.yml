@@ -75,7 +75,7 @@ ai:
     # 价格天花板。如果到了这个价，AI 怎么调都不会再涨了。防刷钱最后的底线。
     max-base-price: 1000000.0
 
-    # AI 每次调价的最高限制。0.30 就是单次最多涨跌 30%。用来防止 AI 偶尔神经病。
+    # AI 每次调价的最高限制。1.0 就是单次最多涨跌 100%。完全放权给AI。
     per-cycle-max-change-percent: 1.00
 
     # 允许 AI 每次微调 k 系数的最大幅度。
@@ -85,15 +85,17 @@ ai:
     k-min: 0.2
     k-max: 10.0
 
-    # 爆仓强制干预线：当库存大到离谱（比如大于目标库存的 2.5 倍），就不管 AI 怎么想了，系统强行砸盘降价。
-    glut-threshold-multiplier: 5
-    glut-threshold-min-absolute: 64
-
+    # 爆仓强制干预线：将其设到极高，等于完全废除此功能，全权交由 AI 判断
+    glut-threshold-multiplier: 1000.0
+    glut-threshold-min-absolute: 64000
+    
     # 强制拉升倍率（系统发现东西要被买绝了，且有人还在买，强行涨价的倍率）
-    force-surge-multiplier: 1.2
-
+    # 设为 1.0 即为失效，全权交由 AI 涨价
+    force-surge-multiplier: 1.0
+    
     # 强制砸盘倍率（触发上面那个爆仓条件时，强行降价的倍率）
-    force-crash-multiplier: 0.70
+    # 设为 1.0 即为失效，全权交由 AI 砸盘
+    force-crash-multiplier: 1.0
 
     # 如果爆仓的东西根本没人买卖，每隔几次 AI 调控周期才允许砸盘一次。
     glut-no-trade-cooldown-cycles: 2
