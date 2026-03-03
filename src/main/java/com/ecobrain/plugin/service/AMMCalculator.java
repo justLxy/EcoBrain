@@ -22,7 +22,7 @@ public class AMMCalculator {
      * 实际中这通常由专门的定时任务维护，或者结合最近的交易记录，这里为了实现简单我们在运行时利用当前价格平滑处理。
      */
     public double getTwapPrice(ItemMarketRecord record) {
-        // 在完整的数据库实现中，会查询记录表内的价格均值，这里做简单近似处理
+        // 保持兼容：默认退化为当前价（无交易记录时也安全）
         return calculateCurrentPrice(record);
     }
     
@@ -32,6 +32,16 @@ public class AMMCalculator {
     public double calculateDynamicSpread(ItemMarketRecord record, int sellAmount) {
         double currentPrice = calculateCurrentPrice(record);
         double twap = getTwapPrice(record);
+        return calculateDynamicSpread(record, sellAmount, currentPrice, twap);
+    }
+
+    /**
+     * 带外部 TWAP 的动态印花税计算（用于科学的 volatilitySpread）。
+     * @param currentPrice 已算出的当前价（避免重复 pow 开销）
+     * @param twapPrice 由仓储层基于交易统计计算的近似 TWAP（若未知可传 currentPrice）
+     */
+    public double calculateDynamicSpread(ItemMarketRecord record, int sellAmount, double currentPrice, double twapPrice) {
+        double twap = twapPrice;
         double baseSpread = 0.05;
         
         // 1. 基于价格波动率的基础印花税 (封顶 50%)
@@ -75,6 +85,25 @@ public class AMMCalculator {
         }
         // 动态印花税 (传入 amount 用于检测超量倾销)
         double spread = calculateDynamicSpread(record, amount);
+        return new TradeResult(Math.max(0.0D, totalRevenue * (1.0 - spread)), initialInventory + amount);
+    }
+
+    /**
+     * 计算玩家卖出 N 个物品后的总收益与结算库存（使用外部 TWAP）。
+     */
+    public TradeResult calculateSellTotal(ItemMarketRecord record, int amount, double twapPrice) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("amount must be positive");
+        }
+        double totalRevenue = 0.0D;
+        int initialInventory = Math.max(1, record.getCurrentInventory());
+        for (int i = 1; i <= amount; i++) {
+            int stepInventory = initialInventory + i;
+            totalRevenue += record.getBasePrice()
+                * Math.pow((double) record.getTargetInventory() / Math.max(1, stepInventory), record.getKFactor());
+        }
+        double currentPrice = calculateCurrentPrice(record);
+        double spread = calculateDynamicSpread(record, amount, currentPrice, twapPrice);
         return new TradeResult(Math.max(0.0D, totalRevenue * (1.0 - spread)), initialInventory + amount);
     }
 

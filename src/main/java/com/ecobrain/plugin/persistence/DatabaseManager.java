@@ -100,6 +100,7 @@ public class DatabaseManager {
         String indexInventorySql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_inventory ON ecobrain_items(current_inventory)";
         String indexPhysicalSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_physical ON ecobrain_items(physical_stock)";
         String indexTradeTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_time ON ecobrain_trade_stats(created_at)";
+        String indexTradeItemTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_item_time ON ecobrain_trade_stats(item_hash, created_at)";
         String indexPlayerTxSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_player_tx ON ecobrain_player_transactions(player_uuid, created_at)";
         String indexAiTuningTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_time ON ecobrain_ai_tuning_events(created_at)";
         String indexAiTuningItemSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_item ON ecobrain_ai_tuning_events(item_hash, created_at)";
@@ -116,6 +117,7 @@ public class DatabaseManager {
             statement.execute(indexInventorySql);
             statement.execute(indexPhysicalSql);
             statement.execute(indexTradeTimeSql);
+            statement.execute(indexTradeItemTimeSql);
             statement.execute(indexPlayerTxSql);
             statement.execute(indexAiTuningTimeSql);
             statement.execute(indexAiTuningItemSql);

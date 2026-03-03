@@ -566,6 +566,93 @@ public class ItemMarketRepository {
         }
     }
 
+    /**
+     * 查询单个物品在时间区间内的净流速（Between 版本）：
+     * BUY 记为正，SELL 记为负。
+     */
+    public double queryItemNetFlowBetween(String itemHash, long fromMillisInclusive, long toMillisExclusive) {
+        String sql = """
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN trade_type = 'BUY' THEN quantity
+                    WHEN trade_type = 'SELL' THEN -quantity
+                    ELSE 0
+                END
+            ),0) AS net_flow
+            FROM ecobrain_trade_stats
+            WHERE item_hash = ? AND created_at >= ? AND created_at < ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setLong(2, fromMillisInclusive);
+            statement.setLong(3, toMillisExclusive);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("net_flow") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query item net flow between", e);
+        }
+    }
+
+    /**
+     * 查询单个物品在时间区间内的单位均价（VWAP, volume-weighted avg unit price）：
+     * unit_price = SUM(total_price) / SUM(quantity)
+     */
+    public double queryItemAvgUnitPriceBetween(String itemHash, long fromMillisInclusive, long toMillisExclusive) {
+        String sql = """
+            SELECT COALESCE(SUM(total_price) / NULLIF(SUM(quantity), 0), 0) AS unit_price
+            FROM ecobrain_trade_stats
+            WHERE item_hash = ? AND created_at >= ? AND created_at < ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, itemHash);
+            statement.setLong(2, fromMillisInclusive);
+            statement.setLong(3, toMillisExclusive);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("unit_price") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query item avg unit price between", e);
+        }
+    }
+
+    /**
+     * 查询单个物品的“近似 TWAP”（time-weighted average price）：
+     * - 将交易按时间桶聚合，每桶算一次单位均价（VWAP）
+     * - 再对所有非空桶的均价做算术平均（每个时间桶等权），近似 time-weighted
+     *
+     * 说明：SQLite 不适合做复杂窗口函数；此实现对性能友好且能显著优于“TWAP=当前价”的退化版本。
+     *
+     * @param bucketMillis 时间桶大小（例如 5min/15min）
+     */
+    public double queryItemTwapSince(String itemHash, long sinceMillisInclusive, long bucketMillis) {
+        long safeBucket = Math.max(60_000L, bucketMillis); // 至少 1 分钟，避免除 0/过细分桶
+        String sql = """
+            SELECT COALESCE(AVG(bucket_price), 0) AS twap
+            FROM (
+                SELECT
+                    (created_at / ?) AS bucket,
+                    (SUM(total_price) / NULLIF(SUM(quantity), 0)) AS bucket_price
+                FROM ecobrain_trade_stats
+                WHERE item_hash = ? AND created_at >= ?
+                GROUP BY bucket
+            ) t
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, safeBucket);
+            statement.setString(2, itemHash);
+            statement.setLong(3, sinceMillisInclusive);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getDouble("twap") : 0.0D;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query item TWAP since", e);
+        }
+    }
+
     public boolean isFrozen(String itemHash) {
         String sql = "SELECT is_frozen FROM ecobrain_risk WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();

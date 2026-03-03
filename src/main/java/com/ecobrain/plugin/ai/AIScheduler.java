@@ -148,12 +148,36 @@ public class AIScheduler {
 
             // 2. 获取当前状态 St
             double saturation = calculateSaturation(item);
-            double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
+            double recentFlow = repository.queryItemNetFlowBetween(item.getItemHash(), since, now) / windowMinutes;
             
             double currentPrice = ammCalculator.calculateCurrentPrice(item);
-            double twap = ammCalculator.getTwapPrice(item);
+            // --- 科学 TWAP/Volatility ---
+            long twapSince = now - aovWindowMs; // 复用 AOV 窗口长度作为 TWAP 窗口（可调）
+            long bucketMs = Math.max(60_000L, windowMs); // 与调控周期同粒度的时间桶
+            double twap = repository.queryItemTwapSince(item.getItemHash(), twapSince, bucketMs);
+            if (twap <= 0.0D) {
+                twap = currentPrice;
+            }
             double volatility = twap > 0 ? Math.abs(currentPrice - twap) / twap : 0.0D;
-            double elasticity = 0.0D; // 可选的复杂追踪
+
+            // --- 科学 Elasticity（启发式）---
+            // 定义：
+            // - 价格变化：使用“本周期成交均价”相对“上周期成交均价”的变化
+            // - 数量变化：使用本周期净流速 recentFlow（buy pressure）作为需求强弱代理
+            double unitPriceNow = repository.queryItemAvgUnitPriceBetween(item.getItemHash(), since, now);
+            long prevFrom = Math.max(0L, since - windowMs);
+            double unitPricePrev = repository.queryItemAvgUnitPriceBetween(item.getItemHash(), prevFrom, since);
+            if (unitPriceNow <= 0.0D) {
+                unitPriceNow = currentPrice;
+            }
+            if (unitPricePrev <= 0.0D) {
+                unitPricePrev = twap > 0.0D ? twap : currentPrice;
+            }
+            double priceChangePct = unitPricePrev > 0.0D ? (unitPriceNow - unitPricePrev) / unitPricePrev : 0.0D;
+            double denom = Math.max(1e-6, Math.abs(priceChangePct) * 100.0D);
+            double elasticity = recentFlow / denom;
+            // Clamp to avoid rare extreme explosions (keeps ONNX input stable)
+            elasticity = Math.max(-1.0e4, Math.min(1.0e4, elasticity));
             double isIpoFlag = (item.getBasePrice() <= 0.011D) ? 1.0D : 0.0D;
 
             float[] obs = new float[] {

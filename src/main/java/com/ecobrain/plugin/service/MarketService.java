@@ -75,7 +75,18 @@ public class MarketService {
         if (!circuitBreaker.allowSell(record)) {
             throw new IllegalStateException("This item is frozen by circuit breaker");
         }
-        TradeResult result = ammCalculator.calculateSellTotal(record, amount);
+        // 科学 TWAP：从交易统计近似 time-weighted 平均价，用于 volatilitySpread
+        long now = System.currentTimeMillis();
+        int twapWindowHours = Math.max(1, plugin.getConfig().getInt("ai.aov-window-hours", 24));
+        int bucketMinutes = Math.max(1, plugin.getConfig().getInt("ai.schedule-minutes", 15));
+        long since = now - (long) twapWindowHours * 60L * 60L * 1000L;
+        long bucketMs = (long) bucketMinutes * 60L * 1000L;
+        double twap = repository.queryItemTwapSince(record.getItemHash(), since, bucketMs);
+        if (twap <= 0.0D) {
+            twap = ammCalculator.calculateCurrentPrice(record);
+        }
+
+        TradeResult result = ammCalculator.calculateSellTotal(record, amount, twap);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.SELL);
     }
 

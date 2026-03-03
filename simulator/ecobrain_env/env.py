@@ -6,6 +6,7 @@ import os
 from collections import deque
 from .amm import AMM
 from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
+from .ecosystem import build_players_from_archetypes, sample_regime
 from .config import (
     TIERS,
     ACTION_BASE_PRICE_MAX_PERCENT,
@@ -30,6 +31,9 @@ from .config import (
     REWARD_TRADE_VALUE_WEIGHT,
     REWARD_INFLATION_RATE_WEIGHT,
     REWARD_INVENTORY_IMBALANCE_WEIGHT,
+    ECOSYSTEM_RANDOMIZATION,
+    MARKET_REGIMES,
+    SIMULATED_PLAYER_ARCHETYPES,
 )
 
 class EcoBrainEnv(gym.Env):
@@ -54,6 +58,8 @@ class EcoBrainEnv(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32)
         
         self.max_steps = 1000
+        # If domain randomization is enabled, this can optionally keep the same sampled ecosystem across resets.
+        self._static_players = None
         self.reset()
         
     def reset(self, seed=None, options=None):
@@ -89,32 +95,55 @@ class EcoBrainEnv(gym.Env):
         if self.dataset_path and os.path.exists(self.dataset_path):
             # Load real online data to create ReplayPlayers
             self._load_dataset_players()
-            self.players.append(Arbitrageur("Arb1", balance=50000)) # Always keep the arbitrageur to punish bad AI
+            # Always keep at least one arbitrageur to punish bad AI
+            self.players.append(Arbitrageur("Arb1", balance=50000, rng=self.np_random))
         else:
-            player_configs = PLAYERS.get(self.value_type, [])
-            for p_cfg in player_configs:
-                if p_cfg["type"] == "VeteranPlayer":
-                    self.players.append(VeteranPlayer(
-                        p_cfg["name"], 
-                        balance=p_cfg.get("balance", 100000),
-                        buy_probability=p_cfg.get("buy_prob", 0.05),
-                        sell_probability=p_cfg.get("sell_prob", 0.5),
-                        buy_amount=p_cfg.get("buy_amount", 1),
-                        sell_amount=p_cfg.get("sell_amount", 64)
-                    ))
-                elif p_cfg["type"] == "NewPlayer":
-                    self.players.append(NewPlayer(
-                        p_cfg["name"],
-                        balance=p_cfg.get("balance", 1000),
-                        buy_probability=p_cfg.get("buy_prob", 0.1),
-                        sell_probability=p_cfg.get("sell_prob", 0.1),
-                        amount=p_cfg.get("amount", 5)
-                    ))
-                elif p_cfg["type"] == "Arbitrageur":
-                    self.players.append(Arbitrageur(
-                        p_cfg["name"],
-                        balance=p_cfg.get("balance", 10000)
-                    ))
+            rand_cfg = ECOSYSTEM_RANDOMIZATION or {}
+            rand_enabled = bool(rand_cfg.get("enabled", False))
+            if rand_enabled:
+                resample_each_reset = bool(rand_cfg.get("resample_each_reset", True))
+                if (not resample_each_reset) and (self._static_players is not None):
+                    self.players = self._static_players
+                else:
+                    regime = sample_regime(MARKET_REGIMES, rng=self.np_random)
+                    archetypes = SIMULATED_PLAYER_ARCHETYPES.get(self.value_type, [])
+                    self.players = build_players_from_archetypes(
+                        value_type=self.value_type,
+                        archetypes=archetypes,
+                        regime=regime,
+                        rng=self.np_random,
+                    )
+                    if not resample_each_reset:
+                        self._static_players = self.players
+            else:
+                # Backward-compatible fixed configs (legacy)
+                player_configs = PLAYERS.get(self.value_type, [])
+                for p_cfg in player_configs:
+                    if p_cfg["type"] == "VeteranPlayer":
+                        self.players.append(VeteranPlayer(
+                            p_cfg["name"],
+                            balance=p_cfg.get("balance", 100000),
+                            buy_probability=p_cfg.get("buy_prob", 0.05),
+                            sell_probability=p_cfg.get("sell_prob", 0.5),
+                            buy_amount=p_cfg.get("buy_amount", 1),
+                            sell_amount=p_cfg.get("sell_amount", 64),
+                            rng=self.np_random,
+                        ))
+                    elif p_cfg["type"] == "NewPlayer":
+                        self.players.append(NewPlayer(
+                            p_cfg["name"],
+                            balance=p_cfg.get("balance", 1000),
+                            buy_probability=p_cfg.get("buy_prob", 0.1),
+                            sell_probability=p_cfg.get("sell_prob", 0.1),
+                            amount=p_cfg.get("amount", 5),
+                            rng=self.np_random,
+                        ))
+                    elif p_cfg["type"] == "Arbitrageur":
+                        self.players.append(Arbitrageur(
+                            p_cfg["name"],
+                            balance=p_cfg.get("balance", 10000),
+                            rng=self.np_random,
+                        ))
             
         self.step_count = 0
 
@@ -124,6 +153,10 @@ class EcoBrainEnv(gym.Env):
         self.aov_cycles = max(1, int(round((self.aov_window_hours * 60.0) / self.schedule_minutes)))
         # store (trade_value_sum, trade_count) per cycle
         self._aov_window = deque(maxlen=self.aov_cycles)
+
+        # Per-item TWAP proxy: keep per-cycle unit average prices (time-weighted by cycle)
+        self._unit_price_window = deque(maxlen=self.aov_cycles)
+        self._prev_unit_price = 0.0
 
         # Circuit breaker (simplified, aligned semantics)
         self.daily_limit = float(DAILY_LIMIT_PERCENT)
@@ -185,7 +218,7 @@ class EcoBrainEnv(gym.Env):
                 avg_sell_amt = max(1, int(sell_vol / max(1, total_sells)))
                 
                 print(f"[{self.value_type}] Loaded from CSV: BuyProb={buy_prob:.2f}(amt:{avg_buy_amt}), SellProb={sell_prob:.2f}(amt:{avg_sell_amt})")
-                self.players.append(ReplayPlayer("ReplayData", buy_prob, sell_prob, avg_buy_amt, avg_sell_amt))
+                self.players.append(ReplayPlayer("ReplayData", buy_prob, sell_prob, avg_buy_amt, avg_sell_amt, rng=self.np_random))
             else:
                 print(f"Warning: Dataset {self.dataset_path} is empty. Falling back to default players.")
                 self.dataset_path = None
@@ -209,8 +242,17 @@ class EcoBrainEnv(gym.Env):
         dynamic_aov = float(self._compute_dynamic_aov())
         global_inflation_rate = cycle_net_emission / max(1e-9, dynamic_aov)
 
-        elasticity = 0.0  # 插件端当前实现为 0
-        volatility = 0.0  # 插件端 TWAP 近似=当前价
+        # 科学特征：对齐插件端“基于成交统计”的启发式
+        current_price = float(self.amm.get_current_price())
+        twap = float(self._compute_twap_price(fallback=current_price))
+        volatility = abs(current_price - twap) / max(1e-9, twap)
+
+        unit_now = float(self._unit_price_window[-1]) if self._unit_price_window else current_price
+        unit_prev = float(self._prev_unit_price) if self._prev_unit_price > 0 else twap
+        price_change_pct = (unit_now - unit_prev) / max(1e-9, unit_prev)
+        denom = max(1e-6, abs(price_change_pct) * 100.0)
+        elasticity = recent_flow_per_minute / denom
+        elasticity = float(np.clip(elasticity, -1.0e4, 1.0e4))
         is_ipo_flag = 1.0 if self.amm.base_price <= 0.011 else 0.0
 
         return np.array(
@@ -224,6 +266,13 @@ class EcoBrainEnv(gym.Env):
             ],
             dtype=np.float32,
         )
+
+    def _compute_twap_price(self, fallback: float) -> float:
+        if not self._unit_price_window:
+            return float(fallback)
+        # time-weighted by cycle buckets: arithmetic mean across buckets
+        twap = float(sum(self._unit_price_window)) / float(len(self._unit_price_window))
+        return float(twap) if twap > 0 else float(fallback)
 
     def _compute_dynamic_aov(self) -> float:
         total_value = 0.0
@@ -309,6 +358,7 @@ class EcoBrainEnv(gym.Env):
 
         cycle_trade_value_sum = 0.0
         cycle_trade_count = 0
+        cycle_trade_qty_sum = 0
         
         # Let players act multiple times per AI cycle
         for _ in range(10):
@@ -320,14 +370,25 @@ class EcoBrainEnv(gym.Env):
                     self.recent_buy_volume += abs(money)
                     cycle_trade_value_sum += abs(money)
                     cycle_trade_count += 1
+                    cycle_trade_qty_sum += int(abs(qty))
                 elif qty < 0: # Sell
                     self.recent_sells += abs(qty)
                     self.recent_sell_volume += abs(money)
                     cycle_trade_value_sum += abs(money)
                     cycle_trade_count += 1
+                    cycle_trade_qty_sum += int(abs(qty))
 
         # Update AOV rolling window
         self._aov_window.append((cycle_trade_value_sum, cycle_trade_count))
+
+        # Update unit price (VWAP per cycle) window for TWAP proxy
+        if cycle_trade_qty_sum > 0:
+            unit_price = float(cycle_trade_value_sum) / float(cycle_trade_qty_sum)
+        else:
+            unit_price = float(self.amm.get_current_price())
+        if self._unit_price_window:
+            self._prev_unit_price = float(self._unit_price_window[-1])
+        self._unit_price_window.append(unit_price)
                     
         # 3. Calculate Reward
         # We want: 

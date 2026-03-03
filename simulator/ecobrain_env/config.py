@@ -143,3 +143,158 @@ PLAYERS = {
         {"type": "Arbitrageur", "name": "Arb1", "balance": 50000}
     ]
 }
+
+# ==========================================
+# 更鲁棒的通用生态：Domain Randomization（推荐开启）
+# ==========================================
+# 目标：让 AI 在训练中见到“不同服情的分布族”，而不是死记一套固定概率，从而显著提升泛化能力。
+#
+# 机制：
+# - 每个 episode（reset）会先采样一个 market regime（活动/爆仓/平稳等）
+# - 再对各类玩家 archetype 的参数做随机采样（beta/normal/loguniform/choice 等）
+# - 最终生成一批玩家实例参与该 episode 的所有 step
+#
+# 注意：当你传入真实 CSV 数据时（ReplayPlayer），该随机化会自动关闭，优先回放真实服情。
+
+ECOSYSTEM_RANDOMIZATION = {
+    "enabled": True,
+    # 每次 reset 都重新采样生态（推荐 True；如果你想更稳定，可以改 False）
+    "resample_each_reset": True,
+}
+
+# 市场“状态/活动”分段：用乘子模拟版本更新、活动周、工作日/周末等节奏变化
+MARKET_REGIMES = {
+    # 养老服：总体交易节奏慢，且供大于求
+    # 为了贴近 10-20 在线的小服，我们加入 "quiet"（更低频的常态），并降低整体强度。
+    "quiet": {
+        "weight": 0.25,
+        "buy_prob_mult": 0.70,
+        "sell_prob_mult": 0.80,
+        "buy_amount_mult": 0.75,
+        "sell_amount_mult": 0.80,
+    },
+    "normal": {
+        "weight": 0.35,
+        "buy_prob_mult": 0.85,
+        "sell_prob_mult": 1.10,
+        "buy_amount_mult": 0.95,
+        "sell_amount_mult": 1.10,
+    },
+    # 偶发活动/周末：短期买压更强（给模型见识“少量需求爆发”）
+    "event_buying": {
+        "weight": 0.10,
+        "buy_prob_mult": 1.35,
+        "sell_prob_mult": 0.95,
+        "buy_amount_mult": 1.20,
+        "sell_amount_mult": 0.95,
+    },
+    # 倾销/清仓期：卖压更强（更多供给/打金/仓库清理）
+    "dumping": {
+        "weight": 0.30,
+        "buy_prob_mult": 0.80,
+        "sell_prob_mult": 1.45,
+        "buy_amount_mult": 0.90,
+        "sell_amount_mult": 1.60,
+    },
+}
+
+# Archetype 分布化配置：
+# - count: 本局该类玩家数量（含随机）
+# - buy_prob/sell_prob: 建议用 beta（天然落在 0~1 且可控）
+# - amount/balance: 建议用 loguniform（长尾更贴近真实）
+#
+# dist spec 支持：
+# - {"dist":"beta","a":...,"b":...,"min":0,"max":0.99}
+# - {"dist":"normal","mean":...,"std":...,"min":...,"max":...}
+# - {"dist":"uniform","low":...,"high":...}
+# - {"dist":"loguniform","low":...,"high":...,"integer":true}
+# - {"dist":"int_uniform","low":...,"high":...}  # inclusive
+# - {"dist":"choice","values":[...],"p":[...]}
+
+SIMULATED_PLAYER_ARCHETYPES = {
+    "high": [
+        # 多个老玩家：既可能产出也可能买单（更真实：极品不是纯卖压/纯买压）
+        {
+            "type": "VeteranPlayer",
+            # 10-20 在线：老玩家占大头，但总人数不会太夸张
+            "count": {"dist": "int_uniform", "low": 3, "high": 6},
+            "balance": {"dist": "loguniform", "low": 250_000, "high": 6_000_000},
+            # 极品仍会买，但频率更低（慢节奏）
+            "buy_prob": {"dist": "beta", "a": 1.5, "b": 7.0, "min": 0.00, "max": 0.60},
+            # 产出/抛售事件相对稀疏，但一旦出现仍可能卖（由 dumping regime 放大）
+            "sell_prob": {"dist": "beta", "a": 1.2, "b": 10.0, "min": 0.00, "max": 0.45},
+            "buy_amount": {"dist": "choice", "values": [1, 1, 2, 3]},
+            "sell_amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+        },
+        # 新玩家：买得起的不多
+        {
+            "type": "NewPlayer",
+            # 养老服：新人更少
+            "count": {"dist": "int_uniform", "low": 0, "high": 1},
+            "balance": {"dist": "loguniform", "low": 2_000, "high": 30_000},
+            "buy_prob": {"dist": "beta", "a": 1.0, "b": 25.0, "min": 0.00, "max": 0.15},
+            "sell_prob": {"dist": "beta", "a": 1.0, "b": 60.0, "min": 0.00, "max": 0.05},
+            "amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+        },
+        # 倒爷：每局可能出现 0~1 个（不要太多，否则训练会变得“只学防倒爷”）
+        {
+            "type": "Arbitrageur",
+            "count": {"dist": "int_uniform", "low": 0, "high": 1},
+            "balance": {"dist": "loguniform", "low": 150_000, "high": 6_000_000},
+        },
+    ],
+    "mid": [
+        {
+            "type": "VeteranPlayer",
+            # 养老服中价值：典型“供大于求”，老玩家数量更多、卖压更稳定
+            "count": {"dist": "int_uniform", "low": 4, "high": 8},
+            "balance": {"dist": "loguniform", "low": 60_000, "high": 700_000},
+            "buy_prob": {"dist": "beta", "a": 1.0, "b": 22.0, "min": 0.00, "max": 0.15},
+            "sell_prob": {"dist": "beta", "a": 10.0, "b": 1.7, "min": 0.35, "max": 0.99},
+            "buy_amount": {"dist": "loguniform", "low": 1, "high": 48, "integer": True},
+            # 10-20 在线：中价值倾销一般不会太离谱，但仍保留长尾
+            "sell_amount": {"dist": "loguniform", "low": 32, "high": 1024, "integer": True},
+        },
+        {
+            "type": "NewPlayer",
+            # 养老服：新人少，需求端更稀薄
+            "count": {"dist": "int_uniform", "low": 0, "high": 1},
+            "balance": {"dist": "loguniform", "low": 800, "high": 20_000},
+            "buy_prob": {"dist": "beta", "a": 2.0, "b": 10.0, "min": 0.01, "max": 0.70},
+            "sell_prob": {"dist": "beta", "a": 2.5, "b": 9.0, "min": 0.00, "max": 0.55},
+            "amount": {"dist": "loguniform", "low": 1, "high": 128, "integer": True},
+        },
+        {
+            "type": "Arbitrageur",
+            "count": {"dist": "int_uniform", "low": 0, "high": 1},
+            "balance": {"dist": "loguniform", "low": 60_000, "high": 1_200_000},
+        },
+    ],
+    "low": [
+        # 低价值：大概率存在“自动化倾销”老玩家，但强度每局不同（关键：让 AI 学会适配不同倾销力度）
+        {
+            "type": "VeteranPlayer",
+            # 养老服低价值：老玩家多、倾销更强
+            "count": {"dist": "int_uniform", "low": 5, "high": 10},
+            "balance": {"dist": "loguniform", "low": 20_000, "high": 450_000},
+            "buy_prob": {"dist": "beta", "a": 1.0, "b": 40.0, "min": 0.00, "max": 0.12},
+            "sell_prob": {"dist": "beta", "a": 14.0, "b": 1.3, "min": 0.55, "max": 0.99},
+            "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
+            # 低价值倾销长尾仍然保留（自动化农场/清仓），但让常态更温和
+            "sell_amount": {"dist": "loguniform", "low": 128, "high": 8192, "integer": True},
+        },
+        {
+            "type": "NewPlayer",
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            "balance": {"dist": "loguniform", "low": 200, "high": 8_000},
+            "buy_prob": {"dist": "beta", "a": 3.0, "b": 7.0, "min": 0.02, "max": 0.90},
+            "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.0, "min": 0.02, "max": 0.90},
+            "amount": {"dist": "loguniform", "low": 1, "high": 256, "integer": True},
+        },
+        {
+            "type": "Arbitrageur",
+            "count": {"dist": "int_uniform", "low": 0, "high": 2},
+            "balance": {"dist": "loguniform", "low": 10_000, "high": 500_000},
+        },
+    ],
+}
