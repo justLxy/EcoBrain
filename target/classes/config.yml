@@ -15,10 +15,10 @@ economy:
     # 核心：是否开启“零信任”起步机制。
     # 强烈建议开启！开启后，任何新录入的物品统统强制从 0.01 金币起步。
     # 它的真实价值完全由玩家随后的买单决定。这是防首发套利的绝对神器。
-    zero-trust: true
+    zero-trust: false
 
     # 只有在上面设为 false 时才生效的备用起步价。不推荐依赖这个。
-    base-price: 0.01
+    base-price: 100
 
     # 新物品初次录入时的初始目标库存。
     # 因为 2.0 系统会自动根据物品价值分层，这个值现在只作冷启动锚点用。
@@ -36,25 +36,25 @@ trade:
 circuit-breaker:
   # 涨跌停板机制。物品一天内的价格相对开盘价波动超过这个百分比，就会被冻结交易。
   # 比如 0.10 就是 10%。
-  daily-limit-percent: 0.10
+  daily-limit-percent: 10
 
   # 库存熔断线。当系统手里的真实库存小于等于这个数时，直接禁止玩家再买，防止被抽干。
   critical-inventory: 1
 
 ai:
   # 是否在后台狂刷 AI 的调参细节（状态/动作/原因等）。平时关掉就行，查问题再开。
-  debug-log: false
+  debug-log: true
 
   # 每隔多久（分钟）让 AI 巡视一次市场并调价。
   # 时间短反应快但可能频繁跳价，时间长物价更平稳。
-  schedule-minutes: 60
+  schedule-minutes: 15
 
   # AI 用来计算全服“平均客单价”的时间窗口。
   # 肝帝服（刷得快）设 12-24，养老服（节奏慢）设 48-72。
   aov-window-hours: 24
 
   # 滞销垃圾清理。如果一个物品库存极低且连续这么几天都没人碰，系统会当它是玩家恶搞的垃圾数据，直接删掉。
-  garbage-collection-days: 7
+  garbage-collection-days: 3
 
   # ==========================================================
   # 物品分层路由（重中之重）
@@ -76,17 +76,17 @@ ai:
     max-base-price: 1000000.0
 
     # AI 每次调价的最高限制。0.30 就是单次最多涨跌 30%。用来防止 AI 偶尔神经病。
-    per-cycle-max-change-percent: 0.30
+    per-cycle-max-change-percent: 1.00
 
     # 允许 AI 每次微调 k 系数的最大幅度。
-    k-delta: 0.02
+    k-delta: 1.00
 
     # k 系数的硬性上下限。
     k-min: 0.2
     k-max: 10.0
 
     # 爆仓强制干预线：当库存大到离谱（比如大于目标库存的 2.5 倍），就不管 AI 怎么想了，系统强行砸盘降价。
-    glut-threshold-multiplier: 2.5
+    glut-threshold-multiplier: 5
     glut-threshold-min-absolute: 64
 
     # 强制拉升倍率（系统发现东西要被买绝了，且有人还在买，强行涨价的倍率）

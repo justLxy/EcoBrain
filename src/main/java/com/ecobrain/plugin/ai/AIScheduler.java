@@ -215,14 +215,20 @@ public class AIScheduler {
             // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉
             // 如果 oldBasePrice 接近 maxBasePrice，并且 newBasePrice 也接近 maxBasePrice，说明其实没涨
             boolean isAtMax = result != null && result.newBasePrice() >= settings.maxBasePrice() * 0.99 && result.oldBasePrice() >= settings.maxBasePrice() * 0.99;
-            boolean priceChanged = result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 0.001;
+            boolean priceChanged = result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 1e-5;
             boolean surgeOrCrash = result != null && (result.surgeType() == SurgeType.SCARCITY_SURGE || result.surgeType() == SurgeType.GLUT_CRASH);
             
             if (!isAtMax && (priceChanged || surgeOrCrash)) {
-                if (result.newBasePrice() > result.oldBasePrice()) {
+                if (result.newBasePrice() > result.oldBasePrice() + 1e-6) {
                     upCount++;
-                } else if (result.newBasePrice() < result.oldBasePrice()) {
+                } else if (result.newBasePrice() < result.oldBasePrice() - 1e-6) {
                     downCount++;
+                } else if (surgeOrCrash) {
+                    if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
+                        upCount++;
+                    } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
+                        downCount++;
+                    }
                 }
                 
                 if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
@@ -273,20 +279,20 @@ public class AIScheduler {
         }
 
         if (upCount > 0 || downCount > 0) {
-            StringBuilder command = new StringBuilder();
-            command.append("bc &8[&6EcoBrain&8] &b市场调控完毕&7: &a").append(upCount).append("&7 个物品价格上涨，&c").append(downCount).append("&7 个物品价格下跌。&e(输入 /ecobrain 查看)");
+            StringBuilder message = new StringBuilder();
+            message.append("&8[&6EcoBrain&8] &b市场调控完毕&7: &a").append(upCount).append("&7 个物品价格上涨，&c").append(downCount).append("&7 个物品价格下跌。&e(输入 /ecobrain 查看)");
             if (!surges.isEmpty()) {
-                command.append(" 异动: ");
+                message.append(" 异动: ");
                 if (surges.size() > 5) {
-                    command.append(String.join("&7, ", surges.subList(0, 5))).append(" &7等");
+                    message.append(String.join("&7, ", surges.subList(0, 5))).append(" &7等");
                 } else {
-                    command.append(String.join("&7, ", surges));
+                    message.append(String.join("&7, ", surges));
                 }
             }
             
-            String finalCommand = command.toString();
+            String finalMessage = ChatColor.translateAlternateColorCodes('&', message.toString());
             Bukkit.getScheduler().runTask(plugin, () -> {
-                Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), finalCommand);
+                Bukkit.getServer().broadcastMessage(finalMessage);
             });
         }
 

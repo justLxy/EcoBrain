@@ -101,11 +101,11 @@ public class OnnxModelRunner {
             float actionBaseMultRaw = output[0][0];
             float actionKDeltaRaw = output[0][1];
 
-            // Action 0: mapped to -20% to +20% -> which means multiplier 0.8 to 1.2
-            double basePriceMultiplier = 1.0 + (actionBaseMultRaw * 0.20);
+            // Action 0: mapped based on training config.py (1.00 = 100%)
+            double basePriceMultiplier = 1.0 + (actionBaseMultRaw * 1.00);
             
-            // Action 1: mapped to -0.1 to +0.1 for K delta
-            double kDelta = actionKDeltaRaw * 0.1;
+            // Action 1: mapped based on training config.py (1.00 = 1.0 K delta)
+            double kDelta = actionKDeltaRaw * 1.00;
 
             tensor.close();
             result.close();
