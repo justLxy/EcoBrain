@@ -12,7 +12,9 @@ ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (1.00 = 100%
 ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
 
 # 插件端二次拦截（安全夹紧）
-PER_CYCLE_MAX_CHANGE_PERCENT = 1.00   # 对齐 ai.tuning.per-cycle-max-change-percent
+# 过大的单步变动会导致训练早期发散（base_price 每步可翻倍），也会放大线上波动。
+# 推荐 0.20~0.40；这里取 0.30 作为更稳健的默认值。
+PER_CYCLE_MAX_CHANGE_PERCENT = 0.30   # 对齐 ai.tuning.per-cycle-max-change-percent
 MAX_BASE_PRICE = 1_000_000.0          # 对齐 ai.tuning.max-base-price
 MIN_BASE_PRICE = 0.01                # 对齐 economy.ipo.zero-trust 初始锚
 
@@ -83,9 +85,10 @@ REWARD_INFLATION_RATE_WEIGHT = 25.0   # 惩罚净印钞率（>0 时）
 REWARD_INFLATION_RATIO_WEIGHT_LOW = 8000.0
 REWARD_INFLATION_RATIO_WEIGHT_MID = 2000.0
 REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
-# Low-value items are extremely sensitive to inventory drift (price curve is inventory-driven),
-# so we weight inventory-imbalance much higher to stabilize prices.
-REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 2000.0
+# Low-value items often have strong exogenous sell pressure in the simulator.
+# Inventory imbalance can become largely uncontrollable (players decide to sell/buy mostly independent of price),
+# so keep this weight modest to avoid making the task unsolvable.
+REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 50.0
 
 # Reward 数值稳定性：
 # - 先做线性缩放把回报压到合理量级（避免 value_loss 爆炸）
@@ -134,12 +137,12 @@ TIERS = {
         # 硬约束范围：1000~10000（越界重罚）
         "price_min": 1000.0,
         "price_max": 10000.0,
-        "penalty_out_of_range": 4000.0,     # 低于/高于硬区间惩罚（重罚）
+        "penalty_out_of_range": 12000.0,     # 低于/高于硬区间惩罚（重罚，抑制爆价尾部）
         # 奖励带：1500~9000 奖励；1000~1500 或 9000~10000 轻罚（形成“断档缓冲”）
         "reward_band_min": 1500.0,
         "reward_band_max": 9000.0,
         "reward_in_band": 3000.0,
-        "penalty_out_of_band": 1500.0,
+        "penalty_out_of_band": 3000.0,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
@@ -161,7 +164,7 @@ TIERS = {
         "reward_in_band": 3000.0,
         "penalty_out_of_band": 4000.0,
         # 软约束：若低于 1 或高于 1000 额外惩罚（避免压到 0.01 或冲破上限）
-        "penalty_out_of_range": 8000.0,
+        "penalty_out_of_range": 20000.0,
     }
 }
 
@@ -327,17 +330,18 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "initial_item_inventory": {"dist": "int_uniform", "low": 256, "high": 4096},
             # 供大于求的核心：持续产出（自动化农场/仓库清理），净产出>净消耗
             # 注意：每个 AI step 内会有 10 次 tick，所以这里的 lambda 是“每 tick 期望”
-            "produce_lambda": {"dist": "uniform", "low": 2.0, "high": 10.0},
-            "consume_lambda": {"dist": "uniform", "low": 0.2, "high": 1.2},
+            # Rebalanced: reduce extreme oversupply so the low-tier price band is learnable.
+            "produce_lambda": {"dist": "uniform", "low": 0.6, "high": 3.0},
+            "consume_lambda": {"dist": "uniform", "low": 0.4, "high": 2.0},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 40.0, "min": 0.00, "max": 0.12},
             "sell_prob": {"dist": "beta", "a": 14.0, "b": 1.3, "min": 0.55, "max": 0.99},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
             # 低价值倾销长尾仍然保留（自动化农场/清仓），但让常态更温和
-            "sell_amount": {"dist": "loguniform", "low": 128, "high": 8192, "integer": True},
+            "sell_amount": {"dist": "loguniform", "low": 32, "high": 2048, "integer": True},
             # 老玩家通常不会为了“囤低价垃圾”去买；但会在库存非常低时补一点
             "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 128},
             # 只有库存显著堆积才会倾销（避免每 tick 都卖、也更贴近“攒一仓库再卖”）
-            "sell_inventory_threshold": {"dist": "int_uniform", "low": 256, "high": 4096},
+            "sell_inventory_threshold": {"dist": "int_uniform", "low": 512, "high": 8192},
         },
         {
             "type": "NewPlayer",

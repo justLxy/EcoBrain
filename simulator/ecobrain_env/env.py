@@ -556,7 +556,8 @@ class EcoBrainEnv(gym.Env):
                 # Scale penalty by log distance beyond the hard range so rare extreme
                 # blow-ups get punished much harder than mild violations.
                 if price < hard_min:
-                    dist = (hard_min - price) / max(1e-9, hard_min)
+                    # Use multiplicative distance for low-end collapse: 0.1 vs 1.0 should hurt much more than 0.9 vs 1.0.
+                    dist = (hard_min / max(1e-9, price)) - 1.0
                 else:
                     dist = (price - hard_max) / max(1e-9, hard_max)
                 scale = 1.0 + float(np.log1p(max(0.0, float(dist))))
