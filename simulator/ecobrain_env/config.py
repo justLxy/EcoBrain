@@ -82,13 +82,16 @@ REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH = 5.0
 REWARD_INFLATION_RATE_WEIGHT = 25.0   # 惩罚净印钞率（>0 时）
 # For low-value items, use a price-invariant inflation proxy:
 # net emission ratio = max(0, sell_value - buy_value) / (sell_value + buy_value).
-REWARD_INFLATION_RATIO_WEIGHT_LOW = 8000.0
+# Low-tier 服情常见“供大于求 + 交易稀疏”，inflation_ratio 往往呈现 0/1 两极（只卖不买时=1）。
+# 该项权重过高会导致 reward 尖峰过强、value_loss 暴涨，策略被迫追逐“减少尖峰”而忽视价格带学习。
+# 轻微下调让 band shaping 成为更稳定的主导信号。
+REWARD_INFLATION_RATIO_WEIGHT_LOW = 3000.0
 REWARD_INFLATION_RATIO_WEIGHT_MID = 2000.0
 REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
 # Low-value items often have strong exogenous sell pressure in the simulator.
 # Inventory imbalance can become largely uncontrollable (players decide to sell/buy mostly independent of price),
 # so keep this weight modest to avoid making the task unsolvable.
-REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 50.0
+REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 30.0
 
 # Reward 数值稳定性：
 # - 先做线性缩放把回报压到合理量级（避免 value_loss 爆炸）
@@ -164,10 +167,13 @@ TIERS = {
         # 奖惩带：10-500 之间奖励；低于 10 或高于 500 惩罚
         "reward_band_min": 10.0,
         "reward_band_max": 500.0,
-        "reward_in_band": 3000.0,
-        "penalty_out_of_band": 4000.0,
+        # 低交易服：大量 step 可能 trade_qty=0，因此需要更强的“在带内奖励”作为主要学习信号，
+        # 否则策略容易在带外形成局部最优（例如长期停在 500 上方）。
+        "reward_in_band": 6000.0,
+        # 加强带外惩罚，促使价格更快拉回 band（尤其是 >500 的常态漂移）。
+        "penalty_out_of_band": 9000.0,
         # 软约束：若低于 1 或高于 1000 额外惩罚（避免压到 0.01 或冲破上限）
-        "penalty_out_of_range": 20000.0,
+        "penalty_out_of_range": 22000.0,
     }
 }
 
