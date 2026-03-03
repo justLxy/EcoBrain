@@ -26,7 +26,7 @@ public class ItemMarketRepository {
 
     public Optional<ItemMarketRecord> findByHash(String itemHash) {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock
+            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at
             FROM ecobrain_items WHERE item_hash = ?
             """;
         try (Connection connection = databaseManager.getConnection();
@@ -45,7 +45,7 @@ public class ItemMarketRepository {
 
     public List<ItemMarketRecord> findAll() {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock
+            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at
             FROM ecobrain_items
             ORDER BY item_hash ASC
             """;
@@ -68,8 +68,8 @@ public class ItemMarketRepository {
     public boolean upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor,
                              int targetInventory, int currentInventory, int physicalStock) {
         String sql = """
-            INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_hash) DO NOTHING
             """;
         try (Connection connection = databaseManager.getConnection();
@@ -81,6 +81,7 @@ public class ItemMarketRepository {
             statement.setInt(5, targetInventory);
             statement.setInt(6, Math.max(1, currentInventory));
             statement.setInt(7, Math.max(0, physicalStock));
+            statement.setLong(8, System.currentTimeMillis());
             int rows = statement.executeUpdate();
             initializeRiskIfMissing(itemHash, basePrice, connection);
             return rows > 0;
@@ -772,7 +773,8 @@ public class ItemMarketRepository {
             rs.getDouble("k_factor"),
             rs.getInt("target_inventory"),
             rs.getInt("current_inventory"),
-            rs.getInt("physical_stock")
+            rs.getInt("physical_stock"),
+            rs.getLong("created_at")
         );
     }
 

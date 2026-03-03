@@ -11,9 +11,15 @@ public class ItemMarketRecord {
     private final int targetInventory;
     private final int currentInventory;
     private final int physicalStock;
+    private final long createdAtMillis;
 
     public ItemMarketRecord(String itemHash, String itemBase64, double basePrice, double kFactor,
                             int targetInventory, int currentInventory, int physicalStock) {
+        this(itemHash, itemBase64, basePrice, kFactor, targetInventory, currentInventory, physicalStock, System.currentTimeMillis());
+    }
+
+    public ItemMarketRecord(String itemHash, String itemBase64, double basePrice, double kFactor,
+                            int targetInventory, int currentInventory, int physicalStock, long createdAtMillis) {
         this.itemHash = itemHash;
         this.itemBase64 = itemBase64;
         this.basePrice = basePrice;
@@ -21,6 +27,7 @@ public class ItemMarketRecord {
         this.targetInventory = targetInventory;
         this.currentInventory = currentInventory;
         this.physicalStock = physicalStock;
+        this.createdAtMillis = createdAtMillis;
     }
 
     public String getItemHash() {
@@ -51,13 +58,17 @@ public class ItemMarketRecord {
         return physicalStock;
     }
 
+    public long getCreatedAtMillis() {
+        return createdAtMillis;
+    }
+
     public ItemMarketRecord withInventories(int newVirtualInventory, int newPhysicalStock) {
         return new ItemMarketRecord(itemHash, itemBase64, basePrice, kFactor, targetInventory,
-            newVirtualInventory, newPhysicalStock);
+            newVirtualInventory, newPhysicalStock, createdAtMillis);
     }
 
     public ItemMarketRecord withTuning(double newBasePrice, double newKFactor) {
         return new ItemMarketRecord(itemHash, itemBase64, newBasePrice, newKFactor, targetInventory,
-            currentInventory, physicalStock);
+            currentInventory, physicalStock, createdAtMillis);
     }
 }

@@ -309,6 +309,34 @@ public class AIScheduler {
     }
 
     private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType) {
+        // --- 防垃圾回收机制（按时间过期） ---
+        // 解释：如果有玩家随便附魔了一把木剑（物理库存=1）卖给系统，但之后根本没人买（交易量为0）。
+        // 这种东西如果不处理，就会永远卡在 GUI 里。
+        // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
+        // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
+        if (item.getPhysicalStock() <= 1) {
+            long lastTrade = repository.queryLastTradeTime(item.getItemHash());
+            if (lastTrade <= 0L) {
+                // 无任何交易记录时：改用建档时间兜底清理。
+                // 这样玩家上传的“独一无二”但无人问津的物品不会永久残留在数据库/GUI。
+                long createdAt = item.getCreatedAtMillis();
+                if (createdAt > 0L) {
+                    long daysSinceCreated = (System.currentTimeMillis() - createdAt) / (1000L * 60 * 60 * 24);
+                    if (daysSinceCreated >= settings.garbageCollectionDays()) {
+                        repository.deleteByHash(item.getItemHash());
+                        return null;
+                    }
+                }
+                // 极端容错：若历史数据 created_at=0（例如更老的库），则不做自动清理，避免误删。
+            }
+            long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
+            if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
+                repository.deleteByHash(item.getItemHash());
+                return null;
+            }
+        }
+
+        // 如果本轮是 HOLD（没有任何调参动作），则不改参数；但上面的垃圾回收仍然需要执行。
         if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5) {
             return null;
         }
@@ -332,32 +360,6 @@ public class AIScheduler {
         // Limit K factor changes
         double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());
         newK = clamp(oldK + safeKDelta, tierTuning.kMin(), tierTuning.kMax());
-
-        // --- 防垃圾回收机制（按时间过期） ---
-        // 解释：如果有玩家随便附魔了一把木剑（物理库存=1）卖给系统，但之后根本没人买（交易量为0）。
-        // 这种东西如果不处理，就会永远卡在 GUI 里。
-        // 现在我们不看价格，看时间：如果这个物品距离最后一次交易已经超过了 7 天（即长时间无人问津），
-        // 并且它在系统里只有少量的库存（<= 1），我们就判定它是“滞销垃圾”，自动销毁档案。
-        if (item.getPhysicalStock() <= 1) {
-            // Bukkit ItemMeta 相关操作必须在主线程执行
-            ItemNameInfo nameInfo = itemNameInfoSync(item);
-            // 保护：带自定义名字的物品可能是服内重要道具，不做自动销毁
-            if (!nameInfo.hasCustomDisplayName()) {
-            long lastTrade = repository.queryLastTradeTime(item.getItemHash());
-            if (lastTrade <= 0L) {
-                // 无任何交易记录时，绝不自动销毁（避免正常物品被误删）
-                // 注意：trade_stats 会记录 BUY/SELL，IPO 建档本身不写入该表
-                // 因此 lastTrade==0 代表从未发生过任何买卖
-                // -> 需要管理员手动清理
-                // （这里不返回 null，仍允许本轮调参落库）
-            }
-            long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
-            if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
-                repository.deleteByHash(item.getItemHash());
-                return null;
-            }
-            }
-        }
 
         // 若 clamp 后没有产生任何实际变更，则不写库、不落审计事件，避免噪声与无意义 IO
         boolean unchanged = Math.abs(newBasePrice - oldBase) < 1e-12 && Math.abs(newK - oldK) < 1e-12;
