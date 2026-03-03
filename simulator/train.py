@@ -130,9 +130,16 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
             r += float(reward[0])
             steps += 1
 
+            p = float("nan")
             try:
-                base_env = vecenv.venv.envs[0]  # type: ignore[attr-defined]
-                p = float(base_env.amm.get_current_price())
+                if isinstance(info, (list, tuple)) and info and isinstance(info[0], dict):
+                    if "price" in info[0]:
+                        p = float(info[0]["price"])
+                # Fallback: works for DummyVecEnv/SubprocVecEnv via VecEnv.get_attr
+                if not (p == p) and hasattr(vecenv, "get_attr"):  # NaN check
+                    lp = vecenv.get_attr("last_price")
+                    if isinstance(lp, (list, tuple)) and lp:
+                        p = float(lp[0])
             except Exception:
                 p = float("nan")
             prices.append(p)
@@ -305,7 +312,7 @@ def train_model(
     # IMPORTANT: If norm_obs=True, we bake the normalization into exported ONNX
     # so the Java plugin can keep feeding raw obs without mismatch.
     if vecnorm:
-        if os.path.exists(vecnorm_path):
+        if resume and os.path.exists(vecnorm_path):
             try:
                 env = VecNormalize.load(vecnorm_path, env)
                 print(f"Loaded VecNormalize stats from {vecnorm_path}")
@@ -395,7 +402,18 @@ def train_model(
     per_run_dir = os.path.join(str(log_dir or "runs"), model_name)
     _safe_makedirs(per_run_dir)
     formats = _parse_log_formats(log_formats)
-    sb3_logger = sb3_configure_logger(per_run_dir, formats)
+    try:
+        sb3_logger = sb3_configure_logger(per_run_dir, formats)
+    except AssertionError as e:
+        # stable-baselines3 asserts if tensorboard isn't installed.
+        if "tensorboard is not installed" in str(e).lower() and "tensorboard" in formats:
+            formats = [f for f in formats if f != "tensorboard"]
+            if not formats:
+                formats = ["stdout", "csv"]
+            print(f"Warning: tensorboard not installed; falling back to log_formats={formats}")
+            sb3_logger = sb3_configure_logger(per_run_dir, formats)
+        else:
+            raise
 
     # Save a small run manifest for reproducibility.
     _write_json(

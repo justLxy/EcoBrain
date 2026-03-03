@@ -178,7 +178,10 @@ public class AIScheduler {
             double elasticity = recentFlow / denom;
             // Clamp to avoid rare extreme explosions (keeps ONNX input stable)
             elasticity = Math.max(-1.0e4, Math.min(1.0e4, elasticity));
-            double isIpoFlag = (item.getBasePrice() <= 0.011D) ? 1.0D : 0.0D;
+            // Keep observation semantics consistent with the Python simulator:
+            // last feature = log(currentPrice) (clipped) rather than IPO flag.
+            double logPrice = Math.log(Math.max(1e-9D, currentPrice));
+            logPrice = clamp(logPrice, -20.0D, 20.0D);
 
             float[] obs = new float[] {
                 (float) saturation,
@@ -186,7 +189,7 @@ public class AIScheduler {
                 (float) globalInflationRate,
                 (float) elasticity,
                 (float) volatility,
-                (float) isIpoFlag
+                (float) logPrice
             };
 
             // 2. 只有最近有交易才由 AI 处理，否则跳过

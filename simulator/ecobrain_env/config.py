@@ -36,6 +36,14 @@ IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trus
 IPO_RESET_PROB = 0.05  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
 
 # ==========================================
+# Observation feature toggle
+# ==========================================
+# The last observation feature was originally `is_ipo_flag` (0/1).
+# For learning stable pricing bands, the agent needs to "see" absolute price level.
+# If enabled, we replace the last feature with log(current_price).
+OBS_USE_LOG_PRICE = True
+
+# ==========================================
 # 风控参数（对齐 CircuitBreaker）
 # ==========================================
 DAILY_LIMIT_PERCENT = 10.0           # 对齐 circuit-breaker.daily-limit-percent（注意：插件侧是“倍数”，非百分数）
@@ -60,8 +68,24 @@ ADAPTIVE_TARGET_SMOOTHING_FACTOR = 0.05
 # ==========================================
 # 说明：为了减少“训练时用绝对金额、线上用归一化通胀率”造成的尺度断裂，这里用 inflation_rate（=netEmission/AOV）
 REWARD_TRADE_VALUE_WEIGHT = 0.001     # 交易额越大越好（轻权重避免数值爆炸）
+# For low-value items, rewarding "money volume" tends to incentivize higher prices.
+# Use quantity-based trade signal instead.
+REWARD_TRADE_QTY_WEIGHT = 0.05
+# For mid-value items, also prefer quantity-based trade signal to avoid learning
+# "raise price to get more volume" as a shortcut.
+REWARD_TRADE_QTY_WEIGHT_MID = 0.05
+# For high-value items, keep a money-based signal but compress it to avoid runaway
+# incentives at extreme prices.
+REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH = 5.0
 REWARD_INFLATION_RATE_WEIGHT = 25.0   # 惩罚净印钞率（>0 时）
+# For low-value items, use a price-invariant inflation proxy:
+# net emission ratio = max(0, sell_value - buy_value) / (sell_value + buy_value).
+REWARD_INFLATION_RATIO_WEIGHT_LOW = 8000.0
+REWARD_INFLATION_RATIO_WEIGHT_MID = 2000.0
 REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
+# Low-value items are extremely sensitive to inventory drift (price curve is inventory-driven),
+# so we weight inventory-imbalance much higher to stabilize prices.
+REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 2000.0
 
 # Reward 数值稳定性：
 # - 先做线性缩放把回报压到合理量级（避免 value_loss 爆炸）

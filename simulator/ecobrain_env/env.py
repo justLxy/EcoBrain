@@ -23,6 +23,7 @@ from .config import (
     AOV_WINDOW_HOURS,
     IPO_BASE_PRICE_FALLBACK,
     IPO_RESET_PROB,
+    OBS_USE_LOG_PRICE,
     DAILY_LIMIT_PERCENT,
     CRITICAL_INVENTORY,
     BASE_SPREAD,
@@ -30,8 +31,14 @@ from .config import (
     DUMPING_TAX_TRIGGER_MULTIPLIER,
     DUMPING_TAX_PER_MULTIPLE,
     REWARD_TRADE_VALUE_WEIGHT,
+    REWARD_TRADE_QTY_WEIGHT,
+    REWARD_TRADE_QTY_WEIGHT_MID,
+    REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH,
     REWARD_INFLATION_RATE_WEIGHT,
+    REWARD_INFLATION_RATIO_WEIGHT_LOW,
+    REWARD_INFLATION_RATIO_WEIGHT_MID,
     REWARD_INVENTORY_IMBALANCE_WEIGHT,
+    REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW,
     REWARD_SCALE,
     REWARD_CLIP_ABS,
     ECOSYSTEM_RANDOMIZATION,
@@ -245,7 +252,11 @@ class EcoBrainEnv(gym.Env):
         denom = max(1e-6, abs(price_change_pct) * 100.0)
         elasticity = recent_flow_per_minute / denom
         elasticity = float(np.clip(elasticity, -1.0e4, 1.0e4))
-        is_ipo_flag = 1.0 if self.amm.base_price <= 0.011 else 0.0
+        if bool(OBS_USE_LOG_PRICE):
+            last_feat = float(np.log(max(1e-9, float(current_price))))
+            last_feat = float(np.clip(last_feat, -20.0, 20.0))
+        else:
+            last_feat = 1.0 if self.amm.base_price <= 0.011 else 0.0
 
         return np.array(
             [
@@ -254,7 +265,7 @@ class EcoBrainEnv(gym.Env):
                 global_inflation_rate,
                 elasticity,
                 volatility,
-                is_ipo_flag,
+                last_feat,
             ],
             dtype=np.float32,
         )
@@ -427,63 +438,142 @@ class EcoBrainEnv(gym.Env):
                 self.amm.current_inventory = max(1, scaled_current)
 
         trade_value = float(self.recent_buy_volume + self.recent_sell_volume)
+        trade_qty = float(self.recent_buys + self.recent_sells)
         cycle_net_emission = float(self.recent_sell_volume - self.recent_buy_volume)
         dynamic_aov = float(self._compute_dynamic_aov())
         inflation_rate = cycle_net_emission / max(1e-9, dynamic_aov)
+        # Price-invariant proxy (0..1): fraction of total traded value that is net emission.
+        inflation_ratio = max(0.0, float(cycle_net_emission)) / max(1e-9, float(trade_value))
 
         inventory_imbalance = abs(self.amm.current_inventory - self.amm.target_inventory) / max(1, self.amm.target_inventory)
 
+        # Core reward: use money-volume for mid/high, but quantity for low to avoid
+        # inadvertently incentivizing high prices.
+        trade_signal = trade_value
+        trade_weight = REWARD_TRADE_VALUE_WEIGHT
+        if self.value_type == "low":
+            trade_signal = trade_qty
+            trade_weight = REWARD_TRADE_QTY_WEIGHT
+        elif self.value_type == "mid":
+            trade_signal = trade_qty
+            trade_weight = REWARD_TRADE_QTY_WEIGHT_MID
+        elif self.value_type == "high":
+            trade_signal = float(np.log1p(max(0.0, float(trade_value))))
+            trade_weight = REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH
+
+        inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_rate))
+        if self.value_type == "low":
+            # Prevent "cheating" by raising prices to increase AOV (which would reduce inflation_rate).
+            inflation_penalty = REWARD_INFLATION_RATIO_WEIGHT_LOW * float(inflation_ratio)
+        elif self.value_type == "mid":
+            inflation_penalty = REWARD_INFLATION_RATIO_WEIGHT_MID * float(inflation_ratio)
+
+        inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT
+        if self.value_type == "low":
+            inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW
+
         reward = float(
-            (REWARD_TRADE_VALUE_WEIGHT * trade_value)
-            - (REWARD_INFLATION_RATE_WEIGHT * max(0.0, inflation_rate))
-            - (REWARD_INVENTORY_IMBALANCE_WEIGHT * inventory_imbalance)
+            (trade_weight * float(trade_signal))
+            - float(inflation_penalty)
+            - (float(inv_weight) * float(inventory_imbalance))
         )
         
         # Specific shaping to help it learn the difference between garbage and gold
         price = float(self.amm.get_current_price())
         if self.value_type == "high":
-            # Hard constraint: must stay within [price_min, price_max]
-            price_min = float(tier_cfg["price_min"])
-            price_max = float(tier_cfg.get("price_max", float("inf")))
-            if price < price_min or price > price_max:
-                reward -= float(tier_cfg["penalty_out_of_range"])
+            # High-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
+            hard_min = float(tier_cfg["price_min"])
+            hard_max = float(tier_cfg.get("price_max", float("inf")))
+            band_min = float(tier_cfg.get("reward_band_min", hard_min))
+            band_max = float(tier_cfg.get("reward_band_max", hard_max))
+
+            if price < hard_min or price > hard_max:
+                base_pen = float(tier_cfg.get("penalty_out_of_range", 0.0))
+                if price < hard_min:
+                    dist = (hard_min - price) / max(1e-9, hard_min)
+                else:
+                    dist = (price - hard_max) / max(1e-9, hard_max)
+                scale = 1.0 + float(np.log1p(max(0.0, float(dist))))
+                reward -= base_pen * scale
             else:
-                # Reward band inside hard range to avoid boundary hugging
-                band_min = float(tier_cfg.get("reward_band_min", price_min))
-                band_max = float(tier_cfg.get("reward_band_max", price_max))
                 if band_min <= price <= band_max:
                     reward += float(tier_cfg.get("reward_in_band", 0.0))
                 else:
-                    reward -= float(tier_cfg.get("penalty_out_of_band", 0.0))
+                    penalty = float(tier_cfg.get("penalty_out_of_band", 0.0))
+                    if price < band_min:
+                        denom = max(1e-9, band_min - hard_min)
+                        ratio = (band_min - price) / denom
+                    else:
+                        denom = max(1e-9, hard_max - band_max)
+                        ratio = (price - band_max) / denom
+                    ratio = float(np.clip(ratio, 0.0, 1.0))
+                    reward -= penalty * ratio
 
             # 真实库存枯竭惩罚（防被买空）
             if int(self.amm.physical_stock) <= 0:
                 reward -= float(tier_cfg.get("empty_stock_penalty", 0.0))
                 
         elif self.value_type == "mid":
-            # Hard constraint: must stay within [price_min, price_max]
-            if price < float(tier_cfg["price_min"]) or price > float(tier_cfg["price_max"]):
-                reward -= float(tier_cfg["penalty_out_of_range"])
+            # Mid-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
+            hard_min = float(tier_cfg["price_min"])
+            hard_max = float(tier_cfg["price_max"])
+            band_min = float(tier_cfg.get("reward_band_min", hard_min))
+            band_max = float(tier_cfg.get("reward_band_max", hard_max))
+
+            if price < hard_min or price > hard_max:
+                base_pen = float(tier_cfg.get("penalty_out_of_range", 0.0))
+                if price < hard_min:
+                    dist = (hard_min - price) / max(1e-9, hard_min)
+                else:
+                    dist = (price - hard_max) / max(1e-9, hard_max)
+                scale = 1.0 + float(np.log1p(max(0.0, float(dist))))
+                reward -= base_pen * scale
             else:
-                # Reward band inside hard range (creates buffer gaps)
-                band_min = float(tier_cfg.get("reward_band_min", tier_cfg["price_min"]))
-                band_max = float(tier_cfg.get("reward_band_max", tier_cfg["price_max"]))
                 if band_min <= price <= band_max:
                     reward += float(tier_cfg.get("reward_in_band", 0.0))
                 else:
-                    reward -= float(tier_cfg.get("penalty_out_of_band", 0.0))
+                    penalty = float(tier_cfg.get("penalty_out_of_band", 0.0))
+                    if price < band_min:
+                        denom = max(1e-9, band_min - hard_min)
+                        ratio = (band_min - price) / denom
+                    else:
+                        denom = max(1e-9, hard_max - band_max)
+                        ratio = (price - band_max) / denom
+                    ratio = float(np.clip(ratio, 0.0, 1.0))
+                    reward -= penalty * ratio
                 
         elif self.value_type == "low":
-            # Soft range penalties to avoid collapsing to IPO floor (0.01) or drifting above 1000.
-            if price < float(tier_cfg["price_min"]) or price > float(tier_cfg["price_max"]):
-                reward -= float(tier_cfg.get("penalty_out_of_range", 0.0))
-
+            # Low-value shaping:
+            # - If out of hard range: apply out_of_range penalty only (avoid double-penalty with band)
+            # - If within hard range but outside band: apply a smooth penalty proportional to distance
+            hard_min = float(tier_cfg["price_min"])
+            hard_max = float(tier_cfg["price_max"])
             band_min = float(tier_cfg["reward_band_min"])
             band_max = float(tier_cfg["reward_band_max"])
-            if band_min <= price <= band_max:
-                reward += float(tier_cfg["reward_in_band"])
+
+            if price < hard_min or price > hard_max:
+                base_pen = float(tier_cfg.get("penalty_out_of_range", 0.0))
+                # Scale penalty by log distance beyond the hard range so rare extreme
+                # blow-ups get punished much harder than mild violations.
+                if price < hard_min:
+                    dist = (hard_min - price) / max(1e-9, hard_min)
+                else:
+                    dist = (price - hard_max) / max(1e-9, hard_max)
+                scale = 1.0 + float(np.log1p(max(0.0, float(dist))))
+                reward -= base_pen * scale
             else:
-                reward -= float(tier_cfg["penalty_out_of_band"])
+                if band_min <= price <= band_max:
+                    reward += float(tier_cfg.get("reward_in_band", 0.0))
+                else:
+                    penalty = float(tier_cfg.get("penalty_out_of_band", 0.0))
+                    if price < band_min:
+                        denom = max(1e-9, band_min - hard_min)
+                        ratio = (band_min - price) / denom
+                    else:
+                        denom = max(1e-9, hard_max - band_max)
+                        ratio = (price - band_max) / denom
+                    ratio = float(np.clip(ratio, 0.0, 1.0))
+                    reward -= penalty * ratio
                 
         # 4. Check done
         done = self.step_count >= self.max_steps
@@ -496,4 +586,19 @@ class EcoBrainEnv(gym.Env):
         if REWARD_CLIP_ABS is not None:
             reward = float(np.clip(reward, -float(REWARD_CLIP_ABS), float(REWARD_CLIP_ABS)))
 
-        return self._get_obs(), float(reward), done, truncated, {}
+        info = {
+            "price": float(price),
+            "base_price": float(self.amm.base_price),
+            "k_factor": float(self.amm.k_factor),
+            "current_inventory": int(self.amm.current_inventory),
+            "target_inventory": int(self.amm.target_inventory),
+            "physical_stock": int(self.amm.physical_stock),
+            "frozen": bool(self._frozen),
+            "trade_value": float(trade_value),
+            "trade_qty": float(trade_qty),
+            "inflation_rate": float(inflation_rate),
+            "inflation_ratio": float(inflation_ratio),
+            "inventory_imbalance": float(inventory_imbalance),
+        }
+
+        return self._get_obs(), float(reward), done, truncated, info

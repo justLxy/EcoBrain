@@ -4,3 +4,17 @@
 __pycache__/
 **/__pycache__/
 *.pyc
+
+# Maven build output
+target/
+
+# Simulator outputs (models/logs)
+simulator/runs*/
+simulator/checkpoints*/
+simulator/*.zip
+simulator/*_vecnormalize.pkl
+
+# Root training artifacts
+ecobrain_*.onnx
+ecobrain_ppo_*.zip
+ecobrain_ppo_*_vecnormalize.pkl

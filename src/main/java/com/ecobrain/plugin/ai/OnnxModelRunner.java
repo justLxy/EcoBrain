@@ -63,7 +63,7 @@ public class OnnxModelRunner {
     }
 
     /**
-     * @param obs [saturation, flow, inflation, elasticity, volatility, is_ipo]
+     * @param obs [saturation, flow, inflation, elasticity, volatility, log_price]
      * @param valueType "low", "mid", or "high"
      * @param kDeltaMax maximum absolute k delta per cycle (tier-specific)
      * @return double[] {basePriceMultiplier, kDelta}
