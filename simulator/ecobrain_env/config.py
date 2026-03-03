@@ -81,14 +81,15 @@ TIERS = {
         "current_inventory": 32,
         # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
         "initial_base_price": {"dist": "loguniform", "low": 10000.0, "high": 1_000_000.0},
-        # 目标：高价值物品硬约束 >= 10000（低于则重罚）
+        # 目标：允许短期掉到 10000，但长期希望回到 15000~1e8 的奖励带
         "price_min": 10000.0,
-        "price_max": float('inf'),
-        "penalty_out_of_range": 5000.0,     # price < price_min 的惩罚（重罚）
-        # 奖励带：>= 15000 奖励；10000~15000 轻罚（形成“断档缓冲”避免贴边抖动）
+        "price_max": 100_000_000.0,
+        "penalty_out_of_range": 5000.0,     # 越界惩罚（重罚）
+        # 奖励带：15000~1e8 奖励；10000~15000 允许但会持续轻惩罚以“拉回去”
         "reward_band_min": 15000.0,
+        "reward_band_max": 100_000_000.0,
         "reward_in_band": 3000.0,
-        "penalty_out_of_band": 1500.0,
+        "penalty_out_of_band": 3000.0,
         "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
     },
     

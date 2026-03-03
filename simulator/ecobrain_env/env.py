@@ -439,13 +439,16 @@ class EcoBrainEnv(gym.Env):
         tier_cfg = TIERS[self.value_type]
         price = float(self.amm.get_current_price())
         if self.value_type == "high":
-            # Hard constraint: must be >= price_min
-            if price < float(tier_cfg["price_min"]):
+            # Hard constraint: must stay within [price_min, price_max]
+            price_min = float(tier_cfg["price_min"])
+            price_max = float(tier_cfg.get("price_max", float("inf")))
+            if price < price_min or price > price_max:
                 reward -= float(tier_cfg["penalty_out_of_range"])
             else:
-                # Reward band: >= reward_band_min rewarded; otherwise mild penalty to avoid boundary hugging
-                band_min = float(tier_cfg.get("reward_band_min", tier_cfg["price_min"]))
-                if price >= band_min:
+                # Reward band inside hard range to avoid boundary hugging
+                band_min = float(tier_cfg.get("reward_band_min", price_min))
+                band_max = float(tier_cfg.get("reward_band_max", price_max))
+                if band_min <= price <= band_max:
                     reward += float(tier_cfg.get("reward_in_band", 0.0))
                 else:
                     reward -= float(tier_cfg.get("penalty_out_of_band", 0.0))
