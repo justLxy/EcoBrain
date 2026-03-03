@@ -5,13 +5,12 @@ import csv
 import os
 from collections import deque
 from .amm import AMM
-from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
-from .ecosystem import build_players_from_archetypes, sample_regime
+from .players import Arbitrageur, ReplayPlayer
+from .ecosystem import Regime, build_players_from_archetypes, sample_regime
 from .config import (
     TIERS,
     ACTION_BASE_PRICE_MAX_PERCENT,
     ACTION_K_FACTOR_MAX_DELTA,
-    PLAYERS,
     ADAPTIVE_TARGET_ENABLED,
     ADAPTIVE_TARGET_SMOOTHING_FACTOR,
     PER_CYCLE_MAX_CHANGE_PERCENT,
@@ -118,34 +117,15 @@ class EcoBrainEnv(gym.Env):
                     if not resample_each_reset:
                         self._static_players = self.players
             else:
-                # Backward-compatible fixed configs (legacy)
-                player_configs = PLAYERS.get(self.value_type, [])
-                for p_cfg in player_configs:
-                    if p_cfg["type"] == "VeteranPlayer":
-                        self.players.append(VeteranPlayer(
-                            p_cfg["name"],
-                            balance=p_cfg.get("balance", 100000),
-                            buy_probability=p_cfg.get("buy_prob", 0.05),
-                            sell_probability=p_cfg.get("sell_prob", 0.5),
-                            buy_amount=p_cfg.get("buy_amount", 1),
-                            sell_amount=p_cfg.get("sell_amount", 64),
-                            rng=self.np_random,
-                        ))
-                    elif p_cfg["type"] == "NewPlayer":
-                        self.players.append(NewPlayer(
-                            p_cfg["name"],
-                            balance=p_cfg.get("balance", 1000),
-                            buy_probability=p_cfg.get("buy_prob", 0.1),
-                            sell_probability=p_cfg.get("sell_prob", 0.1),
-                            amount=p_cfg.get("amount", 5),
-                            rng=self.np_random,
-                        ))
-                    elif p_cfg["type"] == "Arbitrageur":
-                        self.players.append(Arbitrageur(
-                            p_cfg["name"],
-                            balance=p_cfg.get("balance", 10000),
-                            rng=self.np_random,
-                        ))
+                # If randomization is disabled, still build from archetypes,
+                # but keep a fixed neutral regime (no regime mixing).
+                archetypes = SIMULATED_PLAYER_ARCHETYPES.get(self.value_type, [])
+                self.players = build_players_from_archetypes(
+                    value_type=self.value_type,
+                    archetypes=archetypes,
+                    regime=Regime(name="fixed"),
+                    rng=self.np_random,
+                )
             
         self.step_count = 0
 

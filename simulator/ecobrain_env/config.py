@@ -103,54 +103,6 @@ TIERS = {
 }
 
 # ==========================================
-# 模拟玩家生态配置 (Simulated Players)
-# ==========================================
-# 在离线训练时，如果没有提供真实的 CSV 数据，模拟器会使用以下设定的虚拟玩家。
-# 调整这里的概率和数量，可以训练出应对不同服务器生态的 AI。
-# 
-# buy_prob: 每个周期购买物品的概率 (0.0~1.0)
-# sell_prob: 每个周期出售物品的概率 (0.0~1.0)
-# amount: 每次购买/出售的数量
-# balance: 玩家携带的初始资金
-
-PLAYERS = {
-    "high": [
-        # 高端局：老玩家打到极品，但由于老玩家多，极品其实也有一定产出
-        {"type": "VeteranPlayer", "name": "Veteran1", "sell_prob": 0.2, "buy_prob": 0.3, "sell_amount": 1, "buy_amount": 1, "balance": 500000},
-        {"type": "VeteranPlayer", "name": "Veteran2", "sell_prob": 0.2, "buy_prob": 0.3, "sell_amount": 1, "buy_amount": 1, "balance": 500000},
-        {"type": "VeteranPlayer", "name": "Veteran3", "sell_prob": 0.1, "buy_prob": 0.5, "sell_amount": 1, "buy_amount": 2, "balance": 1000000}, # 神豪老玩家
-        # 新玩家：买不起极品，只会做梦
-        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.01, "sell_prob": 0.0, "amount": 1, "balance": 5000},
-        # 倒爷：敏锐嗅觉
-        {"type": "Arbitrageur", "name": "Arb1", "balance": 2000000}
-    ],
-    
-    "mid": [
-        # 中端局：老玩家疯狂产出中等材料 (供大于求的核心)
-        {"type": "VeteranPlayer", "name": "Veteran1", "sell_prob": 0.8, "buy_prob": 0.05, "sell_amount": 128, "buy_amount": 16, "balance": 200000},
-        {"type": "VeteranPlayer", "name": "Veteran2", "sell_prob": 0.8, "buy_prob": 0.05, "sell_amount": 256, "buy_amount": 32, "balance": 200000},
-        {"type": "VeteranPlayer", "name": "Veteran3", "sell_prob": 0.7, "buy_prob": 0.1, "sell_amount": 128, "buy_amount": 64, "balance": 200000},
-        {"type": "VeteranPlayer", "name": "Veteran4", "sell_prob": 0.7, "buy_prob": 0.0, "sell_amount": 384, "buy_amount": 0, "balance": 200000}, # 纯打金老玩家
-        # 新玩家：艰难求生，买点中等材料做装备
-        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.3, "sell_prob": 0.1, "amount": 32, "balance": 5000},
-        {"type": "NewPlayer", "name": "New2", "buy_prob": 0.4, "sell_prob": 0.1, "amount": 16, "balance": 5000},
-        {"type": "Arbitrageur", "name": "Arb1", "balance": 500000}
-    ],
-    
-    "low": [
-        # 低端局：老玩家自动化农场全开，海量倾销垃圾
-        {"type": "VeteranPlayer", "name": "Veteran_Farmer1", "sell_prob": 0.95, "buy_prob": 0.01, "sell_amount": 1024, "buy_amount": 64, "balance": 100000},
-        {"type": "VeteranPlayer", "name": "Veteran_Farmer2", "sell_prob": 0.95, "buy_prob": 0.01, "sell_amount": 2048, "buy_amount": 64, "balance": 100000}, # 超级大农场
-        {"type": "VeteranPlayer", "name": "Veteran_Farmer3", "sell_prob": 0.9, "buy_prob": 0.05, "sell_amount": 512, "buy_amount": 128, "balance": 100000},
-        {"type": "VeteranPlayer", "name": "Veteran_Farmer4", "sell_prob": 0.9, "buy_prob": 0.0, "sell_amount": 1024, "buy_amount": 0, "balance": 100000},
-        # 新玩家：稍微卖点捡来的垃圾，买点吃的
-        {"type": "NewPlayer", "name": "New1", "buy_prob": 0.3, "sell_prob": 0.4, "amount": 64, "balance": 1000},
-        {"type": "NewPlayer", "name": "New2", "buy_prob": 0.2, "sell_prob": 0.5, "amount": 64, "balance": 1000},
-        {"type": "Arbitrageur", "name": "Arb1", "balance": 50000}
-    ]
-}
-
-# ==========================================
 # 更鲁棒的通用生态：Domain Randomization（推荐开启）
 # ==========================================
 # 目标：让 AI 在训练中见到“不同服情的分布族”，而不是死记一套固定概率，从而显著提升泛化能力。
