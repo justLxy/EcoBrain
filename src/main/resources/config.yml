@@ -109,21 +109,6 @@ ai:
     k-min: 0.2
     k-max: 10.0
 
-    # 爆仓强制干预线：将其设到极高，等于完全废除此功能，全权交由 AI 判断
-    glut-threshold-multiplier: 1000.0
-    glut-threshold-min-absolute: 64000
-    
-    # 强制拉升倍率（系统发现东西要被买绝了，且有人还在买，强行涨价的倍率）
-    # 设为 1.0 即为失效，全权交由 AI 涨价
-    force-surge-multiplier: 1.0
-    
-    # 强制砸盘倍率（触发上面那个爆仓条件时，强行降价的倍率）
-    # 设为 1.0 即为失效，全权交由 AI 砸盘
-    force-crash-multiplier: 1.0
-
-    # 如果爆仓的东西根本没人买卖，每隔几次 AI 调控周期才允许砸盘一次。
-    glut-no-trade-cooldown-cycles: 2
-
 gui:
   bulk-sell:
     title: "&2EcoBrain 批量出售界面"

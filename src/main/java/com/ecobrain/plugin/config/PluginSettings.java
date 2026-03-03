@@ -70,17 +70,10 @@ public class PluginSettings {
             c.getInt("ai.schedule-minutes", Math.max(1, c.getInt("ai.schedule-hours", 2) * 60)),
             c.getInt("ai.aov-window-hours", 24),
             c.getInt("ai.garbage-collection-days", 7),
-            c.getDouble("ai.tuning.force-surge-multiplier", 1.03D),
-            c.getDouble("ai.tuning.force-crash-multiplier", 0.97D),
             c.getDouble("ai.tuning.per-cycle-max-change-percent", 0.05D),
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
             c.getDouble("ai.tuning.k-max", 3.0D),
-            // 爆仓阈值：current_inventory > max(target * multiplier, min-absolute) 视为爆仓
-            c.getDouble("ai.tuning.glut-threshold-multiplier", 5.0D),
-            c.getInt("ai.tuning.glut-threshold-min-absolute", 500),
-            // 无成交时爆仓暴跌冷却：每 N 个调控周期最多触发一次（N=1 表示每次周期都允许）
-            c.getInt("ai.tuning.glut-no-trade-cooldown-cycles", 4),
             c.getDouble("ai.tuning.max-base-price", 5000000.0D),
             new Tiers(
                 new Tier(
@@ -147,10 +140,7 @@ public class PluginSettings {
     public record AI(boolean debugLog, int scheduleMinutes,
                      int aovWindowHours,
                      int garbageCollectionDays,
-                     double forceSurgeMultiplier, double forceCrashMultiplier,
                      double perCycleMaxChangePercent, double kDelta, double kMin, double kMax,
-                     double glutThresholdMultiplier, int glutThresholdMinAbsolute,
-                     int glutNoTradeCooldownCycles,
                      double maxBasePrice,
                      Tiers tiers,
                      AdaptiveTarget adaptiveTarget) {}

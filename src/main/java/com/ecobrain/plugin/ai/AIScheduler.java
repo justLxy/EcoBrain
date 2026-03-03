@@ -20,12 +20,6 @@ import java.util.List;
  * 采用 ONNX PPO 模型实现连续动作调价。
  */
 public class AIScheduler {
-    private enum SurgeType {
-        NONE,
-        SCARCITY_SURGE,
-        GLUT_CRASH
-    }
-
     private final JavaPlugin plugin;
     private final OnnxModelRunner onnxModelRunner;
     private final ItemMarketRepository repository;
@@ -35,9 +29,6 @@ public class AIScheduler {
     private BukkitTask task;
 
     private volatile PluginSettings fullSettings;
-
-    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastForcedGlutCrashAt = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final long SELL_EVIDENCE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
 
     public AIScheduler(JavaPlugin plugin, OnnxModelRunner onnxModelRunner,
                        ItemMarketRepository repository, AMMCalculator ammCalculator, 
@@ -118,7 +109,6 @@ public class AIScheduler {
 
         int upCount = 0;
         int downCount = 0;
-        List<String> surges = new ArrayList<>();
 
         for (ItemMarketRecord item : items) {
             // == 1. 动态自适应目标库存 ==
@@ -211,41 +201,13 @@ public class AIScheduler {
                 action = onnxModelRunner.predictAction(obs, valueType, tuning.kDelta());
             }
 
-            // 【强制风控拦截】：爆仓与稀缺保护应无视且覆盖 AI 的错误探索动作
-            double glutMultiplier = Math.max(1.0D, settings.glutThresholdMultiplier());
-            int glutMinAbs = Math.max(1, settings.glutThresholdMinAbsolute());
-            boolean rawGlut = item.getCurrentInventory() > Math.max((int) Math.floor(item.getTargetInventory() * glutMultiplier), glutMinAbs);
-            long lastGlutAt = lastForcedGlutCrashAt.getOrDefault(item.getItemHash(), 0L);
-            long cooldownCycles = Math.max(1L, settings.glutNoTradeCooldownCycles());
-            long noTradeCooldownMs = windowMs * cooldownCycles;
-            boolean allowGlutCrashThisTick = hasRecentTrade || (now - lastGlutAt) >= noTradeCooldownMs;
-            boolean isGlut = rawGlut && allowGlutCrashThisTick;
-
-            int criticalInventory = fullSettings != null ? fullSettings.circuitBreaker().criticalInventory() : 0;
-            boolean isSupplyCritical = item.getPhysicalStock() <= criticalInventory;
-            boolean hasSellEvidence = repository.hasSellSince(item.getItemHash(), now - SELL_EVIDENCE_WINDOW_MS);
-            
-            boolean hasBuyPressure = recentFlow > 0;
-            boolean isScarcity = isSupplyCritical && hasBuyPressure && item.getBasePrice() < settings.maxBasePrice() * 0.99;
-
-            double ipoAnchorBase = fullSettings != null ? fullSettings.economy().ipoBasePrice() : 100.0D;
-            boolean noSupplyDecay = isSupplyCritical && !hasSellEvidence && item.getBasePrice() > ipoAnchorBase * 1.2D;
-
             String tuningReason = "AI_ACTION";
             if (!hasRecentTrade) {
                 tuningReason = "NO_RECENT_TRADE";
             }
 
-            if (isGlut) {
-                tuningReason = "FORCED_GLUT_CRASH";
-            } else if (isScarcity) {
-                tuningReason = "FORCED_SCARCITY";
-            } else if (noSupplyDecay) {
-                tuningReason = "NO_SUPPLY_DECAY";
-            }
-
             // 5. 应用最终动作
-            TuningResult result = applyActionToItem(item, action, valueType, isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
+            TuningResult result = applyActionToItem(item, action, valueType);
 
             if (result != null) {
                 String actionName = String.format("MULT:%.2f K:%.2f", action[0], action[1]);
@@ -260,40 +222,18 @@ public class AIScheduler {
                     0.0, // Reward is calculated offline in 2.0
                     now
                 );
-                if (tuningReason.equals("FORCED_GLUT_CRASH")) {
-                    lastForcedGlutCrashAt.put(item.getItemHash(), now);
-                }
             }
 
             // 修正输出：有些价格已经达到 maxBasePrice，其实没涨，过滤掉
             // 如果 oldBasePrice 接近 maxBasePrice，并且 newBasePrice 也接近 maxBasePrice，说明其实没涨
             boolean isAtMax = result != null && result.newBasePrice() >= settings.maxBasePrice() * 0.99 && result.oldBasePrice() >= settings.maxBasePrice() * 0.99;
             boolean priceChanged = result != null && Math.abs(result.oldBasePrice() - result.newBasePrice()) > 1e-5;
-            boolean surgeOrCrash = result != null && (result.surgeType() == SurgeType.SCARCITY_SURGE || result.surgeType() == SurgeType.GLUT_CRASH);
             
-            if (!isAtMax && (priceChanged || surgeOrCrash)) {
+            if (!isAtMax && priceChanged) {
                 if (result.newBasePrice() > result.oldBasePrice() + 1e-6) {
                     upCount++;
                 } else if (result.newBasePrice() < result.oldBasePrice() - 1e-6) {
                     downCount++;
-                } else if (surgeOrCrash) {
-                    if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
-                        upCount++;
-                    } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
-                        downCount++;
-                    }
-                }
-                
-                if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
-                    String surgeName = readableItemName(item);
-                    if (!surgeName.contains("[过期销毁]")) {
-                        surges.add("&f" + surgeName + " &c[稀缺暴涨!]");
-                    }
-                } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
-                    String surgeName = readableItemName(item);
-                    if (!surgeName.contains("[过期销毁]")) {
-                        surges.add("&f" + surgeName + " &a[爆仓暴跌!]");
-                    }
                 }
             }
             
@@ -309,19 +249,12 @@ public class AIScheduler {
                 if (result == null) {
                     plugin.getLogger().info("    - 调控结果 (Result): HOLD，参数不变");
                 } else {
-                    String surgeTag = "";
-                    if (result.surgeType() == SurgeType.SCARCITY_SURGE) {
-                        surgeTag = " [稀缺暴涨!]";
-                    } else if (result.surgeType() == SurgeType.GLUT_CRASH) {
-                        surgeTag = " [爆仓暴跌!]";
-                    }
                     plugin.getLogger().info(String.format(
-                        "    - 调控结果 (Result): base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]%s",
+                        "    - 调控结果 (Result): base_price [%.6f -> %.6f], k_factor [%.6f -> %.6f]",
                         result.oldBasePrice(),
                         result.newBasePrice(),
                         result.oldKFactor(),
-                        result.newKFactor(),
-                        surgeTag
+                        result.newKFactor()
                     ));
                 }
             }
@@ -334,14 +267,6 @@ public class AIScheduler {
         if (upCount > 0 || downCount > 0) {
             StringBuilder message = new StringBuilder();
             message.append("&8[&6EcoBrain&8] &b市场调控完毕&7: &a").append(upCount).append("&7 个物品价格上涨，&c").append(downCount).append("&7 个物品价格下跌。&e(输入 /ecobrain 查看)");
-            if (!surges.isEmpty()) {
-                message.append(" 异动: ");
-                if (surges.size() > 5) {
-                    message.append(String.join("&7, ", surges.subList(0, 5))).append(" &7等");
-                } else {
-                    message.append(String.join("&7, ", surges));
-                }
-            }
             
             String finalMessage = ChatColor.translateAlternateColorCodes('&', message.toString());
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -352,11 +277,6 @@ public class AIScheduler {
         // 统一在周期末尾训练本批次收集的独立经验
         // DQN 时代： dqnTrainer.trainBatch(settings.trainBatchSize());
         // PPO 时代： 离线外置模型，无需实时训练
-    }
-
-    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, boolean isGlut, boolean isScarcity,
-                                          boolean noSupplyDecay, double ipoAnchorBase) {
-        return applyActionToItem(item, action, "low", isGlut, isScarcity, noSupplyDecay, ipoAnchorBase);
     }
 
     private PluginSettings.TierTuning tierTuningFor(String valueType) {
@@ -370,57 +290,30 @@ public class AIScheduler {
         };
     }
 
-    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType, boolean isGlut, boolean isScarcity,
-                                          boolean noSupplyDecay, double ipoAnchorBase) {
-        if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5 && !isGlut && !isScarcity && !noSupplyDecay) {
+    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType) {
+        if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5) {
             return null;
         }
 
         PluginSettings.TierTuning tierTuning = tierTuningFor(valueType);
 
-        SurgeType surgeType = SurgeType.NONE;
         double oldBase = item.getBasePrice();
         double oldK = item.getKFactor();
         double newBasePrice = oldBase;
         double newK = oldK;
 
-        if (isGlut) {
-            surgeType = SurgeType.GLUT_CRASH;
-            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double priceRate = settings.forceCrashMultiplier();
-            newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
-            newBasePrice = Math.max(0.01, newBasePrice);
-            newK = clamp(oldK - tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
-        } else if (isScarcity) {
-            surgeType = SurgeType.SCARCITY_SURGE;
-            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double priceRate = settings.forceSurgeMultiplier();
-            newBasePrice = clamp(oldBase * priceRate, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
-            newBasePrice = Math.min(newBasePrice, settings.maxBasePrice());
-            newK = clamp(oldK + tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
-        } else if (noSupplyDecay) {
-            if (oldBase <= ipoAnchorBase) {
-                return null;
-            }
-            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            double targetBase = Math.max(ipoAnchorBase, oldBase * 0.95D);
-            newBasePrice = clamp(targetBase, oldBase * (1.0D - limit), oldBase * (1.0D + limit));
-            newBasePrice = Math.max(ipoAnchorBase, Math.min(newBasePrice, settings.maxBasePrice()));
-            newK = clamp(oldK - tierTuning.kDelta(), tierTuning.kMin(), tierTuning.kMax());
-        } else {
-            // Apply ONNX continuous action
-            double priceMult = action[0];
-            double kDelta = action[1];
-            double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-            // Clip the AI multiplier to the safe per-cycle max change percent
-            double safeMult = clamp(priceMult, 1.0D - limit, 1.0D + limit);
-            newBasePrice = oldBase * safeMult;
-            newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
-            
-            // Limit K factor changes
-            double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());
-            newK = clamp(oldK + safeKDelta, tierTuning.kMin(), tierTuning.kMax());
-        }
+        // Apply ONNX continuous action (pure RL): only hard clamps remain.
+        double priceMult = action[0];
+        double kDelta = action[1];
+        double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
+        // Clip the AI multiplier to the safe per-cycle max change percent
+        double safeMult = clamp(priceMult, 1.0D - limit, 1.0D + limit);
+        newBasePrice = oldBase * safeMult;
+        newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
+
+        // Limit K factor changes
+        double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());
+        newK = clamp(oldK + safeKDelta, tierTuning.kMin(), tierTuning.kMax());
 
         // --- 防垃圾回收机制（按时间过期） ---
         // 解释：如果有玩家随便附魔了一把木剑（物理库存=1）卖给系统，但之后根本没人买（交易量为0）。
@@ -443,7 +336,7 @@ public class AIScheduler {
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
             if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
                 repository.deleteByHash(item.getItemHash());
-                return new TuningResult(item.getItemHash(), oldBase, 0, oldK, 0, SurgeType.NONE);
+                return null;
             }
             }
         }
@@ -460,8 +353,7 @@ public class AIScheduler {
             oldBase,
             newBasePrice,
             oldK,
-            newK,
-            surgeType
+            newK
         );
     }
 
@@ -513,5 +405,5 @@ public class AIScheduler {
     }
 
     private record TuningResult(String hash, double oldBasePrice, double newBasePrice,
-                                double oldKFactor, double newKFactor, SurgeType surgeType) {}
+                                double oldKFactor, double newKFactor) {}
 }

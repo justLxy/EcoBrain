@@ -240,6 +240,7 @@ logPrice = clip( log(max(eps, P_current)), -20, 20 )
 - **输入名与 shape**：输入名固定为 `observation`，shape 为 `[1, 6]`（batch 维可变）。
 - **输入应为 raw obs**：若训练启用了 `VecNormalize(norm_obs=True)`，导出 ONNX 时会把 obs normalization **烘焙进 ONNX**；因此插件端不要再做二次归一化。
 - **动作 squashing**：导出的 ONNX 输出为 actor 的均值（pre-tanh）。插件端需要 `tanh` 才能回到 `[-1, 1]`（见 `OnnxModelRunner`）。
+- **Pure RL（生产执行语义）**：插件端不再做“爆仓/稀缺/无供给衰减”等动作覆盖，**只保留硬 clamp 与交易风控**。否则会造成“模型输出的动作 ≠ 实际执行动作”的分布错位，影响收敛与线上效果。
 
 ### 3.4 动手实践：如何自己训练 AI (How to Train)
 想要在本地复现训练过程，或者使用自己服务器的数据微调模型，请按照以下步骤操作：

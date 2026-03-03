@@ -64,7 +64,7 @@ public class CircuitBreaker {
             return BuyCheckResult.LOW_VIRTUAL_INVENTORY;
         }
         // 预检查：若本次买入会导致真实库存跌破熔断线，则拒绝交易。
-        // （允许精准停靠在熔断线上，以便触发 AI 的 Scarcity Surge）
+        // （允许精准停靠在熔断线上；价格上行应由 AI 自己学习与执行）
         int postPhysicalStock = record.getPhysicalStock() - amount;
         if (postPhysicalStock < criticalInventory) {
             return BuyCheckResult.POST_BUY_STOCK_PROTECTED;
