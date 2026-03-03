@@ -6,6 +6,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import VecNormalize
 from ecobrain_env import EcoBrainEnv
 
 def _select_device(device: str) -> str:
@@ -72,6 +73,9 @@ def train_model(
     seed: int | None = None,
     net_arch: str | None = None,
     n_envs_cap: int = 64,
+    vecnorm: bool = True,
+    norm_obs: bool = True,
+    norm_reward: bool = True,
 ):
     using_real = bool(dataset_path and os.path.exists(dataset_path))
     if using_real:
@@ -111,10 +115,28 @@ def train_model(
         },
     )
 
-    print(f"Using device: {device} (n_envs={n_envs}, vec_env={vec_env_cls.__name__})")
-
     model_name = f"ecobrain_ppo_{value_type}"
     model_path = f"{model_name}.zip"
+    vecnorm_path = f"{model_name}_vecnormalize.pkl"
+
+    # Optional: normalize observations & rewards for stability.
+    # IMPORTANT: If norm_obs=True, we bake the normalization into exported ONNX
+    # so the Java plugin can keep feeding raw obs without mismatch.
+    if vecnorm:
+        if os.path.exists(vecnorm_path):
+            try:
+                env = VecNormalize.load(vecnorm_path, env)
+                print(f"Loaded VecNormalize stats from {vecnorm_path}")
+            except Exception as e:
+                print(f"Warning: failed to load VecNormalize stats ({e}); starting fresh normalization.")
+                env = VecNormalize(env, norm_obs=norm_obs, norm_reward=norm_reward, clip_obs=10.0, clip_reward=10.0, gamma=gamma)
+        else:
+            env = VecNormalize(env, norm_obs=norm_obs, norm_reward=norm_reward, clip_obs=10.0, clip_reward=10.0, gamma=gamma)
+        env.training = True
+        env.norm_obs = bool(norm_obs)
+        env.norm_reward = bool(norm_reward)
+
+    print(f"Using device: {device} (n_envs={n_envs}, vec_env={vec_env_cls.__name__})")
 
     policy_kwargs = {}
     parsed_arch = _parse_net_arch(net_arch)
@@ -160,6 +182,9 @@ def train_model(
     
     # Save the model
     model.save(model_name)
+    if vecnorm and isinstance(env, VecNormalize):
+        env.save(vecnorm_path)
+        print(f"Saved VecNormalize stats to {vecnorm_path}")
     print(f"Saved model to {model_name}.zip")
     return model
 
@@ -176,14 +201,44 @@ class OnnxablePolicy(nn.Module):
 def export_to_onnx(model, filename):
     # Extract the PyTorch module from SB3 PPO
     pytorch_policy = model.policy
+
+    # Try to obtain VecNormalize statistics from the model's env (if present)
+    vecenv = None
+    try:
+        vecenv = model.get_env()
+    except Exception:
+        vecenv = None
+
+    obs_mean = None
+    obs_var = None
+    obs_eps = 1e-8
+    clip_obs = 10.0
+    use_obs_norm = False
+    if isinstance(vecenv, VecNormalize) and getattr(vecenv, "norm_obs", False) and getattr(vecenv, "obs_rms", None) is not None:
+        use_obs_norm = True
+        obs_mean = vecenv.obs_rms.mean.copy()
+        obs_var = vecenv.obs_rms.var.copy()
+        obs_eps = float(getattr(vecenv, "epsilon", 1e-8))
+        clip_obs = float(getattr(vecenv, "clip_obs", 10.0))
     
     # Create a wrapper module that just outputs the actions
     class PytorchToOnnxWrapper(nn.Module):
         def __init__(self, actor):
             super().__init__()
             self.actor = actor
+            self.use_obs_norm = use_obs_norm
+            if self.use_obs_norm:
+                mean = torch.tensor(obs_mean, dtype=torch.float32).view(1, -1)
+                var = torch.tensor(obs_var, dtype=torch.float32).view(1, -1)
+                self.register_buffer("obs_mean", mean)
+                self.register_buffer("obs_var", var)
+                self.obs_eps = float(obs_eps)
+                self.clip_obs = float(clip_obs)
             
         def forward(self, obs):
+            if getattr(self, "use_obs_norm", False):
+                obs = (obs - self.obs_mean) / torch.sqrt(self.obs_var + self.obs_eps)
+                obs = torch.clamp(obs, -self.clip_obs, self.clip_obs)
             # Pass observation through the actor network to get features
             features = self.actor.extract_features(obs)
             # Then through the action net
@@ -235,6 +290,9 @@ if __name__ == "__main__":
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-range", type=float, default=0.2)
     parser.add_argument("--net-arch", type=str, default="", help="Comma-separated hidden sizes for MlpPolicy, e.g. 256,256,256")
+    parser.add_argument("--no-vecnorm", action="store_true", help="Disable VecNormalize (obs/reward normalization)")
+    parser.add_argument("--no-norm-obs", action="store_true", help="Disable observation normalization (VecNormalize)")
+    parser.add_argument("--no-norm-reward", action="store_true", help="Disable reward normalization (VecNormalize)")
     args = parser.parse_args()
 
     print("Starting EcoBrain 2.0 PPO Training & Export")
@@ -261,6 +319,9 @@ if __name__ == "__main__":
         seed=args.seed,
         net_arch=args.net_arch or None,
         n_envs_cap=args.n_envs_cap,
+        vecnorm=not args.no_vecnorm,
+        norm_obs=not args.no_norm_obs,
+        norm_reward=not args.no_norm_reward,
     )
     export_to_onnx(model_low, "ecobrain_low_value.onnx")
     
@@ -281,6 +342,9 @@ if __name__ == "__main__":
         seed=args.seed,
         net_arch=args.net_arch or None,
         n_envs_cap=args.n_envs_cap,
+        vecnorm=not args.no_vecnorm,
+        norm_obs=not args.no_norm_obs,
+        norm_reward=not args.no_norm_reward,
     )
     export_to_onnx(model_mid, "ecobrain_mid_value.onnx")
     
@@ -301,6 +365,9 @@ if __name__ == "__main__":
         seed=args.seed,
         net_arch=args.net_arch or None,
         n_envs_cap=args.n_envs_cap,
+        vecnorm=not args.no_vecnorm,
+        norm_obs=not args.no_norm_obs,
+        norm_reward=not args.no_norm_reward,
     )
     export_to_onnx(model_high, "ecobrain_high_value.onnx")
     

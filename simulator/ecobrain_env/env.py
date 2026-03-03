@@ -31,6 +31,8 @@ from .config import (
     REWARD_TRADE_VALUE_WEIGHT,
     REWARD_INFLATION_RATE_WEIGHT,
     REWARD_INVENTORY_IMBALANCE_WEIGHT,
+    REWARD_SCALE,
+    REWARD_CLIP_ABS,
     ECOSYSTEM_RANDOMIZATION,
     MARKET_REGIMES,
     SIMULATED_PLAYER_ARCHETYPES,
@@ -462,4 +464,9 @@ class EcoBrainEnv(gym.Env):
         
         self.last_price = self.amm.get_current_price()
         
+        # Reward stabilization: scale + optional clip (training only; plugin doesn't use reward)
+        reward = float(reward) * float(REWARD_SCALE)
+        if REWARD_CLIP_ABS is not None:
+            reward = float(np.clip(reward, -float(REWARD_CLIP_ABS), float(REWARD_CLIP_ABS)))
+
         return self._get_obs(), float(reward), done, truncated, {}
