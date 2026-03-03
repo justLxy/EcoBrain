@@ -120,6 +120,17 @@
                                         <exclude>org/sqlite/native/OpenBSD/**</exclude>
                                     </excludes>
                                 </filter>
+                                <filter>
+                                    <artifact>com.microsoft.onnxruntime:onnxruntime</artifact>
+                                    <excludes>
+                                        <!-- 移除 Windows 和 Mac 的底层库，仅保留 Linux 生产环境使用 -->
+                                        <exclude>ai/onnxruntime/native/win-x64/**</exclude>
+                                        <exclude>ai/onnxruntime/native/osx-x64/**</exclude>
+                                        <exclude>ai/onnxruntime/native/osx-aarch64/**</exclude>
+                                        <!-- 如果你确定正式服不是 ARM 架构的 Linux，也可以移除下面这行 -->
+                                        <!-- <exclude>ai/onnxruntime/native/linux-aarch64/**</exclude> -->
+                                    </excludes>
+                                </filter>
                             </filters>
                         </configuration>
                     </execution>
