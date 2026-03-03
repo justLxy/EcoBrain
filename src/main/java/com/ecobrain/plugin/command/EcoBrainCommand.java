@@ -425,7 +425,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             return List.of("all", "1", "16", "64");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
-            return List.of("clear", "freeze", "unfreeze", "clearleaderboard");
+            return List.of("clear", "freeze", "unfreeze", "clearleaderboard", "settarget");
         }
         if (args.length == 3 && "admin".equalsIgnoreCase(args[0]) && "unfreeze".equalsIgnoreCase(args[1])) {
             return List.of("all");

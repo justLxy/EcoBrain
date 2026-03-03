@@ -5,7 +5,7 @@ import csv
 import os
 from .amm import AMM
 from .players import NewPlayer, VeteranPlayer, Arbitrageur, ReplayPlayer
-from .config import TIERS, ACTION_BASE_PRICE_MAX_PERCENT, ACTION_K_FACTOR_MAX_DELTA, PLAYERS
+from .config import TIERS, ACTION_BASE_PRICE_MAX_PERCENT, ACTION_K_FACTOR_MAX_DELTA, PLAYERS, ADAPTIVE_TARGET_ENABLED, ADAPTIVE_TARGET_SMOOTHING_FACTOR
 
 class EcoBrainEnv(gym.Env):
     """
@@ -149,7 +149,14 @@ class EcoBrainEnv(gym.Env):
             self.reset()
             
     def _get_obs(self):
-        saturation = self.amm.current_inventory / max(1, self.amm.target_inventory)
+        # 使用动态的目标库存来计算饱和度
+        # 如果是真实数据回放，我们模拟 target 也在自适应逼近 current
+        if self.dataset_path and ADAPTIVE_TARGET_ENABLED:
+            adaptive_target = self.amm.target_inventory + (self.amm.current_inventory - self.amm.target_inventory) * ADAPTIVE_TARGET_SMOOTHING_FACTOR
+            saturation = self.amm.current_inventory / max(1, adaptive_target)
+        else:
+            saturation = self.amm.current_inventory / max(1, self.amm.target_inventory)
+            
         flow = self.recent_buys - self.recent_sells
         inflation = self.recent_sell_volume - self.recent_buy_volume
         
@@ -204,6 +211,11 @@ class EcoBrainEnv(gym.Env):
         # - For high value items: Price should go UP based on buys.
         # - For low value items: Price should stay LOW based on infinite sells.
         
+        # 为了应对自适应 target，我们在训练时让 target 也在缓慢变动，使 AI 学会在 target 游移时如何稳定价格
+        if self.dataset_path is None and ADAPTIVE_TARGET_ENABLED:
+             self.amm.target_inventory = int(self.amm.target_inventory + (self.amm.current_inventory - self.amm.target_inventory) * ADAPTIVE_TARGET_SMOOTHING_FACTOR)
+             self.amm.target_inventory = max(1, self.amm.target_inventory)
+
         trade_volume = self.recent_buy_volume + self.recent_sell_volume
         net_emission = self.recent_sell_volume - self.recent_buy_volume
         inventory_imbalance = abs(self.amm.current_inventory - self.amm.target_inventory) / self.amm.target_inventory
@@ -229,10 +241,12 @@ class EcoBrainEnv(gym.Env):
             if net_emission > tier_cfg["inflation_penalty_threshold"]:
                 reward -= tier_cfg["inflation_penalty"]
                 
-        else: # low
+        elif self.value_type == "low":
             # Vanilla mats: scale to tens of coins, extremely strict on inflation
             if self.amm.get_current_price() < tier_cfg["price_target"]:
-                reward += tier_cfg["price_reward"]
+                reward += tier_cfg.get("price_reward_2", tier_cfg.get("price_reward", 5.0))
+            elif self.amm.get_current_price() < tier_cfg["price_max"]:
+                reward += tier_cfg.get("price_reward_1", 2.0)
             if net_emission > tier_cfg["inflation_penalty_threshold"]:
                 reward -= tier_cfg["inflation_penalty"]
                 

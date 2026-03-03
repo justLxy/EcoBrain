@@ -29,18 +29,34 @@ public class AMMCalculator {
     /**
      * 计算动态印花税 (防套利)
      */
-    public double calculateDynamicSpread(ItemMarketRecord record) {
+    public double calculateDynamicSpread(ItemMarketRecord record, int sellAmount) {
         double currentPrice = calculateCurrentPrice(record);
         double twap = getTwapPrice(record);
         double baseSpread = 0.05;
         
+        // 1. 基于价格波动率的基础印花税 (封顶 50%)
+        double volatilitySpread = 0.0;
         if (twap > 0) {
             double volatility = Math.abs(currentPrice - twap) / twap;
-            double dynamicSpread = baseSpread + (volatility * 0.5);
-            return Math.min(0.50, dynamicSpread); // 封顶 50%
+            volatilitySpread = volatility * 0.5;
         }
         
-        return baseSpread;
+        // 2. 防恶意套现熔断税：当单次抛售量极大，且远超当前物理流通盘时，予以重罚。
+        // 这能彻底防死“开局卖 1 个建仓，左右手互倒把价格炒到 1 万块，最后一次性倾销 1000 个套现”的杀猪盘。
+        double dumpingTax = 0.0;
+        int currentPhysical = Math.max(1, record.getPhysicalStock());
+        
+        // 如果他一次性卖的数量超过了当前全服已知库存的 3 倍，开始征收超额抛售税
+        if (sellAmount > currentPhysical * 3) {
+            double ratio = (double) sellAmount / currentPhysical;
+            // 每超过物理库存 1 倍，额外增加 10% 的税。比如当前库存1，他卖 10 个，惩罚 (10-3)*0.1 = 70% 税。
+            dumpingTax = (ratio - 3.0) * 0.10; 
+        }
+        
+        double dynamicSpread = baseSpread + volatilitySpread + dumpingTax;
+        
+        // 加上防倾销税后，最大可以扣到 99.9%（绝对不允许套现）
+        return Math.min(0.999, dynamicSpread);
     }
 
     /**
@@ -57,8 +73,8 @@ public class AMMCalculator {
             totalRevenue += record.getBasePrice()
                 * Math.pow((double) record.getTargetInventory() / Math.max(1, stepInventory), record.getKFactor());
         }
-        // 动态印花税
-        double spread = calculateDynamicSpread(record);
+        // 动态印花税 (传入 amount 用于检测超量倾销)
+        double spread = calculateDynamicSpread(record, amount);
         return new TradeResult(Math.max(0.0D, totalRevenue * (1.0 - spread)), initialInventory + amount);
     }
 

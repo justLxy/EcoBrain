@@ -54,12 +54,18 @@ public class MarketService {
             if (existing.isPresent()) {
                 return new IpoState(existing.get(), false);
             }
+            // 自适应时，为了安全，将初始目标库存卡在物理库存的一个固定边界内。
+            // 比如 64 或者当前真实卖出量的 2 倍，取其大者，防止一些奇怪的超大卖单直接把 target 拉满
             int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
+            int dynamicTarget = Math.max(economySettings.ipoTargetInventory(), firstSellQuantity * 2);
+
             double initialBasePrice = economySettings.zeroTrustIpo() ? 0.01D : economySettings.ipoBasePrice();
             
+            // 修复：IPO 时，virtualInitialInventory 应该等于 dynamicTarget，否则会导致开局饱和度异常
+            // 比如卖 1000 个，dynamicTarget=2000，如果 virtualInitialInventory 还是 64，开局价格就会暴涨
             repository.upsertIpo(hash, base64, initialBasePrice, economySettings.ipoKFactor(),
-                economySettings.ipoTargetInventory(),
-                virtualInitialInventory,
+                dynamicTarget,
+                dynamicTarget, // 这里原本是 virtualInitialInventory，现在改为 dynamicTarget，让初始饱和度为 100%
                 Math.max(0, firstSellQuantity));
             ItemMarketRecord inserted = repository.findByHash(hash)
                 .orElseThrow(() -> new IllegalStateException("IPO insert failed"));

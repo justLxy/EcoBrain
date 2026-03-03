@@ -12,6 +12,7 @@ com/ecobrain/plugin/rewards/RewardsGUI$Category.class
 com/ecobrain/plugin/model/PlayerStat.class
 com/ecobrain/plugin/model/TradeType.class
 com/ecobrain/plugin/rewards/RewardsManager.class
+com/ecobrain/plugin/config/PluginSettings$AdaptiveTarget.class
 com/ecobrain/plugin/ai/AIScheduler$ItemNameInfo.class
 com/ecobrain/plugin/service/MarketService$1.class
 com/ecobrain/plugin/rewards/RewardsGUI$Progress.class

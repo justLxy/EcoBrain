@@ -121,7 +121,32 @@ public class AIScheduler {
         List<String> surges = new ArrayList<>();
 
         for (ItemMarketRecord item : items) {
-            // 1. 获取当前状态 St
+            // == 1. 动态自适应目标库存 ==
+            if (settings.adaptiveTarget().enabled()) {
+                int currentPhysical = item.getPhysicalStock();
+                int oldTarget = item.getTargetInventory();
+                double smoothing = settings.adaptiveTarget().smoothingFactor();
+                
+                // EMA 平滑靠近真实库存
+                double ema = oldTarget + (currentPhysical - oldTarget) * smoothing;
+                int newTarget = (int) Math.round(ema);
+                
+                // 防止取整导致卡死，如果还没达到物理库存，强制向其移动 1 步
+                if (newTarget == oldTarget && currentPhysical != oldTarget) {
+                    newTarget += (currentPhysical > oldTarget) ? 1 : -1;
+                }
+                newTarget = Math.max(1, newTarget);
+                
+                if (newTarget != oldTarget) {
+                    repository.updateTargetInventoryWithProportionalCurrentScaling(
+                        item.getItemHash(), oldTarget, item.getCurrentInventory(), newTarget
+                    );
+                    // 刷新内存里的 item 对象以供后续 AI 决策使用
+                    item = repository.findByHash(item.getItemHash()).orElse(item);
+                }
+            }
+
+            // 2. 获取当前状态 St
             double saturation = calculateSaturation(item);
             double recentFlow = repository.queryItemNetFlowSince(item.getItemHash(), since) / windowMinutes;
             

@@ -12,6 +12,12 @@ ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (0.20 = 20%)
 ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
 
 # ==========================================
+# 目标库存自适应设置 (Adaptive Target)
+# ==========================================
+ADAPTIVE_TARGET_ENABLED = True
+ADAPTIVE_TARGET_SMOOTHING_FACTOR = 0.05
+
+# ==========================================
 # 各阶级物品参数 (Item Tier Parameters)
 # ==========================================
 TIERS = {
@@ -45,7 +51,8 @@ TIERS = {
         "price_min": 0.0,              
         "price_max": 1000.0,           
         "price_target": 50.0,          # (压低目标价) 供大于求的废品，必须压到极低的价格
-        "price_reward": 5.0,           # (提升奖励) 奖励AI成功把垃圾压成白菜价
+        "price_reward_1": 2.0,         # 达到 price_max 以下的保底加分
+        "price_reward_2": 5.0,         # (提升奖励) 奖励AI成功把垃圾压成白菜价
         "inflation_penalty_threshold": 200.0, # (极低通胀容忍) 垃圾物品绝对不能成为提款机
         "inflation_penalty": 50.0      # (最高惩罚) 谁敢高价收垃圾，直接让AI吃满惩罚
     }

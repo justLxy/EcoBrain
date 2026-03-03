@@ -35,6 +35,7 @@ public class AdminCommand {
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze            (解冻主手物品)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze <hash>");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze all        (解冻所有物品)");
+            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin settarget <数量>      (修改主手物品的目标库存)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearleaderboard");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin exportdata          (导出供 AI 训练的离线数据)");
             return true;
@@ -67,6 +68,59 @@ public class AdminCommand {
         }
 
         switch (action) {
+            case "settarget" -> {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(ChatColor.YELLOW + "该命令只能由玩家在游戏内执行（需手持物品）。");
+                    return true;
+                }
+                if (args.length < 3) {
+                    player.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin settarget <数量>");
+                    return true;
+                }
+                
+                int newTarget;
+                try {
+                    newTarget = Integer.parseInt(args[2]);
+                    if (newTarget <= 0) throw new NumberFormatException();
+                } catch (NumberFormatException e) {
+                    player.sendMessage(ChatColor.RED + "目标库存必须是大于 0 的整数。");
+                    return true;
+                }
+                
+                ItemStack hand = player.getInventory().getItemInMainHand();
+                if (hand == null || hand.getType().isAir()) {
+                    player.sendMessage(ChatColor.RED + "请先手持需要修改目标库存的物品。");
+                    return true;
+                }
+                
+                ItemStack snapshot = hand.clone().asOne();
+                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                    try {
+                        String base64 = itemSerializer.serializeToBase64(snapshot);
+                        String hash = itemSerializer.sha256(base64);
+                        
+                        var recordOpt = repository.findByHash(hash);
+                        if (recordOpt.isEmpty()) {
+                            player.sendMessage(ChatColor.RED + "该物品尚未在市场中被收录（未发生过交易），请先由玩家卖出一次触发 IPO。");
+                            return;
+                        }
+                        
+                        var record = recordOpt.get();
+                        repository.updateTargetInventoryWithProportionalCurrentScaling(
+                            hash, 
+                            record.getTargetInventory(), 
+                            record.getCurrentInventory(), 
+                            newTarget
+                        );
+                        
+                        player.sendMessage(ChatColor.GREEN + "成功！已将主手物品的目标库存修改为: " + newTarget);
+                        player.sendMessage(ChatColor.GREEN + "AI 会在下一个调控周期自动根据新的目标库存重新判定该物品的阶级(High/Mid/Low)。");
+                    } catch (Exception e) {
+                        player.sendMessage(ChatColor.RED + "执行失败: " + e.getMessage());
+                    }
+                });
+                return true;
+            }
             case "clear" -> {
                 if (args.length < 3) {
                     sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin clear <hash>");

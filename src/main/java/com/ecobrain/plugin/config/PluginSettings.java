@@ -87,6 +87,10 @@ public class PluginSettings {
                 c.getInt("ai.tiers.high.inventory-threshold", 10),
                 c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
                 c.getInt("ai.tiers.mid.inventory-threshold", 100)
+            ),
+            new AdaptiveTarget(
+                c.getBoolean("ai.adaptive-target.enabled", true),
+                c.getDouble("ai.adaptive-target.smoothing-factor", 0.05D)
             )
         );
 
@@ -124,7 +128,10 @@ public class PluginSettings {
                      double glutThresholdMultiplier, int glutThresholdMinAbsolute,
                      int glutNoTradeCooldownCycles,
                      double maxBasePrice,
-                     Tiers tiers) {}
+                     Tiers tiers,
+                     AdaptiveTarget adaptiveTarget) {}
+
+    public record AdaptiveTarget(boolean enabled, double smoothingFactor) {}
 
     public record Tiers(
         double highPriceThreshold, int highInventoryThreshold,
