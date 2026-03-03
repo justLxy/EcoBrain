@@ -349,7 +349,12 @@ class EcoBrainEnv(gym.Env):
 
         self.amm.apply_ai_action(safe_mult, safe_k_delta)
         # Hard bounds (plugin aligned)
-        self.amm.base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(self.amm.base_price)))
+        # Tier-aware base_price cap to prevent runaway base prices that make band learning impossible.
+        # Use the tier's hard max as the cap where applicable (low<=1000, mid<=10000), while still
+        # respecting the global clamp (high uses global max).
+        tier_base_cap = float(tier_cfg.get("price_max", float(MAX_BASE_PRICE)))
+        tier_base_cap = float(min(float(MAX_BASE_PRICE), tier_base_cap))
+        self.amm.base_price = max(float(MIN_BASE_PRICE), min(float(tier_base_cap), float(self.amm.base_price)))
         k_min = float(tier_cfg.get("k_min", K_MIN))
         k_max = float(tier_cfg.get("k_max", K_MAX))
         self.amm.k_factor = max(float(k_min), min(float(k_max), float(self.amm.k_factor)))

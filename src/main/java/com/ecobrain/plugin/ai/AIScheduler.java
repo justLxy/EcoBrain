@@ -290,6 +290,24 @@ public class AIScheduler {
         };
     }
 
+    /**
+     * Tier-aware cap for base_price to match the simulator's hard ranges:
+     * - low:  <= mid.price-threshold (default 1000)
+     * - mid:  <= high.price-threshold (default 10000)
+     * - high: <= global max-base-price
+     */
+    private double tierBasePriceCap(String valueType) {
+        double global = settings.maxBasePrice();
+        if (valueType == null) {
+            return global;
+        }
+        return switch (valueType) {
+            case "low" -> Math.min(global, settings.tiers().midPriceThreshold());
+            case "mid" -> Math.min(global, settings.tiers().highPriceThreshold());
+            default -> global;
+        };
+    }
+
     private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType) {
         if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5) {
             return null;
@@ -309,7 +327,7 @@ public class AIScheduler {
         // Clip the AI multiplier to the safe per-cycle max change percent
         double safeMult = clamp(priceMult, 1.0D - limit, 1.0D + limit);
         newBasePrice = oldBase * safeMult;
-        newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
+        newBasePrice = clamp(newBasePrice, 0.01D, tierBasePriceCap(valueType));
 
         // Limit K factor changes
         double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());

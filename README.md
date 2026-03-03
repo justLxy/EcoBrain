@@ -241,6 +241,7 @@ logPrice = clip( log(max(eps, P_current)), -20, 20 )
 - **输入应为 raw obs**：若训练启用了 `VecNormalize(norm_obs=True)`，导出 ONNX 时会把 obs normalization **烘焙进 ONNX**；因此插件端不要再做二次归一化。
 - **动作 squashing**：导出的 ONNX 输出为 actor 的均值（pre-tanh）。插件端需要 `tanh` 才能回到 `[-1, 1]`（见 `OnnxModelRunner`）。
 - **Pure RL（生产执行语义）**：插件端不再做“爆仓/稀缺/无供给衰减”等动作覆盖，**只保留硬 clamp 与交易风控**。否则会造成“模型输出的动作 ≠ 实际执行动作”的分布错位，影响收敛与线上效果。
+- **Tier-aware base_price cap（重要）**：为防止策略把 `base_price` 推到全局上限导致低/中价值永远回不来区间，线上与离线都对 `base_price` 做 tier 级别的上限夹紧：\n+  - low: `base_price <= low.price_max`（默认 1000）\n+  - mid: `base_price <= mid.price_max`（默认 10000）\n+  - high: `base_price <= max-base-price`（全局上限）\n+  - **实现位置**：模拟器 `simulator/ecobrain_env/env.py`（step 内 clamp），插件 `src/main/java/com/ecobrain/plugin/ai/AIScheduler.java`（applyActionToItem 内 clamp）。
 
 ### 3.4 动手实践：如何自己训练 AI (How to Train)
 想要在本地复现训练过程，或者使用自己服务器的数据微调模型，请按照以下步骤操作：
