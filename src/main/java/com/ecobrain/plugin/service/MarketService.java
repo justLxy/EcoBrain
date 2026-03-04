@@ -140,8 +140,13 @@ public class MarketService {
         try {
             PluginSettings settings = PluginSettings.load(plugin);
             if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
-                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
+                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
+                int m = Math.min(Math.max(1, amount), cap);
+                // Quantity-aware EMA: alpha_eff = 1 - (1 - alpha)^m
+                // This reacts faster to large batch trades while still doing only one DB write.
+                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
+                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
                 newTarget = (int) Math.round(ema);
                 if (newTarget == oldTarget && newPhysical != oldTarget) {
                     newTarget += (newPhysical > oldTarget) ? 1 : -1;
@@ -189,8 +194,11 @@ public class MarketService {
         try {
             PluginSettings settings = PluginSettings.load(plugin);
             if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
-                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
+                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
+                int m = Math.min(Math.max(1, amount), cap);
+                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
+                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
                 newTarget = (int) Math.round(ema);
                 if (newTarget == oldTarget && newPhysical != oldTarget) {
                     newTarget += (newPhysical > oldTarget) ? 1 : -1;
@@ -233,8 +241,11 @@ public class MarketService {
         try {
             PluginSettings settings = PluginSettings.load(plugin);
             if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
-                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
+                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
+                int m = Math.min(Math.max(1, amount), cap);
+                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
+                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
                 newTarget = (int) Math.round(ema);
                 if (newTarget == oldTarget && newPhysical != oldTarget) {
                     newTarget += (newPhysical > oldTarget) ? 1 : -1;
@@ -266,4 +277,11 @@ public class MarketService {
 
     public record TradeQuote(double totalPrice, int postInventory, TradeType type) {}
     public record IpoState(ItemMarketRecord record, boolean createdNow) {}
+
+    private static double clamp01(double v) {
+        if (Double.isNaN(v)) return 0.0;
+        if (v < 0.0) return 0.0;
+        if (v > 1.0) return 1.0;
+        return v;
+    }
 }

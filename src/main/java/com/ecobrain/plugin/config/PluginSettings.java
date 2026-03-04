@@ -105,7 +105,8 @@ public class PluginSettings {
             ),
             new AdaptiveTarget(
                 c.getBoolean("ai.adaptive-target.enabled", true),
-                c.getDouble("ai.adaptive-target.smoothing-factor", 0.20D)
+                c.getDouble("ai.adaptive-target.smoothing-factor", 0.20D),
+                c.getInt("ai.adaptive-target.quantity-cap", 64)
             )
         );
 
@@ -143,7 +144,7 @@ public class PluginSettings {
                      Tiers tiers,
                      AdaptiveTarget adaptiveTarget) {}
 
-    public record AdaptiveTarget(boolean enabled, double smoothingFactor) {}
+    public record AdaptiveTarget(boolean enabled, double smoothingFactor, int quantityCap) {}
 
     public record Tier(double priceThreshold, int inventoryThreshold, TierTuning tuning) {}
 
