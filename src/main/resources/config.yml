@@ -20,10 +20,6 @@ economy:
     # 只有在上面设为 false 时才生效的备用起步价。不推荐依赖这个。
     base-price: 100
 
-    # 新物品初次录入时的初始目标库存。
-    # 因为 2.0 系统会自动根据物品价值分层，这个值现在只作冷启动锚点用。
-    target-inventory: 64
-
     # 价格弹性 k。数值越大，库存变动时价格跳得越狠。
     # 太大容易抖动，太小像死水。推荐 0.6 ~ 1.5。
     k-factor: 1.0
@@ -65,8 +61,9 @@ ai:
   adaptive-target:
     enabled: true
     # 平滑系数 (0.01 ~ 1.0)。值越大，目标库存向真实物理库存靠拢的速度越快。
-    # 0.05 意味着每个 AI 周期（如15分钟）会向真实库存靠拢 5%。
-    smoothing-factor: 0.05
+    # 0.20 意味着【每一次玩家买卖交易发生时】，目标库存就会向真实库存靠拢 20%。
+    # 实时更新的设计让玩家无法通过“短时间内狂刷”来卡 AI 判定的延迟 BUG。
+    smoothing-factor: 0.20
 
   # ==========================================================
   # 物品分层路由（重中之重）
@@ -77,8 +74,8 @@ ai:
       # 高价值物品（如 Boss 掉落物）的判断门槛。交给 ecobrain_high_value.onnx 处理。
       price-threshold: 10000.0  
       # 对齐离线模拟器：高价值默认 target_inventory≈32，且自适应 target 会在 32 附近波动
-      # 因此 inventory-threshold 至少应覆盖到 32，并留一定缓冲，避免冷启动阶段错误路由到 mid。
-      inventory-threshold: 64
+      # 因此 inventory-threshold 至少应覆盖到 16，并留一定缓冲，避免冷启动阶段错误路由到 mid。
+      inventory-threshold: 16
       # 与离线训练保持一致：按 tier 限制 k 的动作幅度与上下限（防止“靠 k 走捷径”）
       tuning:
         k-delta: 0.30

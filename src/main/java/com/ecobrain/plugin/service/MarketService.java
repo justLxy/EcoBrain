@@ -53,9 +53,8 @@ public class MarketService {
                 return new IpoState(existing.get(), false);
             }
             // 自适应时，为了安全，将初始目标库存卡在物理库存的一个固定边界内。
-            // 比如 64 或者当前真实卖出量的 2 倍，取其大者，防止一些奇怪的超大卖单直接把 target 拉满
-            int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
-            int dynamicTarget = Math.max(economySettings.ipoTargetInventory(), firstSellQuantity * 2);
+            // 比如 16 或者当前真实卖出量的 2 倍，取其大者，防止一些奇怪的超大卖单直接把 target 拉满
+            int dynamicTarget = Math.max(16, firstSellQuantity * 2);
 
             double initialBasePrice = economySettings.zeroTrustIpo() ? 100.0D : economySettings.ipoBasePrice();
             
@@ -134,7 +133,34 @@ public class MarketService {
      * 预留成功后的买入结算：只更新虚拟库存池 + 记录成交，不再扣 physical_stock。
      */
     public void settleBuyAfterReservation(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
-        repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
+        // 实时触发自适应目标库存（注意：预留模式下，真实库存已经在外层扣除，这里只需要基于新的状态更新 target）
+        int newPhysical = record.getPhysicalStock() - amount;
+        int oldTarget = record.getTargetInventory();
+        int newTarget = oldTarget;
+        try {
+            PluginSettings settings = PluginSettings.load(plugin);
+            if (settings.ai().adaptiveTarget().enabled()) {
+                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
+                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                newTarget = (int) Math.round(ema);
+                if (newTarget == oldTarget && newPhysical != oldTarget) {
+                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
+                }
+                newTarget = Math.max(1, newTarget);
+                if (newTarget != oldTarget) {
+                    repository.updateTargetInventoryWithProportionalCurrentScaling(
+                        itemHash, oldTarget, quote.postInventory(), newTarget
+                    );
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to calculate real-time adaptive target for buy(reserve): " + e.getMessage());
+        }
+
+        if (newTarget == oldTarget) {
+            repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
+        }
+        
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
@@ -156,7 +182,38 @@ public class MarketService {
      */
     public void settleSell(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
         int newPhysical = ipoCreatedNow ? record.getPhysicalStock() : record.getPhysicalStock() + amount;
-        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
+        
+        // 实时触发自适应目标库存
+        int oldTarget = record.getTargetInventory();
+        int newTarget = oldTarget;
+        try {
+            PluginSettings settings = PluginSettings.load(plugin);
+            if (settings.ai().adaptiveTarget().enabled()) {
+                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
+                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                newTarget = (int) Math.round(ema);
+                if (newTarget == oldTarget && newPhysical != oldTarget) {
+                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
+                }
+                newTarget = Math.max(1, newTarget);
+                if (newTarget != oldTarget) {
+                    repository.updateTargetInventoryWithProportionalCurrentScaling(
+                        itemHash, oldTarget, quote.postInventory(), newTarget
+                    );
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to calculate real-time adaptive target for sell: " + e.getMessage());
+        }
+        
+        // 如果 target 被实时缩放了，就不再用旧的 postInventory 覆盖
+        if (newTarget == oldTarget) {
+            repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
+        } else {
+            // 只更新真实库存（虚拟库存已经在上面的 updateTargetInventoryWithProportionalCurrentScaling 里按比例更新了）
+            repository.updatePhysicalStockOnly(itemHash, newPhysical);
+        }
+        
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
@@ -169,7 +226,37 @@ public class MarketService {
      */
     public void settleBuy(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
         int newPhysical = record.getPhysicalStock() - amount;
-        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
+        
+        // 实时触发自适应目标库存
+        int oldTarget = record.getTargetInventory();
+        int newTarget = oldTarget;
+        try {
+            PluginSettings settings = PluginSettings.load(plugin);
+            if (settings.ai().adaptiveTarget().enabled()) {
+                double smoothing = settings.ai().adaptiveTarget().smoothingFactor();
+                double ema = oldTarget + (newPhysical - oldTarget) * smoothing;
+                newTarget = (int) Math.round(ema);
+                if (newTarget == oldTarget && newPhysical != oldTarget) {
+                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
+                }
+                newTarget = Math.max(1, newTarget);
+                if (newTarget != oldTarget) {
+                    repository.updateTargetInventoryWithProportionalCurrentScaling(
+                        itemHash, oldTarget, quote.postInventory(), newTarget
+                    );
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to calculate real-time adaptive target for buy: " + e.getMessage());
+        }
+
+        // 如果 target 被实时缩放了，就不再用旧的 postInventory 覆盖
+        if (newTarget == oldTarget) {
+            repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
+        } else {
+            repository.updatePhysicalStockOnly(itemHash, newPhysical);
+        }
+        
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {

@@ -50,7 +50,6 @@ public class PluginSettings {
 
         Economy economy = new Economy(
             c.getDouble("economy.ipo.base-price", 100.0D),
-            c.getInt("economy.ipo.target-inventory", 50),
             c.getDouble("economy.ipo.k-factor", 1.0D),
             c.getBoolean("economy.ipo.zero-trust", true)
         );
@@ -77,7 +76,7 @@ public class PluginSettings {
             new Tiers(
                 new Tier(
                     c.getDouble("ai.tiers.high.price-threshold", 50000.0D),
-                    c.getInt("ai.tiers.high.inventory-threshold", 10),
+                    c.getInt("ai.tiers.high.inventory-threshold", 16),
                     new TierTuning(
                         c.getDouble("ai.tiers.high.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
                         c.getDouble("ai.tiers.high.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
@@ -106,7 +105,7 @@ public class PluginSettings {
             ),
             new AdaptiveTarget(
                 c.getBoolean("ai.adaptive-target.enabled", true),
-                c.getDouble("ai.adaptive-target.smoothing-factor", 0.05D)
+                c.getDouble("ai.adaptive-target.smoothing-factor", 0.20D)
             )
         );
 
@@ -133,7 +132,7 @@ public class PluginSettings {
         return material == null ? fallback : material;
     }
 
-    public record Economy(double ipoBasePrice, int ipoTargetInventory, double ipoKFactor, boolean zeroTrustIpo) {}
+    public record Economy(double ipoBasePrice, double ipoKFactor, boolean zeroTrustIpo) {}
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
     public record AI(boolean debugLog, int scheduleMinutes,

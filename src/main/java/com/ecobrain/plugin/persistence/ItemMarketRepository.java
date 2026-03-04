@@ -91,6 +91,21 @@ public class ItemMarketRepository {
         }
     }
 
+    /**
+     * 仅更新真实库存（用于在 updateTargetInventoryWithProportionalCurrentScaling 后同步物理库存）
+     */
+    public void updatePhysicalStockOnly(String itemHash, int newPhysicalStock) {
+        String sql = "UPDATE ecobrain_items SET physical_stock = ? WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, Math.max(0, newPhysicalStock));
+            statement.setString(2, itemHash);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to update physical stock", e);
+        }
+    }
+
     public void updateStocks(String itemHash, int newVirtualInventory, int newPhysicalStock) {
         String sql = "UPDATE ecobrain_items SET current_inventory = ?, physical_stock = ? WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection();
