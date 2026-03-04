@@ -34,8 +34,6 @@ from .config import (
     REWARD_TRADE_QTY_WEIGHT_MID,
     REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH,
     REWARD_INFLATION_RATE_WEIGHT,
-    REWARD_INFLATION_RATIO_WEIGHT_LOW,
-    REWARD_INFLATION_RATIO_WEIGHT_MID,
     REWARD_INVENTORY_IMBALANCE_WEIGHT,
     REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW,
     REWARD_SCALE,
@@ -87,9 +85,9 @@ class EcoBrainEnv(gym.Env):
 
         is_ipo = bool(float(self.np_random.random()) < float(IPO_RESET_PROB))
         if is_ipo:
-            base_price = 0.01
+            base_price = 100.0
         else:
-            base_price_spec = tier_cfg.get("initial_base_price", 0.01)
+            base_price_spec = tier_cfg.get("initial_base_price", 100.0)
             base_price = float(sample_from_spec(base_price_spec, rng=self.np_random))
             base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(base_price)))
             
@@ -256,7 +254,7 @@ class EcoBrainEnv(gym.Env):
             last_feat = float(np.log(max(1e-9, float(current_price))))
             last_feat = float(np.clip(last_feat, -20.0, 20.0))
         else:
-            last_feat = 1.0 if self.amm.base_price <= 0.011 else 0.0
+            last_feat = 1.0 if self.amm.base_price <= 100.01 else 0.0
 
         return np.array(
             [
@@ -446,8 +444,6 @@ class EcoBrainEnv(gym.Env):
         cycle_net_emission = float(self.recent_sell_volume - self.recent_buy_volume)
         dynamic_aov = float(self._compute_dynamic_aov())
         inflation_rate = cycle_net_emission / max(1e-9, dynamic_aov)
-        # Price-invariant proxy (0..1): fraction of total traded value that is net emission.
-        inflation_ratio = max(0.0, float(cycle_net_emission)) / max(1e-9, float(trade_value))
 
         inventory_imbalance = abs(self.amm.current_inventory - self.amm.target_inventory) / max(1, self.amm.target_inventory)
 
@@ -466,11 +462,6 @@ class EcoBrainEnv(gym.Env):
             trade_weight = REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH
 
         inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_rate))
-        if self.value_type == "low":
-            # Prevent "cheating" by raising prices to increase AOV (which would reduce inflation_rate).
-            inflation_penalty = REWARD_INFLATION_RATIO_WEIGHT_LOW * float(inflation_ratio)
-        elif self.value_type == "mid":
-            inflation_penalty = REWARD_INFLATION_RATIO_WEIGHT_MID * float(inflation_ratio)
 
         inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT
         if self.value_type == "low":
@@ -489,7 +480,7 @@ class EcoBrainEnv(gym.Env):
             pass
         
         # Specific shaping to help it learn the difference between garbage and gold
-        price = float(self.amm.get_current_price())
+        price = float(self.amm.base_price)
         if self.value_type == "high":
             # High-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
             hard_min = float(tier_cfg["price_min"])
@@ -608,7 +599,6 @@ class EcoBrainEnv(gym.Env):
             "trade_value": float(trade_value),
             "trade_qty": float(trade_qty),
             "inflation_rate": float(inflation_rate),
-            "inflation_ratio": float(inflation_ratio),
             "inventory_imbalance": float(inventory_imbalance),
         }
 

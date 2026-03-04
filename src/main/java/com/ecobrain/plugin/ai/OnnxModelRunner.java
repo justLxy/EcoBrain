@@ -98,10 +98,10 @@ public class OnnxModelRunner {
             // Output should be a float array of shape [1, 2] -> action
             float[][] output = (float[][]) result.get(0).getValue();
             
-            // Our ONNX exports the actor's mean actions (pre-squash). SB3 PPO uses tanh-squash
-            // for continuous actions, so we apply tanh here to recover [-1, 1].
-            double actionBaseMultRaw = Math.tanh((double) output[0][0]);
-            double actionKDeltaRaw = Math.tanh((double) output[0][1]);
+            // Our ONNX exports the actor's mean actions (pre-squash). SB3 PPO uses hard clipping in Python training
+            // for continuous actions, so we apply max/min clip here to recover [-1, 1] without distortion.
+            double actionBaseMultRaw = Math.max(-1.0, Math.min(1.0, (double) output[0][0]));
+            double actionKDeltaRaw = Math.max(-1.0, Math.min(1.0, (double) output[0][1]));
 
             // Action 0: mapped based on training config.py (1.00 = 100%)
             double basePriceMultiplier = 1.0 + (actionBaseMultRaw * 1.00);

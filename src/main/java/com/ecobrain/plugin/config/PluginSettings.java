@@ -49,7 +49,7 @@ public class PluginSettings {
         FileConfiguration c = plugin.getConfig();
 
         Economy economy = new Economy(
-            c.getDouble("economy.ipo.base-price", 0.01D),
+            c.getDouble("economy.ipo.base-price", 100.0D),
             c.getInt("economy.ipo.target-inventory", 50),
             c.getDouble("economy.ipo.k-factor", 1.0D),
             c.getBoolean("economy.ipo.zero-trust", true)

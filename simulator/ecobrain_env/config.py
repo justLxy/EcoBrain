@@ -15,7 +15,7 @@ ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
 # 2.0 初版曾引入“每周期涨跌停”（PER_CYCLE_MAX_CHANGE_PERCENT）作为二次拦截；
 # 当前版本按线上要求移除该二次夹紧，只保留动作映射上限 ACTION_BASE_PRICE_MAX_PERCENT。
 MAX_BASE_PRICE = 1_000_000.0          # 对齐 ai.tuning.max-base-price
-MIN_BASE_PRICE = 0.01                # 对齐 economy.ipo.zero-trust 初始锚
+MIN_BASE_PRICE = 0.01                # AI 可干预的全局最低底价（允许砸穿 IPO）
 
 K_MIN = 0.2                          # 对齐 ai.tuning.k-min
 K_MAX = 10.0                         # 对齐 ai.tuning.k-max
@@ -31,9 +31,9 @@ IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trus
 # ==========================================
 # Episode 初始化：IPO vs Mature Item 混合
 # ==========================================
-# 真实服务器里只有“新物品”才会走 0.01 的 zero-trust IPO；
+# 真实服务器里只有“新物品”才会走 100.0 的 zero-trust IPO；
 # 大多数存量物品处于 Mature 状态（base_price 已经被市场发现）。
-# 训练时每个 episode 相当于抽样一种“物品状态”，避免总是从 0.01 开局导致学不到区间定价。
+# 训练时每个 episode 相当于抽样一种“物品状态”，避免总是从 100.0 开局导致学不到区间定价。
 IPO_RESET_PROB = 0.05  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
 
 # ==========================================
@@ -78,14 +78,7 @@ REWARD_TRADE_QTY_WEIGHT_MID = 0.05
 # For high-value items, keep a money-based signal but compress it to avoid runaway
 # incentives at extreme prices.
 REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH = 5.0
-REWARD_INFLATION_RATE_WEIGHT = 25.0   # 惩罚净印钞率（>0 时）
-# For low-value items, use a price-invariant inflation proxy:
-# net emission ratio = max(0, sell_value - buy_value) / (sell_value + buy_value).
-# Low-tier 服情常见“供大于求 + 交易稀疏”，inflation_ratio 往往呈现 0/1 两极（只卖不买时=1）。
-# 该项权重过高会导致 reward 尖峰过强、value_loss 暴涨，策略被迫追逐“减少尖峰”而忽视价格带学习。
-# 轻微下调让 band shaping 成为更稳定的主导信号。
-REWARD_INFLATION_RATIO_WEIGHT_LOW = 3000.0
-REWARD_INFLATION_RATIO_WEIGHT_MID = 2000.0
+REWARD_INFLATION_RATE_WEIGHT = 2500.0   # 惩罚净印钞率（>0 时）
 REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
 # Low-value items often have strong exogenous sell pressure in the simulator.
 # Inventory imbalance can become largely uncontrollable (players decide to sell/buy mostly independent of price),
@@ -117,15 +110,15 @@ TIERS = {
         "action_k_max_delta": 0.30,  # 每个 step 最大 k 微调幅度（建议 < 1.0，避免靠 k 把价格打穿/打飞）
         "k_min": 0.2,
         "k_max": 6.0,
-        # 目标：允许短期掉到 10000，但长期希望回到 15000~1e8 的奖励带
-        "price_min": 10000.0,
+        # 目标：底线物理放开至 0.01，但长期希望回到 15000~1e8 的价值带
+        "price_min": 0.01,
         "price_max": 100_000_000.0,
-        "penalty_out_of_range": 5000.0,     # 越界惩罚（重罚）
-        # 奖励带：15000~1e8 奖励；10000~15000 允许但会持续轻惩罚以“拉回去”
+        "penalty_out_of_range": 2000.0,     # 越界惩罚（让步于通胀惩罚）
+        # 奖励带：15000~1e8 奖励；允许跌破，轻微惩罚
         "reward_band_min": 15000.0,
         "reward_band_max": 100_000_000.0,
         "reward_in_band": 3000.0,
-        "penalty_out_of_band": 3000.0,
+        "penalty_out_of_band": 1000.0,
         "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
     },
     
@@ -139,15 +132,15 @@ TIERS = {
         "action_k_max_delta": 0.20,
         "k_min": 0.2,
         "k_max": 4.0,
-        # 硬约束范围：1000~10000（越界重罚）
-        "price_min": 1000.0,
+        # 硬约束范围彻底打开到底，下限为 0.01（越界轻微惩罚，兼容砸穿 IPO）
+        "price_min": 0.01,
         "price_max": 10000.0,
-        "penalty_out_of_range": 12000.0,     # 低于/高于硬区间惩罚（重罚，抑制爆价尾部）
-        # 奖励带：1500~9000 奖励；1000~1500 或 9000~10000 轻罚（形成“断档缓冲”）
-        "reward_band_min": 1500.0,
+        "penalty_out_of_range": 2000.0,     # 极大削弱越界惩罚（让步于通胀惩罚）
+        # 奖励带：维持在 500~9000 奖励。带外极轻罚，确保 AI 面对通胀敢于一路砸盘
+        "reward_band_min": 500.0,
         "reward_band_max": 9000.0,
         "reward_in_band": 3000.0,
-        "penalty_out_of_band": 3000.0,
+        "penalty_out_of_band": 800.0,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
@@ -160,19 +153,17 @@ TIERS = {
         "action_k_max_delta": 0.10,
         "k_min": 0.2,
         "k_max": 3.0,
-        # 目标：低价值物品长期保持在 1-1000
-        "price_min": 1.0,
+        # 目标：低价值物品底层完全放开至 0.01，长期保持在 1000 以下
+        "price_min": 0.01,
         "price_max": 1000.0,
-        # 奖惩带：10-500 之间奖励；低于 10 或高于 500 惩罚
+        # 奖惩带：10-500 之间奖励；超出该带则面临轻微惩罚
         "reward_band_min": 10.0,
         "reward_band_max": 500.0,
-        # 低交易服：大量 step 可能 trade_qty=0，因此需要更强的“在带内奖励”作为主要学习信号，
-        # 否则策略容易在带外形成局部最优（例如长期停在 500 上方）。
         "reward_in_band": 6000.0,
-        # 加强带外惩罚，促使价格更快拉回 band（尤其是 >500 的常态漂移）。
-        "penalty_out_of_band": 9000.0,
-        # 软约束：若低于 1 或高于 1000 额外惩罚（避免压到 0.01 或冲破上限）
-        "penalty_out_of_range": 22000.0,
+        # 核心改动：极大削弱带外惩罚，让 AI 面对通胀时敢于无视该惩罚一路砸盘
+        "penalty_out_of_band": 500.0,
+        # 软约束：极大削弱硬区间越界惩罚（允许 AI 为了遏制通胀砸穿所有底线）
+        "penalty_out_of_range": 1500.0,
     }
 }
 

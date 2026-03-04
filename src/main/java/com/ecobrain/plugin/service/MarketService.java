@@ -57,7 +57,7 @@ public class MarketService {
             int virtualInitialInventory = Math.max(1, economySettings.ipoTargetInventory());
             int dynamicTarget = Math.max(economySettings.ipoTargetInventory(), firstSellQuantity * 2);
 
-            double initialBasePrice = economySettings.zeroTrustIpo() ? 0.01D : economySettings.ipoBasePrice();
+            double initialBasePrice = economySettings.zeroTrustIpo() ? 100.0D : economySettings.ipoBasePrice();
             
             // 修复：IPO 时，virtualInitialInventory 应该等于 dynamicTarget，否则会导致开局饱和度异常
             // 比如卖 1000 个，dynamicTarget=2000，如果 virtualInitialInventory 还是 64，开局价格就会暴涨

@@ -183,15 +183,11 @@ public class AIScheduler {
             };
 
             // 3. “活跃窗口”判定：
-            // 旧逻辑：只要本周期窗口内没有交易，就完全不调用模型 => 很多物品会永久卡在 0.01。
-            // 新逻辑：
-            // - 用更长的活跃窗口（至少 AOV 窗口）判断是否有交易活动
-            // - 对 IPO 锚点价(≈0.01) 的冷启动物品，即使暂时无交易也允许 AI 介入尝试脱离 0.01
+            // 只有真实存在 activityVolume 时才允许 AI 介入。没有真实交易活动，废品永远趴在 100.0。
             long activityWindowMs = Math.max(windowMs, aovWindowMs);
             long activitySince = now - activityWindowMs;
             double activityVolume = repository.queryItemVolumeSince(item.getItemHash(), activitySince);
             boolean hasActivityTrade = activityVolume > 0.0D;
-            boolean isIpoAnchor = item.getBasePrice() <= 0.011D;
 
             // 4. 为【当前周期】做决策 At
             double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
@@ -203,7 +199,7 @@ public class AIScheduler {
             } else {
                 valueType = "low";
             }
-            boolean shouldRunAi = hasActivityTrade || isIpoAnchor;
+            boolean shouldRunAi = hasActivityTrade;
             if (shouldRunAi) {
                 PluginSettings.TierTuning tuning = tierTuningFor(valueType);
                 action = onnxModelRunner.predictAction(obs, valueType, tuning.kDelta());
@@ -211,7 +207,7 @@ public class AIScheduler {
 
             String tuningReason = "AI_ACTION";
             if (!hasActivityTrade) {
-                tuningReason = isIpoAnchor ? "IPO_COLD_START" : "NO_ACTIVITY_TRADE";
+                tuningReason = "NO_ACTIVITY_TRADE";
             }
 
             // 5. 应用最终动作
