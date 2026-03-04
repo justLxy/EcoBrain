@@ -324,7 +324,7 @@ logPrice = clip( log(max(eps, P_current)), -20, 20 )
 
 ### 3.3 动作空间 (Action Space) 与推理
 模型输出的是一个连续张量（在 -1.0 到 1.0 之间），然后我们会将其映射到实际的调控幅度：
-*   **Base Price Multiplier (`[-100% ~ +100%]`)**：AI 直接决定基准价上涨或下跌的百分比。最新版本默认全权放权给 AI（单次最大翻倍或跌底，即 100% 变幅），给予 AI 极大的调控权力来应对如老玩家疯狂倾销等极端市场变化。**注意：你可以在 `simulator/ecobrain_env/config.py` 中自定义此上限（`ACTION_BASE_PRICE_MAX_PERCENT`）。最终在 Java 端还会受到 `config.yml` 中 `per-cycle-max-change-percent` 的二次拦截**。
+*   **Base Price Multiplier (`[-100% ~ +100%]`)**：AI 直接决定基准价上涨或下跌的百分比。最新版本默认全权放权给 AI（单次最大翻倍或跌底，即 100% 变幅），给予 AI 极大的调控权力来应对如老玩家疯狂倾销等极端市场变化。你可以在 `simulator/ecobrain_env/config.py` 中自定义此上限（`ACTION_BASE_PRICE_MAX_PERCENT`）。
 *   **K-Factor Delta (`[-1.0 ~ +1.0]`)**：AI 微调 AMM 曲线的陡峭程度。K 系数非常敏感，直接影响滑点深度。配合百分比的放宽，单次最大微调幅度放宽至 1.0，让 AI 能够在面对紧急通缩或爆仓时，瞬间拉起或砸平价格曲线。**此上限同样可在 `config.py` 中修改（`ACTION_K_FACTOR_MAX_DELTA`）**。
 
 为了保证性能与跨平台兼容，Java 插件通过集成 `ONNX Runtime` 实现了**脱离 Python 环境的毫秒级端侧推理**。Java 插件会在运行时根据物品的当前价格和目标库存（服主可在 `config.yml` 中自定义阈值），**动态路由**请求到对应的 `high`, `mid` 或 `low` 的大脑进行推理。

@@ -14,7 +14,6 @@ from .config import (
     ACTION_K_FACTOR_MAX_DELTA,
     ADAPTIVE_TARGET_ENABLED,
     ADAPTIVE_TARGET_SMOOTHING_FACTOR,
-    PER_CYCLE_MAX_CHANGE_PERCENT,
     MAX_BASE_PRICE,
     MIN_BASE_PRICE,
     K_MIN,
@@ -342,9 +341,8 @@ class EcoBrainEnv(gym.Env):
         k_delta_cap = float(tier_cfg.get("action_k_max_delta", ACTION_K_FACTOR_MAX_DELTA))
         raw_k_delta = float(action[1]) * float(k_delta_cap)
 
-        # Align with plugin: clamp multiplier and kDelta per-cycle
-        limit = max(0.0, float(PER_CYCLE_MAX_CHANGE_PERCENT))
-        safe_mult = max(1.0 - limit, min(1.0 + limit, raw_mult))
+        # No per-cycle max-change clamp: keep only ACTION_BASE_PRICE_MAX_PERCENT mapping.
+        safe_mult = float(raw_mult)
         safe_k_delta = max(-float(k_delta_cap), min(float(k_delta_cap), raw_k_delta))
 
         self.amm.apply_ai_action(safe_mult, safe_k_delta)

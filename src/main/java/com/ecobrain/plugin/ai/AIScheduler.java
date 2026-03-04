@@ -359,10 +359,8 @@ public class AIScheduler {
         // Apply ONNX continuous action (pure RL): only hard clamps remain.
         double priceMult = action[0];
         double kDelta = action[1];
-        double limit = Math.max(0.0D, settings.perCycleMaxChangePercent());
-        // Clip the AI multiplier to the safe per-cycle max change percent
-        double safeMult = clamp(priceMult, 1.0D - limit, 1.0D + limit);
-        newBasePrice = oldBase * safeMult;
+        // No per-cycle max-change clamp: keep only the ONNX action mapping limit.
+        newBasePrice = oldBase * priceMult;
         newBasePrice = clamp(newBasePrice, 0.01D, tierBasePriceCap(valueType));
 
         // Limit K factor changes

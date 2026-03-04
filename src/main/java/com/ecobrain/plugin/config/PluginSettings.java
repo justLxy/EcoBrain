@@ -70,7 +70,6 @@ public class PluginSettings {
             c.getInt("ai.schedule-minutes", Math.max(1, c.getInt("ai.schedule-hours", 2) * 60)),
             c.getInt("ai.aov-window-hours", 24),
             c.getInt("ai.garbage-collection-days", 7),
-            c.getDouble("ai.tuning.per-cycle-max-change-percent", 0.05D),
             c.getDouble("ai.tuning.k-delta", 0.03D),
             c.getDouble("ai.tuning.k-min", 0.2D),
             c.getDouble("ai.tuning.k-max", 3.0D),
@@ -140,7 +139,7 @@ public class PluginSettings {
     public record AI(boolean debugLog, int scheduleMinutes,
                      int aovWindowHours,
                      int garbageCollectionDays,
-                     double perCycleMaxChangePercent, double kDelta, double kMin, double kMax,
+                     double kDelta, double kMin, double kMax,
                      double maxBasePrice,
                      Tiers tiers,
                      AdaptiveTarget adaptiveTarget) {}

@@ -11,10 +11,9 @@ EcoBrain 2.0 模拟器全局配置文件 (Simulator Configuration)
 ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (1.00 = 100%)
 ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
 
-# 插件端二次拦截（安全夹紧）
-# 过大的单步变动会导致训练早期发散（base_price 每步可翻倍），也会放大线上波动。
-# 推荐 0.20~0.40；这里取 0.30 作为更稳健的默认值。
-PER_CYCLE_MAX_CHANGE_PERCENT = 0.30   # 对齐 ai.tuning.per-cycle-max-change-percent
+# 说明：
+# 2.0 初版曾引入“每周期涨跌停”（PER_CYCLE_MAX_CHANGE_PERCENT）作为二次拦截；
+# 当前版本按线上要求移除该二次夹紧，只保留动作映射上限 ACTION_BASE_PRICE_MAX_PERCENT。
 MAX_BASE_PRICE = 1_000_000.0          # 对齐 ai.tuning.max-base-price
 MIN_BASE_PRICE = 0.01                # 对齐 economy.ipo.zero-trust 初始锚
 
