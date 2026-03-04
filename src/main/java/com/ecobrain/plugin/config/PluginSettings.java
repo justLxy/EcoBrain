@@ -51,7 +51,8 @@ public class PluginSettings {
         Economy economy = new Economy(
             c.getDouble("economy.ipo.base-price", 100.0D),
             c.getDouble("economy.ipo.k-factor", 1.0D),
-            c.getBoolean("economy.ipo.zero-trust", true)
+            c.getBoolean("economy.ipo.zero-trust", true),
+            c.getDouble("economy.treasury.initial-balance", 0.0D)
         );
 
         Trade trade = new Trade(
@@ -73,36 +74,6 @@ public class PluginSettings {
             c.getDouble("ai.tuning.k-min", 0.2D),
             c.getDouble("ai.tuning.k-max", 3.0D),
             c.getDouble("ai.tuning.max-base-price", 5000000.0D),
-            new Tiers(
-                new Tier(
-                    c.getDouble("ai.tiers.high.price-threshold", 50000.0D),
-                    c.getInt("ai.tiers.high.inventory-threshold", 16),
-                    new TierTuning(
-                        c.getDouble("ai.tiers.high.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
-                        c.getDouble("ai.tiers.high.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
-                        c.getDouble("ai.tiers.high.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
-                    )
-                ),
-                new Tier(
-                    c.getDouble("ai.tiers.mid.price-threshold", 1000.0D),
-                    c.getInt("ai.tiers.mid.inventory-threshold", 100),
-                    new TierTuning(
-                        c.getDouble("ai.tiers.mid.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
-                        c.getDouble("ai.tiers.mid.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
-                        c.getDouble("ai.tiers.mid.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
-                    )
-                ),
-                new Tier(
-                    // low is a fallback bucket; thresholds unused
-                    c.getDouble("ai.tiers.low.price-threshold", 0.0D),
-                    c.getInt("ai.tiers.low.inventory-threshold", Integer.MIN_VALUE),
-                    new TierTuning(
-                        c.getDouble("ai.tiers.low.tuning.k-delta", c.getDouble("ai.tuning.k-delta", 0.03D)),
-                        c.getDouble("ai.tiers.low.tuning.k-min", c.getDouble("ai.tuning.k-min", 0.2D)),
-                        c.getDouble("ai.tiers.low.tuning.k-max", c.getDouble("ai.tuning.k-max", 3.0D))
-                    )
-                )
-            ),
             new AdaptiveTarget(
                 c.getBoolean("ai.adaptive-target.enabled", true),
                 c.getDouble("ai.adaptive-target.smoothing-factor", 0.20D),
@@ -133,7 +104,7 @@ public class PluginSettings {
         return material == null ? fallback : material;
     }
 
-    public record Economy(double ipoBasePrice, double ipoKFactor, boolean zeroTrustIpo) {}
+    public record Economy(double ipoBasePrice, double ipoKFactor, boolean zeroTrustIpo, double treasuryInitialBalance) {}
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
     public record AI(boolean debugLog, int scheduleMinutes,
@@ -141,21 +112,9 @@ public class PluginSettings {
                      int garbageCollectionDays,
                      double kDelta, double kMin, double kMax,
                      double maxBasePrice,
-                     Tiers tiers,
                      AdaptiveTarget adaptiveTarget) {}
 
     public record AdaptiveTarget(boolean enabled, double smoothingFactor, int quantityCap) {}
-
-    public record Tier(double priceThreshold, int inventoryThreshold, TierTuning tuning) {}
-
-    public record TierTuning(double kDelta, double kMin, double kMax) {}
-
-    public record Tiers(Tier high, Tier mid, Tier low) {
-        public double highPriceThreshold() { return high.priceThreshold(); }
-        public int highInventoryThreshold() { return high.inventoryThreshold(); }
-        public double midPriceThreshold() { return mid.priceThreshold(); }
-        public int midInventoryThreshold() { return mid.inventoryThreshold(); }
-    }
 
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,

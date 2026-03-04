@@ -23,6 +23,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents;
+
 /**
  * 批量出售 GUI 反刷监听器：
  * - 禁止底栏放入/拖拽物品
@@ -35,15 +37,18 @@ public class BulkSellListener implements Listener {
     private final ItemSerializer serializer;
     private final MarketService marketService;
     private final EconomyService economyService;
+    private final com.ecobrain.plugin.persistence.ItemMarketRepository repository;
     private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> clickCooldown = new java.util.concurrent.ConcurrentHashMap<>();
 
     public BulkSellListener(Plugin plugin, BulkSellGUI bulkSellGUI, ItemSerializer serializer,
-                            MarketService marketService, EconomyService economyService) {
+                            MarketService marketService, EconomyService economyService,
+                            com.ecobrain.plugin.persistence.ItemMarketRepository repository) {
         this.plugin = plugin;
         this.bulkSellGUI = bulkSellGUI;
         this.serializer = serializer;
         this.marketService = marketService;
         this.economyService = economyService;
+        this.repository = repository;
     }
 
     @EventHandler
@@ -185,6 +190,23 @@ public class BulkSellListener implements Listener {
                 }
 
                 double finalTotal = total;
+                long payoutCents = moneyToCents(finalTotal);
+                boolean reservedMoney = repository.tryReserveTreasuryCents(payoutCents);
+                if (!reservedMoney) {
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        for (ItemStack item : snapshot) {
+                            java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
+                            if (!leftover.isEmpty()) {
+                                for (ItemStack drop : leftover.values()) {
+                                    player.getWorld().dropItem(player.getLocation(), drop);
+                                }
+                            }
+                        }
+                        player.sendMessage(ChatColor.RED + "系统金库不足，暂无法收购这些物品，已退回。");
+                        session.setSettled(false);
+                    });
+                    return;
+                }
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     if (!economyService.deposit(player, finalTotal)) {
                         for (ItemStack item : snapshot) {
@@ -195,6 +217,8 @@ public class BulkSellListener implements Listener {
                                 }
                             }
                         }
+                        long cents = payoutCents;
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> repository.releaseTreasuryCents(cents));
                         player.sendMessage(ChatColor.RED + "批量出售失败，物品已退回。");
                         session.setSettled(false);
                         return;

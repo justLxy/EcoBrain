@@ -13,38 +13,19 @@ import java.util.logging.Logger;
 public class OnnxModelRunner {
 
     private final OrtEnvironment env;
-    private OrtSession sessionLowValue;
-    private OrtSession sessionMidValue;
-    private OrtSession sessionHighValue;
+    private OrtSession session;
     private final Logger logger;
 
     public OnnxModelRunner(File modelDir, Logger logger) {
         this.logger = logger;
         this.env = OrtEnvironment.getEnvironment();
         try {
-            File lowModelFile = new File(modelDir, "ecobrain_low_value.onnx");
-            File midModelFile = new File(modelDir, "ecobrain_mid_value.onnx");
-            File highModelFile = new File(modelDir, "ecobrain_high_value.onnx");
-
-            if (lowModelFile.exists()) {
-                this.sessionLowValue = env.createSession(lowModelFile.getAbsolutePath(), new OrtSession.SessionOptions());
-                logger.info("Loaded Low-Value PPO model.");
+            File modelFile = new File(modelDir, "ecobrain_value.onnx");
+            if (modelFile.exists()) {
+                this.session = env.createSession(modelFile.getAbsolutePath(), new OrtSession.SessionOptions());
+                logger.info("Loaded EcoBrain PPO model (single-brain).");
             } else {
-                logger.warning("Low-Value PPO model not found at " + lowModelFile.getAbsolutePath());
-            }
-
-            if (midModelFile.exists()) {
-                this.sessionMidValue = env.createSession(midModelFile.getAbsolutePath(), new OrtSession.SessionOptions());
-                logger.info("Loaded Mid-Value PPO model.");
-            } else {
-                logger.warning("Mid-Value PPO model not found at " + midModelFile.getAbsolutePath());
-            }
-
-            if (highModelFile.exists()) {
-                this.sessionHighValue = env.createSession(highModelFile.getAbsolutePath(), new OrtSession.SessionOptions());
-                logger.info("Loaded High-Value PPO model.");
-            } else {
-                logger.warning("High-Value PPO model not found at " + highModelFile.getAbsolutePath());
+                logger.warning("EcoBrain PPO model not found at " + modelFile.getAbsolutePath());
             }
         } catch (OrtException e) {
             logger.severe("Failed to initialize ONNX Runtime: " + e.getMessage());
@@ -53,9 +34,7 @@ public class OnnxModelRunner {
 
     public void close() {
         try {
-            if (sessionLowValue != null) sessionLowValue.close();
-            if (sessionMidValue != null) sessionMidValue.close();
-            if (sessionHighValue != null) sessionHighValue.close();
+            if (session != null) session.close();
             if (env != null) env.close();
         } catch (OrtException e) {
             logger.severe("Failed to close ONNX Runtime: " + e.getMessage());
@@ -63,32 +42,18 @@ public class OnnxModelRunner {
     }
 
     /**
-     * @param obs [saturation, flow, inflation, elasticity, volatility, log_price]
-     * @param valueType "low", "mid", or "high"
-     * @param kDeltaMax maximum absolute k delta per cycle (tier-specific)
+     * @param obs observation vector (must match exported ONNX input dim)
+     * @param kDeltaMax maximum absolute k delta per cycle
      * @return double[] {basePriceMultiplier, kDelta}
      */
-    public double[] predictAction(float[] obs, String valueType, double kDeltaMax) {
-        OrtSession session;
-        switch (valueType) {
-            case "high":
-                session = sessionHighValue;
-                break;
-            case "mid":
-                session = sessionMidValue;
-                break;
-            default:
-                session = sessionLowValue;
-                break;
-        }
-
+    public double[] predictAction(float[] obs, double kDeltaMax) {
         if (session == null) {
             // Fallback to doing nothing if model isn't loaded
             return new double[]{0.0, 0.0};
         }
 
         try {
-            // PPO obs shape is typically [batch_size, obs_dim] -> [1, 6]
+            // PPO obs shape is typically [batch_size, obs_dim]
             long[] shape = new long[]{1, obs.length};
             OnnxTensor tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(obs), shape);
 

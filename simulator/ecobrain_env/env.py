@@ -10,6 +10,7 @@ from .ecosystem import Regime, build_players_from_archetypes, sample_regime
 from .ecosystem import sample_from_spec
 from .config import (
     TIERS,
+    VALUE_MIX,
     ACTION_BASE_PRICE_MAX_PERCENT,
     ACTION_K_FACTOR_MAX_DELTA,
     ADAPTIVE_TARGET_ENABLED,
@@ -23,6 +24,9 @@ from .config import (
     IPO_BASE_PRICE_FALLBACK,
     IPO_RESET_PROB,
     OBS_USE_LOG_PRICE,
+    AGE_CYCLES_IPO,
+    AGE_CYCLES_MATURE,
+    TREASURY_INITIAL_BALANCE,
     DAILY_LIMIT_PERCENT,
     CRITICAL_INVENTORY,
     BASE_SPREAD,
@@ -50,10 +54,12 @@ class EcoBrainEnv(gym.Env):
     """
     metadata = {'render_modes': ['human']}
 
-    def __init__(self, value_type="low", dataset_path=None):
+    def __init__(self, value_type="mixed", dataset_path=None):
         super().__init__()
         
-        self.value_type = value_type # "low", "mid", "high"
+        # Single-brain training uses a mixed regime. We keep value_type for internal sampling,
+        # but it is NOT part of observation.
+        self.value_type = value_type # "mixed" or fixed ("low"/"mid"/"high") for debugging
         self.dataset_path = dataset_path
         
         # Action space: 
@@ -61,9 +67,9 @@ class EcoBrainEnv(gym.Env):
         # [1]: K factor delta (-0.1 to +0.1, mapped from [-1, 1])
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         
-        # Observation space:
-        # [saturation, recent_flow, inflation, price_elasticity, volatility, is_ipo_active]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32)
+        # Observation space (plugin-aligned, single-brain, 16-dim):
+        # 0..5 legacy core features, 6..15 cold-start / signal / risk / treasury features
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(16,), dtype=np.float32)
         
         self.max_steps = 1000
         # If domain randomization is enabled, this can optionally keep the same sampled ecosystem across resets.
@@ -76,7 +82,19 @@ class EcoBrainEnv(gym.Env):
         # Initialize AMM
         # Episode init: mixture of IPO (zero-trust) and Mature items
         
-        tier_cfg = TIERS[self.value_type]
+        # === Sample a latent regime (low/mid/high) per episode ===
+        sampled_vt = self.value_type
+        if sampled_vt == "mixed":
+            mix = VALUE_MIX or {"low": 1.0}
+            keys = list(mix.keys())
+            probs = np.array([float(mix.get(k, 0.0)) for k in keys], dtype=np.float64)
+            probs = probs / max(1e-9, probs.sum())
+            sampled_vt = str(self.np_random.choice(keys, p=probs))
+        if sampled_vt not in TIERS:
+            sampled_vt = "low"
+        self._latent_value_type = sampled_vt
+
+        tier_cfg = TIERS[sampled_vt]
         target_inv = tier_cfg["target_inventory"]
         # 对齐插件端 IPO 建档：virtual current_inventory 初始化=target_inventory（饱和度=100%）
         # physical_stock 代表真实库存，使用 tier_cfg["current_inventory"] 作为冷启动物理盘
@@ -90,6 +108,14 @@ class EcoBrainEnv(gym.Env):
             base_price_spec = tier_cfg.get("initial_base_price", 100.0)
             base_price = float(sample_from_spec(base_price_spec, rng=self.np_random))
             base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(base_price)))
+
+        # Cold-start age signal (cycles since listing)
+        try:
+            age_spec = AGE_CYCLES_IPO if is_ipo else AGE_CYCLES_MATURE
+            self._age_cycles = int(sample_from_spec(age_spec, rng=self.np_random))
+        except Exception:
+            self._age_cycles = 0 if is_ipo else 100
+        self._age_cycles = max(0, int(self._age_cycles))
             
         self.amm = AMM(
             base_price=base_price, 
@@ -98,6 +124,7 @@ class EcoBrainEnv(gym.Env):
             k_factor=1.0,
             physical_stock=physical_init,
             is_ipo=is_ipo,
+            treasury_balance=float(TREASURY_INITIAL_BALANCE),
             base_spread=BASE_SPREAD,
             max_spread=MAX_SPREAD,
             dumping_trigger_multiplier=DUMPING_TAX_TRIGGER_MULTIPLIER,
@@ -122,9 +149,10 @@ class EcoBrainEnv(gym.Env):
                     self.players = self._static_players
                 else:
                     regime = sample_regime(MARKET_REGIMES, rng=self.np_random)
-                    archetypes = SIMULATED_PLAYER_ARCHETYPES.get(self.value_type, [])
+                    vt = getattr(self, "_latent_value_type", "low")
+                    archetypes = SIMULATED_PLAYER_ARCHETYPES.get(vt, [])
                     self.players = build_players_from_archetypes(
-                        value_type=self.value_type,
+                        value_type=vt,
                         archetypes=archetypes,
                         regime=regime,
                         rng=self.np_random,
@@ -134,15 +162,17 @@ class EcoBrainEnv(gym.Env):
             else:
                 # If randomization is disabled, still build from archetypes,
                 # but keep a fixed neutral regime (no regime mixing).
-                archetypes = SIMULATED_PLAYER_ARCHETYPES.get(self.value_type, [])
+                vt = getattr(self, "_latent_value_type", "low")
+                archetypes = SIMULATED_PLAYER_ARCHETYPES.get(vt, [])
                 self.players = build_players_from_archetypes(
-                    value_type=self.value_type,
+                    value_type=vt,
                     archetypes=archetypes,
                     regime=Regime(name="fixed"),
                     rng=self.np_random,
                 )
             
         self.step_count = 0
+        self._prev_saturation = float(current_inv) / max(1.0, float(target_inv))
 
         # === Plugin-aligned macro signals ===
         self.schedule_minutes = max(1, int(SCHEDULE_MINUTES))
@@ -193,12 +223,6 @@ class EcoBrainEnv(gym.Env):
                 for row in reader:
                     record_count += 1
                     qty = int(row['quantity'])
-                    # Simple heuristic to guess if row belongs to this value type based on total_price/qty
-                    if qty > 0:
-                        price_per_item = float(row['total_price']) / qty
-                        tier_cfg = TIERS[self.value_type]
-                        if not (tier_cfg["price_min"] <= price_per_item < tier_cfg["price_max"]):
-                           continue # Skip records that don't match this tier
                            
                     if row['trade_type'] == 'BUY':
                         total_buys += 1
@@ -228,16 +252,29 @@ class EcoBrainEnv(gym.Env):
             
     def _get_obs(self):
         """
-        Observation 对齐插件端 `AIScheduler`：
-        [saturation, recent_flow_per_minute, global_inflation_rate, elasticity(0), volatility(~0), is_ipo_flag]
+        Observation 对齐插件端 `AIScheduler`（单模型 16 维）：
+        [saturation, recent_flow_per_minute, global_inflation_rate, elasticity, volatility, log_price,
+         log_age, has_activity_trade, log_activity, price_change_pct, sat_delta,
+         log_base_price, k_factor, physical_ratio, emission_ratio, sell_share]
         """
         saturation = self.amm.current_inventory / max(1.0, float(self.amm.target_inventory))
+        sat_delta = float(saturation - float(self._prev_saturation))
+        sat_delta = float(np.clip(sat_delta, -2.0, 2.0))
+        self._prev_saturation = float(saturation)
+
         net_flow = float(self.recent_buys - self.recent_sells)
         recent_flow_per_minute = net_flow / float(self.schedule_minutes)
 
         cycle_net_emission = float(self.recent_sell_volume - self.recent_buy_volume)
         dynamic_aov = float(self._compute_dynamic_aov())
         global_inflation_rate = cycle_net_emission / max(1e-9, dynamic_aov)
+        cycle_volume = float(self.recent_sell_volume + self.recent_buy_volume)
+        emission_ratio = max(0.0, float(cycle_net_emission)) / max(1e-9, float(cycle_volume))
+        sell_money = max(0.0, (cycle_volume + cycle_net_emission) * 0.5)
+        sell_share = float(sell_money / max(1e-9, cycle_volume))
+        treasury_scaled = float(self.amm.treasury_balance) / max(1e-9, float(dynamic_aov))
+        log_treasury = float(np.log1p(max(0.0, treasury_scaled)))
+        log_treasury = float(np.clip(log_treasury, 0.0, 20.0))
 
         # 科学特征：对齐插件端“基于成交统计”的启发式
         current_price = float(self.amm.get_current_price())
@@ -250,11 +287,23 @@ class EcoBrainEnv(gym.Env):
         denom = max(1e-6, abs(price_change_pct) * 100.0)
         elasticity = recent_flow_per_minute / denom
         elasticity = float(np.clip(elasticity, -1.0e4, 1.0e4))
-        if bool(OBS_USE_LOG_PRICE):
-            last_feat = float(np.log(max(1e-9, float(current_price))))
-            last_feat = float(np.clip(last_feat, -20.0, 20.0))
-        else:
-            last_feat = 1.0 if self.amm.base_price <= 100.01 else 0.0
+        log_price = float(np.log(max(1e-9, float(current_price))))
+        log_price = float(np.clip(log_price, -20.0, 20.0))
+
+        log_age = float(np.log1p(max(0.0, float(self._age_cycles))))
+        log_age = float(np.clip(log_age, 0.0, 20.0))
+
+        # activity window proxy: use AOV window buckets as a stable approximation
+        activity_value = float(sum(v for v, _ in self._aov_window)) if self._aov_window else 0.0
+        has_activity = 1.0 if activity_value > 0.0 else 0.0
+        log_activity = float(np.log1p(max(0.0, activity_value / max(1.0, float(self.schedule_minutes)))))
+        log_activity = float(np.clip(log_activity, 0.0, 20.0))
+
+        log_base_price = float(np.log(max(1e-9, float(self.amm.base_price))))
+        log_base_price = float(np.clip(log_base_price, -20.0, 20.0))
+        k_factor = float(np.clip(float(self.amm.k_factor), float(K_MIN), float(K_MAX)))
+        physical_ratio = float(self.amm.physical_stock) / max(1.0, float(self.amm.target_inventory))
+        physical_ratio = float(np.clip(physical_ratio, 0.0, 1000.0))
 
         return np.array(
             [
@@ -263,7 +312,17 @@ class EcoBrainEnv(gym.Env):
                 global_inflation_rate,
                 elasticity,
                 volatility,
-                last_feat,
+                log_price,
+                log_age,
+                has_activity,
+                log_activity,
+                float(np.clip(price_change_pct, -10.0, 10.0)),
+                sat_delta,
+                log_base_price,
+                k_factor,
+                physical_ratio,
+                float(np.clip(emission_ratio, 0.0, 10.0)),
+                log_treasury,
             ],
             dtype=np.float32,
         )
@@ -364,8 +423,7 @@ class EcoBrainEnv(gym.Env):
         
         # 1. Apply AI action
         raw_mult = 1.0 + (float(action[0]) * float(ACTION_BASE_PRICE_MAX_PERCENT))
-        tier_cfg = TIERS[self.value_type]
-        k_delta_cap = float(tier_cfg.get("action_k_max_delta", ACTION_K_FACTOR_MAX_DELTA))
+        k_delta_cap = float(ACTION_K_FACTOR_MAX_DELTA)
         raw_k_delta = float(action[1]) * float(k_delta_cap)
 
         # No per-cycle max-change clamp: keep only ACTION_BASE_PRICE_MAX_PERCENT mapping.
@@ -373,16 +431,9 @@ class EcoBrainEnv(gym.Env):
         safe_k_delta = max(-float(k_delta_cap), min(float(k_delta_cap), raw_k_delta))
 
         self.amm.apply_ai_action(safe_mult, safe_k_delta)
-        # Hard bounds (plugin aligned)
-        # Tier-aware base_price cap to prevent runaway base prices that make band learning impossible.
-        # Use the tier's hard max as the cap where applicable (low<=1000, mid<=10000), while still
-        # respecting the global clamp (high uses global max).
-        tier_base_cap = float(tier_cfg.get("price_max", float(MAX_BASE_PRICE)))
-        tier_base_cap = float(min(float(MAX_BASE_PRICE), tier_base_cap))
-        self.amm.base_price = max(float(MIN_BASE_PRICE), min(float(tier_base_cap), float(self.amm.base_price)))
-        k_min = float(tier_cfg.get("k_min", K_MIN))
-        k_max = float(tier_cfg.get("k_max", K_MAX))
-        self.amm.k_factor = max(float(k_min), min(float(k_max), float(self.amm.k_factor)))
+        # Hard bounds (plugin aligned, single-brain): only global clamps remain.
+        self.amm.base_price = max(float(MIN_BASE_PRICE), min(float(MAX_BASE_PRICE), float(self.amm.base_price)))
+        self.amm.k_factor = max(float(K_MIN), min(float(K_MAX), float(self.amm.k_factor)))
 
         # Update circuit breaker flag for this cycle (affects AMM.execute_buy)
         self._check_and_update_daily_limit()
@@ -478,25 +529,28 @@ class EcoBrainEnv(gym.Env):
 
         inventory_imbalance = abs(self.amm.current_inventory - self.amm.target_inventory) / max(1, self.amm.target_inventory)
 
+        vt_key = getattr(self, "_latent_value_type", "low")
+        tier_cfg = TIERS.get(vt_key, TIERS.get("low"))
+
         # Core reward: use money-volume for mid/high, but quantity for low to avoid
         # inadvertently incentivizing high prices.
         trade_signal = trade_value
         trade_weight = REWARD_TRADE_VALUE_WEIGHT
-        if self.value_type == "low":
+        if vt_key == "low":
             trade_signal = trade_qty
             trade_weight = REWARD_TRADE_QTY_WEIGHT
-        elif self.value_type == "mid":
+        elif vt_key == "mid":
             trade_signal = trade_qty
             trade_weight = REWARD_TRADE_QTY_WEIGHT_MID
-        elif self.value_type == "high":
+        elif vt_key == "high":
             trade_signal = float(np.log1p(max(0.0, float(trade_value))))
             trade_weight = REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH
 
-        inflation_metric = inflation_ratio if self.value_type in ("low", "mid") else float(inflation_rate)
+        inflation_metric = inflation_ratio if vt_key in ("low", "mid") else float(inflation_rate)
         inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_metric))
 
         inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT
-        if self.value_type == "low":
+        if vt_key == "low":
             inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW
 
         reward = float(
@@ -516,7 +570,7 @@ class EcoBrainEnv(gym.Env):
         # The policy observes log(current_price) but does NOT observe base_price/k directly; shaping
         # on base_price makes the reward partially unobservable and often leads to boundary solutions.
         price = float(self.amm.get_current_price())
-        if self.value_type == "high":
+        if vt_key == "high":
             # High-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
             hard_min = float(tier_cfg["price_min"])
             hard_max = float(tier_cfg.get("price_max", float("inf")))
@@ -549,7 +603,7 @@ class EcoBrainEnv(gym.Env):
             if int(self.amm.physical_stock) <= 0:
                 reward -= float(tier_cfg.get("empty_stock_penalty", 0.0))
                 
-        elif self.value_type == "mid":
+        elif vt_key == "mid":
             # Mid-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
             hard_min = float(tier_cfg["price_min"])
             hard_max = float(tier_cfg["price_max"])
@@ -578,7 +632,7 @@ class EcoBrainEnv(gym.Env):
                     ratio = float(np.clip(ratio, 0.0, 1.0))
                     reward -= penalty * ratio
                 
-        elif self.value_type == "low":
+        elif vt_key == "low":
             # Low-value shaping:
             # - If out of hard range: apply out_of_range penalty only (avoid double-penalty with band)
             # - If within hard range but outside band: apply a smooth penalty proportional to distance

@@ -40,7 +40,6 @@ public class MarketViewGUI {
     private final ConcurrentHashMap<UUID, Session> sessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, FilterState> playerFilters = new ConcurrentHashMap<>();
     private volatile List<String> loreTemplate;
-    private volatile PluginSettings.Tiers tiers;
 
     public enum ItemCategory {
         ALL("全部物品", Material.NETHER_STAR),
@@ -122,13 +121,11 @@ public class MarketViewGUI {
      */
     public final void applySettings(PluginSettings.Gui gui, PluginSettings.AI ai) {
         List<String> configured = gui.marketItemLoreTemplate();
-        this.tiers = ai == null ? null : ai.tiers();
         if (configured == null || configured.isEmpty()) {
             this.loreTemplate = List.of(
                 "&7Hash: &f{hash_short}",
                 "&7实时价格: &e{price}",
                 "&7系统物理库存: &b{physical_stock}",
-                "&7品质: {tier}",
                 "&8(内部虚拟池: {virtual_inventory})",
                 "&a左键: 购买 1 个",
                 "&aShift+左键: 购买 1 组",
@@ -142,17 +139,8 @@ public class MarketViewGUI {
     }
 
     private String tierLabelFor(ItemMarketRecord item) {
-        PluginSettings.Tiers t = this.tiers;
-        if (t == null) {
-            return "&f普通";
-        }
-        if (item.getBasePrice() >= t.highPriceThreshold() || item.getTargetInventory() <= t.highInventoryThreshold()) {
-            return "&e传说";
-        }
-        if (item.getBasePrice() >= t.midPriceThreshold() || item.getTargetInventory() <= t.midInventoryThreshold()) {
-            return "&d稀有";
-        }
-        return "&f普通";
+        // EcoBrain 3.0 single-brain: no tier routing/labels.
+        return "&f-";
     }
 
     /**

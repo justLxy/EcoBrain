@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * 物品市场仓储层。
@@ -23,6 +25,119 @@ public class ItemMarketRepository {
 
     public ItemMarketRepository(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
+    }
+
+    public static long moneyToCents(double amount) {
+        if (!Double.isFinite(amount) || amount <= 0.0D) {
+            return 0L;
+        }
+        // Use decimal rounding to avoid binary float surprises.
+        BigDecimal bd = BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP);
+        return bd.movePointRight(2).longValueExact();
+    }
+
+    public static double centsToMoney(long cents) {
+        return ((double) cents) / 100.0D;
+    }
+
+    public long getTreasuryBalanceCents() {
+        String sql = "SELECT balance_cents FROM ecobrain_treasury WHERE id = 1";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            if (!rs.next()) {
+                return 0L;
+            }
+            return rs.getLong(1);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read treasury balance", e);
+        }
+    }
+
+    public void initializeTreasuryIfNeeded(long initialBalanceCents) {
+        long safeInitial = Math.max(0L, initialBalanceCents);
+        String metaSelect = "SELECT v FROM ecobrain_meta WHERE k='treasury_initialized' LIMIT 1";
+        String metaInsert = "INSERT INTO ecobrain_meta(k, v) VALUES('treasury_initialized', '1') ON CONFLICT(k) DO UPDATE SET v=excluded.v";
+        String setBalance = "UPDATE ecobrain_treasury SET balance_cents = ? WHERE id = 1";
+        try (Connection connection = databaseManager.getConnection()) {
+            boolean prevAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try (PreparedStatement sel = connection.prepareStatement(metaSelect);
+                 ResultSet rs = sel.executeQuery()) {
+                boolean already = rs.next() && "1".equals(rs.getString(1));
+                if (!already) {
+                    try (PreparedStatement upd = connection.prepareStatement(setBalance)) {
+                        upd.setLong(1, safeInitial);
+                        upd.executeUpdate();
+                    }
+                    try (PreparedStatement ins = connection.prepareStatement(metaInsert)) {
+                        ins.executeUpdate();
+                    }
+                }
+                connection.commit();
+            } catch (SQLException e) {
+                try { connection.rollback(); } catch (SQLException ignored) {}
+                throw e;
+            } finally {
+                try { connection.setAutoCommit(prevAutoCommit); } catch (SQLException ignored) {}
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to initialize treasury", e);
+        }
+    }
+
+    /**
+     * Atomically reserve (debit) treasury for a SELL payout.
+     * Returns true if enough funds existed and were reserved.
+     */
+    public boolean tryReserveTreasuryCents(long amountCents) {
+        long amt = Math.max(0L, amountCents);
+        if (amt <= 0L) {
+            return true;
+        }
+        String sql = """
+            UPDATE ecobrain_treasury
+            SET balance_cents = balance_cents - ?
+            WHERE id = 1 AND balance_cents >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, amt);
+            statement.setLong(2, amt);
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to reserve treasury", e);
+        }
+    }
+
+    public void releaseTreasuryCents(long amountCents) {
+        long amt = Math.max(0L, amountCents);
+        if (amt <= 0L) {
+            return;
+        }
+        String sql = "UPDATE ecobrain_treasury SET balance_cents = balance_cents + ? WHERE id = 1";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, amt);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to release treasury", e);
+        }
+    }
+
+    public void creditTreasuryCents(long amountCents) {
+        long amt = Math.max(0L, amountCents);
+        if (amt <= 0L) {
+            return;
+        }
+        String sql = "UPDATE ecobrain_treasury SET balance_cents = balance_cents + ? WHERE id = 1";
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, amt);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to credit treasury", e);
+        }
     }
 
     public Optional<ItemMarketRecord> findByHash(String itemHash) {

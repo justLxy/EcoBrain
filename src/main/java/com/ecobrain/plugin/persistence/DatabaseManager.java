@@ -3,6 +3,7 @@ package com.ecobrain.plugin.persistence;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -15,6 +16,8 @@ import java.sql.Statement;
 public class DatabaseManager {
     private final JavaPlugin plugin;
     private final String jdbcUrl;
+    private final File dbFile;
+    private static final int SCHEMA_VERSION = 3;
 
     public DatabaseManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -22,7 +25,8 @@ public class DatabaseManager {
         if (!dataFolder.exists() && !dataFolder.mkdirs()) {
             throw new IllegalStateException("Failed to create plugin data folder");
         }
-        this.jdbcUrl = "jdbc:sqlite:" + new File(dataFolder, "ecobrain.db").getAbsolutePath();
+        this.dbFile = new File(dataFolder, "ecobrain.db");
+        this.jdbcUrl = "jdbc:sqlite:" + dbFile.getAbsolutePath();
     }
 
     public Connection getConnection() throws SQLException {
@@ -33,6 +37,14 @@ public class DatabaseManager {
      * 初始化数据库表结构与关键索引。
      */
     public void initializeSchema() {
+        ensureSchemaVersion();
+
+        String createMetaSql = """
+            CREATE TABLE IF NOT EXISTS ecobrain_meta (
+                k TEXT PRIMARY KEY,
+                v TEXT NOT NULL
+            )
+            """;
         String createItemsSql = """
             CREATE TABLE IF NOT EXISTS ecobrain_items (
                 item_hash TEXT PRIMARY KEY,
@@ -43,6 +55,12 @@ public class DatabaseManager {
                 current_inventory INTEGER NOT NULL,
                 physical_stock INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL DEFAULT 0
+            )
+            """;
+        String createTreasurySql = """
+            CREATE TABLE IF NOT EXISTS ecobrain_treasury (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                balance_cents INTEGER NOT NULL
             )
             """;
         String createRiskSql = """
@@ -118,7 +136,9 @@ public class DatabaseManager {
         String indexSystemMoneyReclaimsSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_system_money_reclaims_uuid ON ecobrain_system_money_reclaims(player_uuid, created_at)";
 
         try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
+            statement.execute(createMetaSql);
             statement.execute(createItemsSql);
+            statement.execute(createTreasurySql);
             statement.execute(createRiskSql);
             statement.execute(createTradeStatSql);
             statement.execute(createPlayerTxSql);
@@ -134,9 +154,55 @@ public class DatabaseManager {
             statement.execute(indexAiTuningItemSql);
             statement.execute(indexRewardClaimsSql);
             statement.execute(indexSystemMoneyReclaimsSql);
+
+            // Write schema version and ensure treasury row exists
+            statement.executeUpdate("INSERT INTO ecobrain_meta(k, v) VALUES('schema_version', '" + SCHEMA_VERSION + "') ON CONFLICT(k) DO UPDATE SET v=excluded.v");
+            statement.executeUpdate("INSERT INTO ecobrain_treasury(id, balance_cents) VALUES(1, 0) ON CONFLICT(id) DO NOTHING");
         } catch (SQLException e) {
             plugin.getLogger().severe("Failed to initialize database schema: " + e.getMessage());
             throw new IllegalStateException("Failed to initialize schema", e);
+        }
+    }
+
+    /**
+     * EcoBrain 3.0 is not compatible with older schemas.
+     * If the existing db is not schema_version=3, we delete it and rebuild from scratch.
+     */
+    private void ensureSchemaVersion() {
+        if (!dbFile.exists()) {
+            return;
+        }
+        boolean ok = false;
+        try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
+            // If meta table doesn't exist, this will throw and we will reset.
+            try (ResultSet rs = statement.executeQuery("SELECT v FROM ecobrain_meta WHERE k='schema_version' LIMIT 1")) {
+                if (rs.next()) {
+                    String v = rs.getString(1);
+                    ok = String.valueOf(SCHEMA_VERSION).equals(v);
+                }
+            }
+        } catch (Exception ignored) {
+            ok = false;
+        }
+        if (ok) {
+            return;
+        }
+
+        plugin.getLogger().warning("[EcoBrain] Detected incompatible database schema. Resetting ecobrain.db for EcoBrain 3.0.");
+        try {
+            if (!dbFile.delete()) {
+                // On Windows / locked file scenarios delete may fail; try rename as a fallback.
+                File backup = new File(dbFile.getParentFile(), "ecobrain.db.incompatible.backup");
+                if (backup.exists()) {
+                    // best-effort cleanup
+                    //noinspection ResultOfMethodCallIgnored
+                    backup.delete();
+                }
+                //noinspection ResultOfMethodCallIgnored
+                dbFile.renameTo(backup);
+            }
+        } catch (SecurityException se) {
+            throw new IllegalStateException("Failed to reset incompatible database file", se);
         }
     }
 }

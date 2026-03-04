@@ -55,6 +55,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.databaseManager = new DatabaseManager(this);
         this.repository = new ItemMarketRepository(databaseManager);
         databaseManager.initializeSchema();
+        repository.initializeTreasuryIfNeeded(ItemMarketRepository.moneyToCents(settings.economy().treasuryInitialBalance()));
 
         this.economyService = new EconomyService(this);
         if (!economyService.setup()) {
@@ -90,7 +91,7 @@ public class EcoBrainPlugin extends JavaPlugin {
             getCommand("ecobrain").setTabCompleter(ecoBrainCommand);
         }
         Bukkit.getPluginManager().registerEvents(
-            new BulkSellListener(this, bulkSellGUI, itemSerializer, marketService, economyService), this);
+            new BulkSellListener(this, bulkSellGUI, itemSerializer, marketService, economyService, repository), this);
         Bukkit.getPluginManager().registerEvents(
             new MarketViewListener(this, marketViewGUI, bulkSellGUI, leaderboardGUI, rewardsGUI, repository, marketService, economyService, itemSerializer), this);
         Bukkit.getPluginManager().registerEvents(

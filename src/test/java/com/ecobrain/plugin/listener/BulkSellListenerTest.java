@@ -40,8 +40,9 @@ class BulkSellListenerTest {
         bulkSellGUI = new BulkSellGUI(gui);
         MarketService marketService = Mockito.mock(MarketService.class);
         EconomyService economyService = Mockito.mock(EconomyService.class);
+        com.ecobrain.plugin.persistence.ItemMarketRepository repository = Mockito.mock(com.ecobrain.plugin.persistence.ItemMarketRepository.class);
         ItemSerializer serializer = new ItemSerializer();
-        listener = new BulkSellListener(plugin, bulkSellGUI, serializer, marketService, economyService);
+        listener = new BulkSellListener(plugin, bulkSellGUI, serializer, marketService, economyService, repository);
     }
 
     @Test

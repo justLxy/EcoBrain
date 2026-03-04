@@ -1,5 +1,5 @@
 # ==========================================================
-# EcoBrain 2.0 主配置文件
+# EcoBrain 3.0 主配置文件
 # ==========================================================
 # 修改后执行 /ecobrain reload 热更新生效
 #
@@ -23,6 +23,13 @@ economy:
     # 价格弹性 k。数值越大，库存变动时价格跳得越狠。
     # 太大容易抖动，太小像死水。推荐 0.6 ~ 1.5。
     k-factor: 1.0
+
+  # 全局金库：系统不是无限发钱，而是收入=支出。
+  # - 玩家 BUY：钱进入金库
+  # - 玩家 SELL：从金库支出（不足则拒绝收购）
+  treasury:
+    # 冷启动金库余额（金币）。建议给一个能支撑早期回收的数字，例如 200000。
+    initial-balance: 200000
 
 trade:
   # 交易防连点冷却（毫秒）。1000 = 1秒。
@@ -65,45 +72,13 @@ ai:
     #   alpha_eff = 1 - (1 - alpha) ^ m
     # 其中 m = min(交易数量, quantity-cap)，仍只写库一次但对大单更灵敏。
     # 实时更新的设计让玩家无法通过“短时间内狂刷”来卡 AI 判定的延迟 BUG。
-    smoothing-factor: 0.20
+    smoothing-factor: 0.01
     # 数量感知 EMA 的上限（防止超大单把 target 一步拉爆）
-    quantity-cap: 64
+    quantity-cap: 10
 
-  # ==========================================================
-  # 物品分层路由（重中之重）
-  # AI 会根据物品的底价或目标库存，判断它是哪种级别的物品，然后交给对应的模型处理。
-  # ==========================================================
-  tiers:
-    high:
-      # 高价值物品（如 Boss 掉落物）的判断门槛。交给 ecobrain_high_value.onnx 处理。
-      price-threshold: 10000.0  
-      # 对齐离线模拟器：高价值默认 target_inventory≈32，且自适应 target 会在 32 附近波动
-      # 因此 inventory-threshold 至少应覆盖到 16，并留一定缓冲，避免冷启动阶段错误路由到 mid。
-      inventory-threshold: 16
-      # 与离线训练保持一致：按 tier 限制 k 的动作幅度与上下限（防止“靠 k 走捷径”）
-      tuning:
-        k-delta: 0.30
-        k-min: 0.2
-        k-max: 6.0
-    mid:
-      # 中等价值物品（如副本材料）的判断门槛。交给 ecobrain_mid_value.onnx 处理。
-      price-threshold: 1000.0   
-      inventory-threshold: 640  
-      tuning:
-        k-delta: 0.20
-        k-min: 0.2
-        k-max: 4.0
-    low:
-      # 低价值物品不需要阈值（默认兜底），这里只放 tuning 限制以对齐离线训练。
-      tuning:
-        k-delta: 0.10
-        k-min: 0.2
-        k-max: 3.0
-    # 都不满足的，就是泥土小麦之类的破烂，全丢给 ecobrain_low_value.onnx 处理。
-    
   tuning:
     # 价格天花板。如果到了这个价，AI 怎么调都不会再涨了。防刷钱最后的底线。
-    # 你希望 high-tier 也收敛在 10w 以内时，应同步收紧该值（并让模拟器 MAX_BASE_PRICE 对齐）。
+    # EcoBrain 3.0 单模型：全服统一上限（并让模拟器 MAX_BASE_PRICE 对齐）。
     max-base-price: 100000.0
 
     # 允许 AI 每次微调 k 系数的最大幅度。

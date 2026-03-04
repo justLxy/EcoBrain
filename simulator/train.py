@@ -16,7 +16,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, EvalCallback, StopTrainingOnNoModelImprovement
 from stable_baselines3.common.logger import configure as sb3_configure_logger
 from ecobrain_env import EcoBrainEnv
-from ecobrain_env.config import TIERS
+from ecobrain_env.config import TIERS, MIN_BASE_PRICE, MAX_BASE_PRICE
 
 def _select_device(device: str) -> str:
     device = (device or "auto").lower()
@@ -100,11 +100,19 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
         vecenv.training = False
         vecenv.norm_reward = False
 
-    tier = TIERS[value_type]
-    hard_min = float(tier["price_min"])
-    hard_max = float(tier.get("price_max", float("inf")))
-    band_min = float(tier.get("reward_band_min", hard_min))
-    band_max = float(tier.get("reward_band_max", hard_max))
+    if str(value_type).lower() == "mixed":
+        # Mixed-regime single-brain: no single tier band exists.
+        # Report the global hard bounds to keep the summary meaningful.
+        hard_min = float(MIN_BASE_PRICE)
+        hard_max = float(MAX_BASE_PRICE)
+        band_min = hard_min
+        band_max = hard_max
+    else:
+        tier = TIERS[value_type]
+        hard_min = float(tier["price_min"])
+        hard_max = float(tier.get("price_max", float("inf")))
+        band_min = float(tier.get("reward_band_min", hard_min))
+        band_max = float(tier.get("reward_band_max", hard_max))
 
     ep_returns = []
     ep_lens = []
@@ -237,7 +245,7 @@ class SaveModelAndVecNormalizeCallback(BaseCallback):
 
 
 def train_model(
-    value_type="low",
+    value_type="mixed",
     total_timesteps=100000,
     dataset_path=None,
     device: str = "auto",
@@ -310,7 +318,7 @@ def train_model(
         },
     )
 
-    model_name = f"ecobrain_ppo_{value_type}"
+    model_name = "ecobrain_ppo_value"
     model_path = f"{model_name}.zip"
     vecnorm_path = f"{model_name}_vecnormalize.pkl"
 
@@ -603,8 +611,8 @@ def export_to_onnx(model, filename):
     onnx_policy = PytorchToOnnxWrapper(pytorch_policy)
     onnx_policy.eval()
     
-    # Create dummy input with the right shape
-    dummy_input = torch.randn(1, 6) # [saturation, flow, inflation, elasticity, volatility, is_ipo]
+    # Create dummy input with the right shape (must match env observation dim)
+    dummy_input = torch.randn(1, 16)
     
     # Export to ONNX
     # We must move the model back to CPU before export because 
@@ -630,12 +638,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, help="Path to the real server CSV data for online fine-tuning", default=None)
     parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=100000)
     parser.add_argument("--device", type=str, default="auto", help="auto/cpu/cuda/mps")
-    parser.add_argument(
-        "--tiers",
-        type=str,
-        default="low,mid,high",
-        help="Comma-separated tiers to train: low,mid,high (e.g. 'low' or 'low,mid')",
-    )
     parser.add_argument("--n-envs", type=int, default=0, help="Number of parallel envs; 0 = auto (CPU utilization key)")
     parser.add_argument("--n-envs-cap", type=int, default=64, help="Safety cap for auto n_envs (avoid too many processes)")
     parser.add_argument("--vec-env", type=str, default="auto", help="auto/dummy/subproc")
@@ -689,13 +691,7 @@ if __name__ == "__main__":
 
     print("Starting EcoBrain 2.0 PPO Training & Export")
 
-    tiers = [t.strip().lower() for t in (args.tiers or "").split(",") if t.strip()]
-    if not tiers:
-        tiers = ["low", "mid", "high"]
-    allowed = {"low", "mid", "high"}
-    unknown = [t for t in tiers if t not in allowed]
-    if unknown:
-        raise ValueError(f"Unknown tiers: {unknown!r} (allowed: low,mid,high)")
+    value_type = "mixed"
 
     if args.num_threads and args.num_threads > 0:
         torch.set_num_threads(int(args.num_threads))
@@ -734,13 +730,12 @@ if __name__ == "__main__":
             post_eval_episodes=int(args.post_eval_episodes),
         )
         if not args.skip_onnx:
-            export_to_onnx(model, f"ecobrain_{vt}_value.onnx")
+            export_to_onnx(model, "ecobrain_value.onnx")
         return model
 
     success = False
     try:
-        for vt in tiers:
-            _train_one(vt)
+        _train_one(value_type)
         success = True
         print("All done!")
     finally:

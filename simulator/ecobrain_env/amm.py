@@ -7,6 +7,7 @@ class AMM:
     注意：插件端目前 TWAP 近似=当前价（volatilitySpread≈0），这里也保持一致。
     """
     def __init__(self, base_price, target_inventory, current_inventory, k_factor, physical_stock, is_ipo=False,
+                 treasury_balance: float = 0.0,
                  base_spread=0.05, max_spread=0.999,
                  dumping_trigger_multiplier=3.0, dumping_tax_per_multiple=0.10,
                  critical_inventory: int = 1):
@@ -18,6 +19,8 @@ class AMM:
         self.physical_stock = physical_stock
         self.k_factor = k_factor
         self.is_ipo = is_ipo
+        # Global treasury balance (single-item simulator uses one shared treasury)
+        self.treasury_balance = float(max(0.0, float(treasury_balance)))
 
         self.base_spread = float(base_spread)
         self.max_spread = float(max_spread)
@@ -124,12 +127,19 @@ class AMM:
         self.current_inventory = max(1, int(self.current_inventory) - int(quantity))
         # physical_stock 的扣减由上层（env）做约束，这里只做同步更新
         self.physical_stock = max(0, int(self.physical_stock) - int(quantity))
+        # Treasury income
+        self.treasury_balance = float(self.treasury_balance + float(cost))
         return cost
         
     def execute_sell(self, quantity):
         revenue = self.simulate_sell(quantity)
+        # Treasury must be able to pay (income = expense)
+        if float(self.treasury_balance) + 1e-12 < float(revenue):
+            raise ValueError("insufficient treasury to buy from player")
         self.current_inventory = max(1, int(self.current_inventory) + int(quantity))
         self.physical_stock = max(0, int(self.physical_stock) + int(quantity))
+        # Treasury expense
+        self.treasury_balance = float(max(0.0, float(self.treasury_balance) - float(revenue)))
         return revenue
 
     def apply_ai_action(self, base_price_multiplier, k_delta):

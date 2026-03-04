@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents;
+
 /**
  * /ecobrain 主命令：
  * - sell <amount>
@@ -171,6 +173,13 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                 MarketService.IpoState ipoState = marketService.ensureIpoForSellAsync(hash, base64, finalAmount).join();
                 ItemMarketRecord record = ipoState.record();
                 MarketService.TradeQuote quote = marketService.quoteSell(record, finalAmount);
+                long payoutCents = moneyToCents(quote.totalPrice());
+                boolean reservedMoney = repository.tryReserveTreasuryCents(payoutCents);
+                if (!reservedMoney) {
+                    sendMessageSync(player, ChatColor.RED + "系统金库不足，暂无法收购该物品。请稍后再试。");
+                    releaseLock(player);
+                    return;
+                }
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
@@ -199,6 +208,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                         if (!economyService.deposit(player, quote.totalPrice())) {
                             inventory.setStorageContents(storageBefore);
                             player.sendMessage(ChatColor.RED + "发放金币失败，交易已回滚。");
+                            long cents = payoutCents;
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> repository.releaseTreasuryCents(cents));
                             releaseLock(player);
                             return;
                         }

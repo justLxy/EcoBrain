@@ -171,6 +171,11 @@ public class MarketService {
         if (player != null) {
             repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
         }
+
+        // Treasury: BUY means money flows into system treasury (income = expense model)
+        if (quote.type() == TradeType.BUY) {
+            repository.creditTreasuryCents(com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents(quote.totalPrice()));
+        }
     }
 
     private int fullSettingsCriticalInventorySafe() {

@@ -14,6 +14,8 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AI 调度器：
@@ -29,6 +31,7 @@ public class AIScheduler {
     private BukkitTask task;
 
     private volatile PluginSettings fullSettings;
+    private final Map<String, Double> prevSaturationByHash = new ConcurrentHashMap<>();
 
     public AIScheduler(JavaPlugin plugin, OnnxModelRunner onnxModelRunner,
                        ItemMarketRepository repository, AMMCalculator ammCalculator, 
@@ -63,6 +66,7 @@ public class AIScheduler {
     public void updateSettingsAndRestart(PluginSettings.AI settings, PluginSettings fullSettings) {
         this.settings = settings;
         this.fullSettings = fullSettings;
+        this.prevSaturationByHash.clear();
         stop();
         start();
     }
@@ -99,7 +103,20 @@ public class AIScheduler {
         }
 
         double cycleNetEmission = repository.queryNetEmissionSince(since);
+        double cycleVolume = repository.queryVolumeSince(since);
         double globalInflationRate = cycleNetEmission / dynamicAov;
+        double emissionRatio = Math.max(0.0D, cycleNetEmission) / Math.max(1e-9, cycleVolume);
+        // Derive buy/sell money from total & net: sell - buy = net, sell + buy = volume
+        double sellMoney = Math.max(0.0D, (cycleVolume + cycleNetEmission) * 0.5D);
+        double buyMoney = Math.max(0.0D, (cycleVolume - cycleNetEmission) * 0.5D);
+        double sellShare = sellMoney / Math.max(1e-9, cycleVolume);
+
+        long treasuryCents = repository.getTreasuryBalanceCents();
+        double treasuryMoney = ItemMarketRepository.centsToMoney(treasuryCents);
+        // normalize treasury scale by dynamic AOV to keep magnitude stable across servers
+        double treasuryScaled = treasuryMoney / Math.max(1e-9, dynamicAov);
+        double logTreasury = Math.log1p(Math.max(0.0D, treasuryScaled));
+        logTreasury = clamp(logTreasury, 0.0D, 20.0D);
 
         if (settings.debugLog()) {
             plugin.getLogger().info("[EcoBrain-AI] ===== 微观调控周期报告开始 =====");
@@ -173,14 +190,16 @@ public class AIScheduler {
             double logPrice = Math.log(Math.max(1e-9D, currentPrice));
             logPrice = clamp(logPrice, -20.0D, 20.0D);
 
-            float[] obs = new float[] {
-                (float) saturation,
-                (float) recentFlow,
-                (float) globalInflationRate,
-                (float) elasticity,
-                (float) volatility,
-                (float) logPrice
-            };
+            // === Single-brain observation (16-dim) ===
+            // Keep the first 6 dims aligned with the simulator's legacy layout.
+            long createdAt = item.getCreatedAtMillis();
+            double ageCycles = 0.0D;
+            if (createdAt > 0L) {
+                ageCycles = (double) (now - createdAt) / Math.max(1.0D, windowMs);
+            }
+            // compress age to a stable range
+            double logAge = Math.log1p(Math.max(0.0D, ageCycles));
+            logAge = clamp(logAge, 0.0D, 20.0D);
 
             // 3. “活跃窗口”判定：
             // 只有真实存在 activityVolume 时才允许 AI 介入。没有真实交易活动，废品永远趴在 100.0。
@@ -188,21 +207,44 @@ public class AIScheduler {
             long activitySince = now - activityWindowMs;
             double activityVolume = repository.queryItemVolumeSince(item.getItemHash(), activitySince);
             boolean hasActivityTrade = activityVolume > 0.0D;
+            double logActivity = Math.log1p(Math.max(0.0D, activityVolume / Math.max(1.0D, windowMinutes)));
+            logActivity = clamp(logActivity, 0.0D, 20.0D);
+
+            double prevSat = prevSaturationByHash.getOrDefault(item.getItemHash(), saturation);
+            double satDelta = saturation - prevSat;
+            satDelta = clamp(satDelta, -2.0D, 2.0D);
+            prevSaturationByHash.put(item.getItemHash(), saturation);
+
+            double logBasePrice = Math.log(Math.max(1e-9D, item.getBasePrice()));
+            logBasePrice = clamp(logBasePrice, -20.0D, 20.0D);
+            double kFactor = clamp(item.getKFactor(), settings.kMin(), settings.kMax());
+            double physicalRatio = item.getTargetInventory() > 0 ? ((double) item.getPhysicalStock() / (double) item.getTargetInventory()) : 0.0D;
+            physicalRatio = clamp(physicalRatio, 0.0D, 1000.0D);
+
+            float[] obs = new float[] {
+                (float) saturation,
+                (float) recentFlow,
+                (float) globalInflationRate,
+                (float) elasticity,
+                (float) volatility,
+                (float) logPrice,
+                (float) logAge,
+                (float) (hasActivityTrade ? 1.0D : 0.0D),
+                (float) logActivity,
+                (float) clamp(priceChangePct, -10.0D, 10.0D),
+                (float) satDelta,
+                (float) logBasePrice,
+                (float) kFactor,
+                (float) physicalRatio,
+                (float) clamp(emissionRatio, 0.0D, 10.0D),
+                (float) logTreasury
+            };
 
             // 4. 为【当前周期】做决策 At
             double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
-            String valueType;
-            if (item.getBasePrice() >= settings.tiers().highPriceThreshold() || item.getTargetInventory() <= settings.tiers().highInventoryThreshold()) {
-                valueType = "high";
-            } else if (item.getBasePrice() >= settings.tiers().midPriceThreshold() || item.getTargetInventory() <= settings.tiers().midInventoryThreshold()) {
-                valueType = "mid";
-            } else {
-                valueType = "low";
-            }
             boolean shouldRunAi = hasActivityTrade;
             if (shouldRunAi) {
-                PluginSettings.TierTuning tuning = tierTuningFor(valueType);
-                action = onnxModelRunner.predictAction(obs, valueType, tuning.kDelta());
+                action = onnxModelRunner.predictAction(obs, settings.kDelta());
             }
 
             String tuningReason = "AI_ACTION";
@@ -211,7 +253,7 @@ public class AIScheduler {
             }
 
             // 5. 应用最终动作
-            TuningResult result = applyActionToItem(item, action, valueType);
+            TuningResult result = applyActionToItem(item, action);
 
             if (result != null) {
                 String actionName = String.format("MULT:%.2f K:%.2f", action[0], action[1]);
@@ -283,36 +325,7 @@ public class AIScheduler {
         // PPO 时代： 离线外置模型，无需实时训练
     }
 
-    private PluginSettings.TierTuning tierTuningFor(String valueType) {
-        if (valueType == null) {
-            return settings.tiers().low().tuning();
-        }
-        return switch (valueType) {
-            case "high" -> settings.tiers().high().tuning();
-            case "mid" -> settings.tiers().mid().tuning();
-            default -> settings.tiers().low().tuning();
-        };
-    }
-
-    /**
-     * Tier-aware cap for base_price to match the simulator's hard ranges:
-     * - low:  <= mid.price-threshold (default 1000)
-     * - mid:  <= high.price-threshold (default 10000)
-     * - high: <= global max-base-price
-     */
-    private double tierBasePriceCap(String valueType) {
-        double global = settings.maxBasePrice();
-        if (valueType == null) {
-            return global;
-        }
-        return switch (valueType) {
-            case "low" -> Math.min(global, settings.tiers().midPriceThreshold());
-            case "mid" -> Math.min(global, settings.tiers().highPriceThreshold());
-            default -> global;
-        };
-    }
-
-    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action, String valueType) {
+    private TuningResult applyActionToItem(ItemMarketRecord item, double[] action) {
         // --- 防垃圾回收机制（按时间过期） ---
         // 解释：如果有玩家随便附魔了一把木剑（物理库存=1）卖给系统，但之后根本没人买（交易量为0）。
         // 这种东西如果不处理，就会永远卡在 GUI 里。
@@ -328,6 +341,7 @@ public class AIScheduler {
                     long daysSinceCreated = (System.currentTimeMillis() - createdAt) / (1000L * 60 * 60 * 24);
                     if (daysSinceCreated >= settings.garbageCollectionDays()) {
                         repository.deleteByHash(item.getItemHash());
+                        prevSaturationByHash.remove(item.getItemHash());
                         return null;
                     }
                 }
@@ -336,6 +350,7 @@ public class AIScheduler {
             long daysSinceLastTrade = (System.currentTimeMillis() - lastTrade) / (1000L * 60 * 60 * 24);
             if (lastTrade > 0L && daysSinceLastTrade >= settings.garbageCollectionDays()) {
                 repository.deleteByHash(item.getItemHash());
+                prevSaturationByHash.remove(item.getItemHash());
                 return null;
             }
         }
@@ -344,8 +359,6 @@ public class AIScheduler {
         if (Math.abs(action[0] - 1.0D) < 1e-5 && Math.abs(action[1]) < 1e-5) {
             return null;
         }
-
-        PluginSettings.TierTuning tierTuning = tierTuningFor(valueType);
 
         double oldBase = item.getBasePrice();
         double oldK = item.getKFactor();
@@ -357,11 +370,11 @@ public class AIScheduler {
         double kDelta = action[1];
         // No per-cycle max-change clamp: keep only the ONNX action mapping limit.
         newBasePrice = oldBase * priceMult;
-        newBasePrice = clamp(newBasePrice, 0.01D, tierBasePriceCap(valueType));
+        newBasePrice = clamp(newBasePrice, 0.01D, settings.maxBasePrice());
 
         // Limit K factor changes
-        double safeKDelta = clamp(kDelta, -tierTuning.kDelta(), tierTuning.kDelta());
-        newK = clamp(oldK + safeKDelta, tierTuning.kMin(), tierTuning.kMax());
+        double safeKDelta = clamp(kDelta, -settings.kDelta(), settings.kDelta());
+        newK = clamp(oldK + safeKDelta, settings.kMin(), settings.kMax());
 
         // 若 clamp 后没有产生任何实际变更，则不写库、不落审计事件，避免噪声与无意义 IO
         boolean unchanged = Math.abs(newBasePrice - oldBase) < 1e-12 && Math.abs(newK - oldK) < 1e-12;

@@ -29,12 +29,29 @@ AOV_WINDOW_HOURS = 24                # 对齐 ai.aov-window-hours
 IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trust=false 时）
 
 # ==========================================
+# System Treasury (income = expense)
+# ==========================================
+# 插件 3.0 采用全局金库：玩家 BUY -> 金库增加；玩家 SELL -> 金库支出。
+# 为避免冷启动“没人买就永远没钱收购”，允许设置一个初始金库余额。
+TREASURY_INITIAL_BALANCE = 200_000.0  # 对齐 economy.treasury.initial-balance（推荐给一个能启动市场的资金量）
+
+# ==========================================
 # Episode 初始化：IPO vs Mature Item 混合
 # ==========================================
 # 真实服务器里只有“新物品”才会走 100.0 的 zero-trust IPO；
 # 大多数存量物品处于 Mature 状态（base_price 已经被市场发现）。
 # 训练时每个 episode 相当于抽样一种“物品状态”，避免总是从 100.0 开局导致学不到区间定价。
 IPO_RESET_PROB = 0.2  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
+
+# 单模型训练：每个 episode 会从三类“经济世界参数”中抽样一种（并不会把标签告诉 agent）。
+# 这相当于把 low/mid/high 三个宇宙混在一起训练成一个大脑。
+VALUE_MIX = {"low": 0.50, "mid": 0.35, "high": 0.15}
+
+# 物品“年龄”（以 AI 周期为单位），用于冷启动识别特征：
+# - IPO episode 近似新物品：年龄接近 0
+# - Mature episode 近似老物品：年龄随机较大
+AGE_CYCLES_IPO = {"dist": "int_uniform", "low": 0, "high": 2}
+AGE_CYCLES_MATURE = {"dist": "int_uniform", "low": 20, "high": 2000}
 
 # ==========================================
 # Observation feature toggle
