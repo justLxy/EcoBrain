@@ -268,6 +268,35 @@ class EcoBrainEnv(gym.Env):
             dtype=np.float32,
         )
 
+    def _adaptive_target_update_once(self):
+        """
+        Plugin-aligned adaptive target update (EMA towards physical_stock).
+        This is intentionally small and can be called multiple times per cycle
+        (e.g., per-trade) to mirror the Java plugin's "update on settle" behavior.
+        """
+        if not bool(ADAPTIVE_TARGET_ENABLED):
+            return
+        if self.amm is None:
+            return
+
+        old_target = int(self.amm.target_inventory)
+        old_current = int(self.amm.current_inventory)
+        physical = int(self.amm.physical_stock)
+
+        ema = old_target + (physical - old_target) * float(ADAPTIVE_TARGET_SMOOTHING_FACTOR)
+        new_target = int(round(ema))
+        if new_target == old_target and physical != old_target:
+            new_target += 1 if physical > old_target else -1
+        new_target = max(1, int(new_target))
+
+        if new_target == old_target:
+            return
+
+        # Keep saturation approximately stable when target changes.
+        scaled_current = int(round(old_current * (new_target / max(1.0, float(old_target)))))
+        self.amm.target_inventory = new_target
+        self.amm.current_inventory = max(1, int(scaled_current))
+
     def _compute_twap_price(self, fallback: float) -> float:
         if not self._unit_price_window:
             return float(fallback)
@@ -379,6 +408,7 @@ class EcoBrainEnv(gym.Env):
         cycle_trade_value_sum = 0.0
         cycle_trade_count = 0
         cycle_trade_qty_sum = 0
+        did_trade = False
         
         # Let players act multiple times per AI cycle
         for _ in range(10):
@@ -391,12 +421,17 @@ class EcoBrainEnv(gym.Env):
                 qty, money = p.act(self.amm, self.step_count)
 
                 if qty > 0: # Buy
+                    did_trade = True
+                    # Mirror plugin: adaptive target reacts on each settled trade.
+                    self._adaptive_target_update_once()
                     self.recent_buys += qty
                     self.recent_buy_volume += abs(money)
                     cycle_trade_value_sum += abs(money)
                     cycle_trade_count += 1
                     cycle_trade_qty_sum += int(abs(qty))
                 elif qty < 0: # Sell
+                    did_trade = True
+                    self._adaptive_target_update_once()
                     self.recent_sells += abs(qty)
                     self.recent_sell_volume += abs(money)
                     cycle_trade_value_sum += abs(money)
@@ -423,21 +458,10 @@ class EcoBrainEnv(gym.Env):
         # - For high value items: Price should go UP based on buys.
         # - For low value items: Price should stay LOW based on infinite sells.
         
-        # 对齐插件端自适应目标库存：target 逼近 physicalStock，而非 virtual currentInventory
-        if ADAPTIVE_TARGET_ENABLED:
-            old_target = int(self.amm.target_inventory)
-            old_current = int(self.amm.current_inventory)
-            ema = old_target + (int(self.amm.physical_stock) - old_target) * ADAPTIVE_TARGET_SMOOTHING_FACTOR
-            new_target = int(round(ema))
-            if new_target == old_target and int(self.amm.physical_stock) != old_target:
-                new_target += 1 if int(self.amm.physical_stock) > old_target else -1
-            new_target = max(1, int(new_target))
-
-            if new_target != old_target:
-                # 对齐插件端：target 变动时按比例缩放 currentInventory，维持饱和度近似不变
-                scaled_current = int(round(old_current * (new_target / max(1.0, float(old_target)))))
-                self.amm.target_inventory = new_target
-                self.amm.current_inventory = max(1, scaled_current)
+        # If there were no trades in this cycle, still allow a single adaptive update
+        # to mirror the Java scheduler's periodic adjustment.
+        if not bool(did_trade):
+            self._adaptive_target_update_once()
 
         trade_value = float(self.recent_buy_volume + self.recent_sell_volume)
         trade_qty = float(self.recent_buys + self.recent_sells)
