@@ -1,6 +1,7 @@
 package com.ecobrain.plugin.persistence;
 
 import com.ecobrain.plugin.model.ItemMarketRecord;
+import com.ecobrain.plugin.model.SystemMoneyOutstanding;
 import com.ecobrain.plugin.model.TradeType;
 
 import java.sql.Connection;
@@ -443,6 +444,90 @@ public class ItemMarketRepository {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to query player rank", e);
+        }
+    }
+
+    /**
+     * 查询所有玩家“系统资金净额（未回收部分）”：
+     * outstanding = SUM(SELL) - SUM(BUY) - SUM(system_money_reclaims)
+     *
+     * 说明：
+     * - SELL: 系统发钱给玩家（玩家卖给系统）
+     * - BUY: 系统从玩家收钱（玩家从系统购买）
+     * - reclaims: 管理员通过命令执行的“系统资金回收”
+     */
+    public List<SystemMoneyOutstanding> getOutstandingSystemMoneyByPlayer(double minOutstanding) {
+        double threshold = Math.max(0.0D, minOutstanding);
+        String sql = """
+            WITH tx AS (
+                SELECT
+                    player_uuid,
+                    MAX(player_name) AS player_name,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN trade_type = 'SELL' THEN money_amount
+                            WHEN trade_type = 'BUY' THEN -money_amount
+                            ELSE 0
+                        END
+                    ), 0) AS net_money
+                FROM ecobrain_player_transactions
+                GROUP BY player_uuid
+            ),
+            reclaimed AS (
+                SELECT player_uuid, COALESCE(SUM(amount), 0) AS reclaimed_money
+                FROM ecobrain_system_money_reclaims
+                GROUP BY player_uuid
+            )
+            SELECT
+                tx.player_uuid AS player_uuid,
+                tx.player_name AS player_name,
+                (tx.net_money - COALESCE(reclaimed.reclaimed_money, 0)) AS outstanding_money
+            FROM tx
+            LEFT JOIN reclaimed ON reclaimed.player_uuid = tx.player_uuid
+            WHERE (tx.net_money - COALESCE(reclaimed.reclaimed_money, 0)) > ?
+            ORDER BY outstanding_money DESC
+            """;
+        List<SystemMoneyOutstanding> list = new ArrayList<>();
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setDouble(1, threshold);
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    String uuidText = rs.getString("player_uuid");
+                    String name = rs.getString("player_name");
+                    double outstanding = rs.getDouble("outstanding_money");
+                    if (uuidText == null || uuidText.isBlank()) {
+                        continue;
+                    }
+                    UUID uuid;
+                    try {
+                        uuid = UUID.fromString(uuidText);
+                    } catch (IllegalArgumentException ignored) {
+                        continue;
+                    }
+                    list.add(new SystemMoneyOutstanding(uuid, name == null ? "" : name, outstanding));
+                }
+            }
+            return list;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query outstanding system money", e);
+        }
+    }
+
+    public void recordSystemMoneyReclaim(UUID playerUuid, String playerName, double amount, long createdAtMillis) {
+        String sql = """
+            INSERT INTO ecobrain_system_money_reclaims(player_uuid, player_name, amount, created_at)
+            VALUES(?, ?, ?, ?)
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, playerName == null ? "" : playerName);
+            statement.setDouble(3, amount);
+            statement.setLong(4, createdAtMillis);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record system money reclaim", e);
         }
     }
 

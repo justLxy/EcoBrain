@@ -380,6 +380,27 @@ python train.py --dataset /你的服务器路径/plugins/EcoBrain/ecobrain_train
 
 ---
 
+## 3.5 管理员：回收“系统资金”（QuickTax 集成）
+
+EcoBrain 会把玩家与系统商店的每笔交易写入 `ecobrain.db`（`ecobrain_player_transactions`）：
+- 玩家**卖给系统（SELL）**：系统向玩家**发钱**
+- 玩家**从系统购买（BUY）**：系统从玩家**收钱**
+
+当你希望“一键收回所有系统净支出的钱”时，可以使用：
+
+- **预览（不扣钱）**：`/ecobrain admin reclaimmoney preview`
+- **执行回收**：`/ecobrain admin reclaimmoney`
+
+回收逻辑按玩家聚合：
+\[
+\text{outstanding} = \sum(\text{SELL}) - \sum(\text{BUY}) - \sum(\text{已回收})
+\]
+
+执行时插件会用控制台批量派发 QuickTax 命令（默认）：
+- `qt collectname {player} {amount}`
+
+要允许扣成负数，请在 QuickTax 的 `config.yml` 设置 **`debt-mode: 2`**。
+
 ## 4. Use Case (一个物品的完整一生)
 
 1. **IPO**：玩家把未知的“附魔钻石剑”第一次卖给系统，只能拿到可怜的 0.01 金币。

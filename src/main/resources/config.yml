@@ -144,3 +144,26 @@ gui:
       - '        &f&l右键 &7自定义数量购买（聊天输入）'
       - ''
       - '&7&m+------------------------------+'
+
+# ==========================================================
+# 管理命令扩展（QuickTax 集成）
+# ==========================================================
+admin:
+  reclaim:
+    # EcoBrain “系统资金回收”会按玩家统计：
+    # outstanding = SUM(SELL) - SUM(BUY) - SUM(已回收)
+    #
+    # 然后使用 QuickTax 命令逐个玩家扣款。
+    # QuickTax 如需允许扣到负数，请在 QuickTax 的 config.yml 设置 debt-mode=2
+    #
+    # 可用占位符：
+    # - {player} 玩家名（优先在线/离线档案名，其次数据库记录名）
+    # - {uuid}   玩家 UUID
+    # - {amount} 金额（两位小数）
+    quicktax-command: "qt collectname {player} {amount}"
+
+    # 小于等于该金额的 outstanding 不处理（防浮点噪声）
+    min-amount: 0.01
+
+    # 每 tick（50ms）最多派发多少条 QuickTax 命令，避免主线程卡顿
+    per-tick: 5
