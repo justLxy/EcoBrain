@@ -100,9 +100,9 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
         vecenv.training = False
         vecenv.norm_reward = False
 
-    if str(value_type).lower() == "mixed":
-        # Mixed-regime single-brain: no single tier band exists.
-        # Report the global hard bounds to keep the summary meaningful.
+    is_mixed = str(value_type).lower() == "mixed"
+    if is_mixed:
+        # Mixed-regime single-brain: we will report per-latent-type band metrics.
         hard_min = float(MIN_BASE_PRICE)
         hard_max = float(MAX_BASE_PRICE)
         band_min = hard_min
@@ -122,6 +122,8 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
     price_mean = []
     price_p95 = []
 
+    latent_stats = {k: {"prices": [], "hard_hit": 0, "band_hit": 0, "steps": 0} for k in ("low", "mid", "high")}
+
     for _ in range(int(max(1, episodes))):
         obs = vecenv.reset()
         done = False
@@ -130,6 +132,7 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
         prices = []
         hh = 0
         bh = 0
+        latent = None
 
         while not done:
             action, _ = model.predict(obs, deterministic=bool(deterministic))
@@ -139,10 +142,13 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
             steps += 1
 
             p = float("nan")
+            lt = None
             try:
                 if isinstance(info, (list, tuple)) and info and isinstance(info[0], dict):
                     if "price" in info[0]:
                         p = float(info[0]["price"])
+                    if "latent_value_type" in info[0]:
+                        lt = str(info[0]["latent_value_type"])
                 # Fallback: works for DummyVecEnv/SubprocVecEnv via VecEnv.get_attr
                 if not (p == p) and hasattr(vecenv, "get_attr"):  # NaN check
                     lp = vecenv.get_attr("last_price")
@@ -150,11 +156,29 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
                         p = float(lp[0])
             except Exception:
                 p = float("nan")
+                lt = None
             prices.append(p)
             if hard_min <= p <= hard_max:
                 hh += 1
             if band_min <= p <= band_max:
                 bh += 1
+            if is_mixed:
+                if latent is None and lt in ("low", "mid", "high"):
+                    latent = lt
+                # Track per-step hits based on that latent's own bands.
+                if lt in ("low", "mid", "high"):
+                    tier = TIERS[lt]
+                    hm = float(tier["price_min"])
+                    hx = float(tier.get("price_max", float("inf")))
+                    bm = float(tier.get("reward_band_min", hm))
+                    bx = float(tier.get("reward_band_max", hx))
+                    st = latent_stats[lt]
+                    st["prices"].append(p)
+                    st["steps"] += 1
+                    if hm <= p <= hx:
+                        st["hard_hit"] += 1
+                    if bm <= p <= bx:
+                        st["band_hit"] += 1
             if steps > 5000:
                 break
 
@@ -182,6 +206,31 @@ def _eval_summary(model: PPO, value_type: str, episodes: int = 12, deterministic
         "price_mean_mean": float(np.mean(price_mean)),
         "price_p95_mean": float(np.mean(price_p95)),
         "timestamp_utc": _utc_now_iso(),
+        **(
+            {
+                "mixed_by_latent": {
+                    k: {
+                        "episodes_steps": int(latent_stats[k]["steps"]),
+                        "hard_range": [
+                            float(TIERS[k]["price_min"]),
+                            float(TIERS[k].get("price_max", float("inf"))),
+                        ],
+                        "reward_band": [
+                            float(TIERS[k].get("reward_band_min", float(TIERS[k]["price_min"]))),
+                            float(TIERS[k].get("reward_band_max", float(TIERS[k].get("price_max", float("inf"))))),
+                        ],
+                        "hard_hit_rate": float(latent_stats[k]["hard_hit"] / max(1, latent_stats[k]["steps"])),
+                        "band_hit_rate": float(latent_stats[k]["band_hit"] / max(1, latent_stats[k]["steps"])),
+                        "price_p50": float(np.nanmedian(np.array(latent_stats[k]["prices"], dtype=float))) if latent_stats[k]["prices"] else float("nan"),
+                        "price_mean": float(np.nanmean(np.array(latent_stats[k]["prices"], dtype=float))) if latent_stats[k]["prices"] else float("nan"),
+                        "price_p95": float(np.nanquantile(np.array(latent_stats[k]["prices"], dtype=float), 0.95)) if latent_stats[k]["prices"] else float("nan"),
+                    }
+                    for k in ("low", "mid", "high")
+                }
+            }
+            if is_mixed
+            else {}
+        ),
     }
 
 def _find_latest_checkpoint(checkpoint_dir: str, prefix: str) -> str | None:

@@ -95,11 +95,13 @@ class EcoBrainEnv(gym.Env):
         self._latent_value_type = sampled_vt
 
         tier_cfg = TIERS[sampled_vt]
-        target_inv = tier_cfg["target_inventory"]
+        target_inv = int(sample_from_spec(tier_cfg["target_inventory"], rng=self.np_random))
         # 对齐插件端 IPO 建档：virtual current_inventory 初始化=target_inventory（饱和度=100%）
         # physical_stock 代表真实库存，使用 tier_cfg["current_inventory"] 作为冷启动物理盘
+        target_inv = max(1, int(target_inv))
         current_inv = target_inv
-        physical_init = tier_cfg["current_inventory"]
+        physical_init = int(sample_from_spec(tier_cfg["current_inventory"], rng=self.np_random))
+        physical_init = max(0, int(physical_init))
 
         is_ipo = bool(float(self.np_random.random()) < float(IPO_RESET_PROB))
         if is_ipo:
@@ -546,8 +548,11 @@ class EcoBrainEnv(gym.Env):
             trade_signal = float(np.log1p(max(0.0, float(trade_value))))
             trade_weight = REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH
 
-        inflation_metric = inflation_ratio if vt_key in ("low", "mid") else float(inflation_rate)
-        inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_metric))
+        # Use scale-invariant inflation metric for ALL regimes to avoid "price washing"
+        # and keep mixed-regime training stable.
+        inflation_metric = float(inflation_ratio)
+        infl_mult = float(tier_cfg.get("inflation_weight_mult", 1.0))
+        inflation_penalty = (REWARD_INFLATION_RATE_WEIGHT * infl_mult) * max(0.0, float(inflation_metric))
 
         inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT
         if vt_key == "low":
@@ -559,9 +564,10 @@ class EcoBrainEnv(gym.Env):
             - (float(inv_weight) * float(inventory_imbalance))
         )
 
-        # Mild action penalty to discourage saturating controls.
+        # Mild action penalty to discourage saturating controls (tier-scaled).
         try:
-            reward -= float(REWARD_ACTION_L1_WEIGHT) * (abs(float(action[0])) + abs(float(action[1])))
+            act_mult = float(tier_cfg.get("action_l1_mult", 1.0))
+            reward -= (float(REWARD_ACTION_L1_WEIGHT) * act_mult) * (abs(float(action[0])) + abs(float(action[1])))
         except Exception:
             pass
         
@@ -692,6 +698,9 @@ class EcoBrainEnv(gym.Env):
             "inflation_ratio": float(inflation_ratio),
             "inflation_metric": float(inflation_metric),
             "inventory_imbalance": float(inventory_imbalance),
+            # Single-brain diagnostics: latent regime & treasury constraint
+            "latent_value_type": str(getattr(self, "_latent_value_type", "low")),
+            "treasury_balance": float(getattr(self.amm, "treasury_balance", 0.0)),
         }
 
         return self._get_obs(), float(reward), done, truncated, info
