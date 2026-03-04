@@ -167,3 +167,14 @@ admin:
 
     # 每 tick（50ms）最多派发多少条 QuickTax 命令，避免主线程卡顿
     per-tick: 5
+
+    # 是否在“回收扣款后”私聊在线玩家一条提示（展示当前 Vault 余额，可为负数）
+    notify-player: true
+
+    # 私聊模板（仅在线玩家会收到）
+    # 可用占位符：
+    # - {player}  玩家名
+    # - {uuid}    玩家 UUID
+    # - {amount}  本次回收金额（两位小数）
+    # - {balance} 回收后余额（Vault 余额，两位小数；若经济插件支持则可为负）
+    notify-message: "&e系统资金回收：已扣除 &f{amount}&e，当前余额 &f{balance}"

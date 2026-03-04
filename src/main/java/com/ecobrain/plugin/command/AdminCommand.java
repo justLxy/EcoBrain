@@ -2,6 +2,7 @@ package com.ecobrain.plugin.command;
 
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
+import com.ecobrain.plugin.service.EconomyService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
@@ -23,11 +24,13 @@ public class AdminCommand {
     private final JavaPlugin plugin;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
+    private final EconomyService economyService;
 
-    public AdminCommand(JavaPlugin plugin, ItemMarketRepository repository, ItemSerializer itemSerializer) {
+    public AdminCommand(JavaPlugin plugin, ItemMarketRepository repository, ItemSerializer itemSerializer, EconomyService economyService) {
         this.plugin = plugin;
         this.repository = repository;
         this.itemSerializer = itemSerializer;
+        this.economyService = economyService;
     }
 
     public boolean handle(CommandSender sender, String[] args) {
@@ -91,6 +94,11 @@ public class AdminCommand {
             double minAmount = plugin.getConfig().getDouble("admin.reclaim.min-amount", 0.01D);
             int perTick = Math.max(1, plugin.getConfig().getInt("admin.reclaim.per-tick", 5));
             String cmdTemplate = plugin.getConfig().getString("admin.reclaim.quicktax-command", "qt collectname {player} {amount}");
+            boolean notifyPlayer = plugin.getConfig().getBoolean("admin.reclaim.notify-player", true);
+            String notifyMessageTemplate = plugin.getConfig().getString(
+                "admin.reclaim.notify-message",
+                "&e系统资金回收：已扣除 &f{amount}&e，当前余额 &f{balance}"
+            );
 
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 try {
@@ -155,6 +163,24 @@ public class AdminCommand {
                                         sendMessageSync(sender, ChatColor.RED + "失败命令: " + cmd);
                                         cancel();
                                         return;
+                                    }
+
+                                    if (notifyPlayer && economyService != null && economyService.isReady()) {
+                                        try {
+                                            Player target = Bukkit.getPlayer(v.playerUuid());
+                                            if (target != null && target.isOnline()) {
+                                                String balanceText = formatMoney(economyService.getBalance(target));
+                                                String msg = (notifyMessageTemplate == null ? "" : notifyMessageTemplate)
+                                                    .replace("{player}", target.getName())
+                                                    .replace("{uuid}", v.playerUuid().toString())
+                                                    .replace("{amount}", amountText)
+                                                    .replace("{balance}", balanceText);
+                                                if (!msg.isBlank()) {
+                                                    target.sendMessage(color(msg));
+                                                }
+                                            }
+                                        } catch (Exception ignored) {
+                                        }
                                     }
 
                                     donePlayers++;
@@ -356,5 +382,9 @@ public class AdminCommand {
         DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
         DecimalFormat df = new DecimalFormat("0.00", symbols);
         return df.format(amount);
+    }
+
+    private static String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text == null ? "" : text);
     }
 }
