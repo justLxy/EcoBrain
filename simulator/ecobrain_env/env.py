@@ -441,9 +441,16 @@ class EcoBrainEnv(gym.Env):
 
         trade_value = float(self.recent_buy_volume + self.recent_sell_volume)
         trade_qty = float(self.recent_buys + self.recent_sells)
-        cycle_net_emission = float(self.recent_sell_volume - self.recent_buy_volume)
+        buy_money = float(self.recent_buy_volume)
+        sell_money = float(self.recent_sell_volume)
+        cycle_net_emission = float(sell_money - buy_money)
         dynamic_aov = float(self._compute_dynamic_aov())
         inflation_rate = cycle_net_emission / max(1e-9, dynamic_aov)
+        # Scale-invariant inflation metric for low/mid:
+        # Prevent the policy from "washing" inflation penalties by simply raising prices
+        # (which increases AOV and reduces netEmission/AOV without improving real economics).
+        total_flow = max(1e-9, sell_money + buy_money)
+        inflation_ratio = max(0.0, cycle_net_emission) / total_flow
 
         inventory_imbalance = abs(self.amm.current_inventory - self.amm.target_inventory) / max(1, self.amm.target_inventory)
 
@@ -461,7 +468,8 @@ class EcoBrainEnv(gym.Env):
             trade_signal = float(np.log1p(max(0.0, float(trade_value))))
             trade_weight = REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH
 
-        inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_rate))
+        inflation_metric = inflation_ratio if self.value_type in ("low", "mid") else float(inflation_rate)
+        inflation_penalty = REWARD_INFLATION_RATE_WEIGHT * max(0.0, float(inflation_metric))
 
         inv_weight = REWARD_INVENTORY_IMBALANCE_WEIGHT
         if self.value_type == "low":
@@ -479,8 +487,11 @@ class EcoBrainEnv(gym.Env):
         except Exception:
             pass
         
-        # Specific shaping to help it learn the difference between garbage and gold
-        price = float(self.amm.base_price)
+        # Specific shaping to help it learn the difference between garbage and gold.
+        # IMPORTANT: Use the observable market price (AMM current price) rather than base_price.
+        # The policy observes log(current_price) but does NOT observe base_price/k directly; shaping
+        # on base_price makes the reward partially unobservable and often leads to boundary solutions.
+        price = float(self.amm.get_current_price())
         if self.value_type == "high":
             # High-value shaping: smooth penalties inside hard range and scale out-of-range by distance.
             hard_min = float(tier_cfg["price_min"])
@@ -590,6 +601,7 @@ class EcoBrainEnv(gym.Env):
 
         info = {
             "price": float(price),
+            "current_price": float(self.amm.get_current_price()),
             "base_price": float(self.amm.base_price),
             "k_factor": float(self.amm.k_factor),
             "current_inventory": int(self.amm.current_inventory),
@@ -599,6 +611,8 @@ class EcoBrainEnv(gym.Env):
             "trade_value": float(trade_value),
             "trade_qty": float(trade_qty),
             "inflation_rate": float(inflation_rate),
+            "inflation_ratio": float(inflation_ratio),
+            "inflation_metric": float(inflation_metric),
             "inventory_imbalance": float(inventory_imbalance),
         }
 

@@ -99,7 +99,8 @@ ai:
     
   tuning:
     # 价格天花板。如果到了这个价，AI 怎么调都不会再涨了。防刷钱最后的底线。
-    max-base-price: 1000000.0
+    # 你希望 high-tier 也收敛在 10w 以内时，应同步收紧该值（并让模拟器 MAX_BASE_PRICE 对齐）。
+    max-base-price: 100000.0
 
     # 允许 AI 每次微调 k 系数的最大幅度。
     k-delta: 1.00

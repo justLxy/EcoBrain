@@ -14,7 +14,7 @@ ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
 # 说明：
 # 2.0 初版曾引入“每周期涨跌停”（PER_CYCLE_MAX_CHANGE_PERCENT）作为二次拦截；
 # 当前版本按线上要求移除该二次夹紧，只保留动作映射上限 ACTION_BASE_PRICE_MAX_PERCENT。
-MAX_BASE_PRICE = 1_000_000.0          # 对齐 ai.tuning.max-base-price
+MAX_BASE_PRICE = 100_000.0           # 对齐 ai.tuning.max-base-price
 MIN_BASE_PRICE = 0.01                # AI 可干预的全局最低底价（允许砸穿 IPO）
 
 K_MIN = 0.2                          # 对齐 ai.tuning.k-min
@@ -105,20 +105,23 @@ TIERS = {
         # 对齐线上常态：初始真实库存尽量贴近 target，减少“开局缺货”噪声
         "current_inventory": 16,
         # Mature 物品初始底价（reset 时非 IPO 用）：按 hard 区间采样
-        "initial_base_price": {"dist": "loguniform", "low": 10000.0, "high": 1_000_000.0},
+        # 注意：已将全局 MAX_BASE_PRICE 收紧到 10w，因此 Mature 初始分布上限也必须同步收紧，
+        # 否则会在 reset 时频繁被 clamp 到上限，导致训练分布退化。
+        "initial_base_price": {"dist": "loguniform", "low": 10000.0, "high": 100_000.0},
         # 限制“走捷径”：高价值允许更灵活的曲线，但仍限制单步 k 变化与 k 上界
         "action_k_max_delta": 0.30,  # 每个 step 最大 k 微调幅度（建议 < 1.0，避免靠 k 把价格打穿/打飞）
         "k_min": 0.2,
         "k_max": 6.0,
         # 目标：底线物理放开至 0.01，但长期希望回到 15000~1e8 的价值带
         "price_min": 0.01,
-        "price_max": 100_000_000.0,
-        "penalty_out_of_range": 2000.0,     # 越界惩罚（让步于通胀惩罚）
-        # 奖励带：15000~1e8 奖励；允许跌破，轻微惩罚
+        "price_max": 100_000.0,
+        # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略用“贴边界”走捷径
+        "penalty_out_of_range": 10000.0,
+        # 奖励带：15000~10w 奖励；允许跌破/超出，按距离平滑惩罚
         "reward_band_min": 15000.0,
-        "reward_band_max": 100_000_000.0,
-        "reward_in_band": 1500.0,
-        "penalty_out_of_band": 1000.0,
+        "reward_band_max": 100_000.0,
+        "reward_in_band": 5000.0,
+        "penalty_out_of_band": 5000.0,
         "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
     },
     
@@ -135,12 +138,14 @@ TIERS = {
         # 硬约束范围彻底打开到底，下限为 0.01（越界轻微惩罚，兼容砸穿 IPO）
         "price_min": 0.01,
         "price_max": 10000.0,
-        "penalty_out_of_range": 2000.0,     # 极大削弱越界惩罚（让步于通胀惩罚）
+        # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略贴 0.01 / 10000 走捷径
+        "penalty_out_of_range": 12000.0,
         # 奖励带：维持在 500~9000 奖励。带外极轻罚，确保 AI 面对通胀敢于一路砸盘
         "reward_band_min": 500.0,
         "reward_band_max": 9000.0,
-        "reward_in_band": 1000.0,
-        "penalty_out_of_band": 800.0,
+        # 路线 B：强约束 base_price 长期落在 band 内（提高在带奖励 & 带外惩罚）
+        "reward_in_band": 8000.0,
+        "penalty_out_of_band": 8000.0,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
@@ -159,11 +164,13 @@ TIERS = {
         # 奖惩带：10-500 之间奖励；超出该带则面临轻微惩罚
         "reward_band_min": 10.0,
         "reward_band_max": 500.0,
-        "reward_in_band": 800.0,
-        # 核心改动：极大削弱带外惩罚，让 AI 面对通胀时敢于无视该惩罚一路砸盘
-        "penalty_out_of_band": 500.0,
-        # 软约束：极大削弱硬区间越界惩罚（允许 AI 为了遏制通胀砸穿所有底线）
-        "penalty_out_of_range": 1500.0,
+        # 路线 B：强约束 base_price 长期落在 band 内（提高在带奖励 & 带外惩罚）
+        # 说明：低价值玩家模型的 buy/sell 概率几乎不依赖价格，reward 需要更强的 shaping 才能稳定在带内。
+        "reward_in_band": 8000.0,
+        "penalty_out_of_band": 8000.0,
+        # 使用 current_price 做 shaping 后，low 很容易通过把价格压到 hard_min 以下来优化其它项；
+        # 因此需要更强的 hard-range 越界惩罚，把价格“拉回地面”。
+        "penalty_out_of_range": 20000.0,
     }
 }
 
