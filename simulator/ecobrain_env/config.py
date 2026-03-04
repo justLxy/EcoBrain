@@ -34,7 +34,7 @@ IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trus
 # 真实服务器里只有“新物品”才会走 100.0 的 zero-trust IPO；
 # 大多数存量物品处于 Mature 状态（base_price 已经被市场发现）。
 # 训练时每个 episode 相当于抽样一种“物品状态”，避免总是从 100.0 开局导致学不到区间定价。
-IPO_RESET_PROB = 0.05  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
+IPO_RESET_PROB = 0.2  # 每次 reset 抽到 IPO 物品的概率（其余为 Mature）
 
 # ==========================================
 # Observation feature toggle
@@ -47,7 +47,7 @@ OBS_USE_LOG_PRICE = True
 # ==========================================
 # 风控参数（对齐 CircuitBreaker）
 # ==========================================
-DAILY_LIMIT_PERCENT = 10.0           # 对齐 circuit-breaker.daily-limit-percent（注意：插件侧是“倍数”，非百分数）
+DAILY_LIMIT_PERCENT = 100.0          # 对齐 circuit-breaker.daily-limit-percent（注意：该阈值按 (P-now - P-open)/P-open 计算，不是“百分数”）
 CRITICAL_INVENTORY = 1               # 对齐 circuit-breaker.critical-inventory
 
 # ==========================================
