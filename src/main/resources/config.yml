@@ -82,11 +82,12 @@ ai:
     max-base-price: 100000.0
 
     # 允许 AI 每次微调 k 系数的最大幅度。
-    k-delta: 1.00
+    # 单模型 mixed 若步长过大，容易把 k 一路推到极端区间，造成离群价格爆炸。
+    k-delta: 0.25
 
     # k 系数的硬性上下限。
     k-min: 0.2
-    k-max: 10.0
+    k-max: 6.0
 
 gui:
   bulk-sell:

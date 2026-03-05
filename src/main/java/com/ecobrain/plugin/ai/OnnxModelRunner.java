@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.logging.Logger;
 
 public class OnnxModelRunner {
+    private static final double ACTION_BASE_PRICE_MAX_PERCENT = 0.25D;
 
     private final OrtEnvironment env;
     private OrtSession session;
@@ -68,8 +69,8 @@ public class OnnxModelRunner {
             double actionBaseMultRaw = Math.max(-1.0, Math.min(1.0, (double) output[0][0]));
             double actionKDeltaRaw = Math.max(-1.0, Math.min(1.0, (double) output[0][1]));
 
-            // Action 0: mapped based on training config.py (1.00 = 100%)
-            double basePriceMultiplier = 1.0 + (actionBaseMultRaw * 1.00);
+            // Action 0: mapped based on training config.py (+/-25% per cycle).
+            double basePriceMultiplier = 1.0 + (actionBaseMultRaw * ACTION_BASE_PRICE_MAX_PERCENT);
             
             // Action 1: mapped based on tier-specific training cap
             double safeCap = Math.max(0.0D, kDeltaMax);

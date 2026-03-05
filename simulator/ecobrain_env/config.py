@@ -8,8 +8,10 @@ EcoBrain 2.0 模拟器全局配置文件 (Simulator Configuration)
 # 动作空间限制 (Action Space Limits) - 对齐插件端 config.yml
 # ==========================================
 # 控制 AI 单次决策所能带来的最大改变幅度。
-ACTION_BASE_PRICE_MAX_PERCENT = 1.00  # 底价单次最大涨跌幅 (1.00 = 100%)
-ACTION_K_FACTOR_MAX_DELTA = 1.00      # K 因子单次最大微调幅度
+# 单模型 mixed 在 100%/1.0 这种激进幅度下很容易把 current_price 推到极端爆炸区间，
+# 导致 low/high 都出现“少量超大离群点拖垮回报”的现象。
+ACTION_BASE_PRICE_MAX_PERCENT = 0.25  # 底价单次最大涨跌幅 (+/-25%)
+ACTION_K_FACTOR_MAX_DELTA = 0.25      # K 因子单次最大微调幅度
 
 # 说明：
 # 2.0 初版曾引入“每周期涨跌停”（PER_CYCLE_MAX_CHANGE_PERCENT）作为二次拦截；
@@ -18,7 +20,7 @@ MAX_BASE_PRICE = 100_000.0           # 对齐 ai.tuning.max-base-price
 MIN_BASE_PRICE = 0.01                # AI 可干预的全局最低底价（允许砸穿 IPO）
 
 K_MIN = 0.2                          # 对齐 ai.tuning.k-min
-K_MAX = 10.0                         # 对齐 ai.tuning.k-max
+K_MAX = 6.0                          # 对齐 ai.tuning.k-max
 
 # ==========================================
 # AI 调度与观测归一 (Align obs with AIScheduler)
@@ -46,9 +48,9 @@ IPO_RESET_PROB = 0.2  # 每次 reset 抽到 IPO 物品的概率（其余为 Matu
 # 单模型训练：每个 episode 会从三类“经济世界参数”中抽样一种（并不会把标签告诉 agent）。
 # 这相当于把 low/mid/high 三个宇宙混在一起训练成一个大脑。
 # 训练采样配比（不改变玩家行为，只改变训练时“看到哪类世界”的频率）。
-# 目标：更贴近真实服情分布：high 少、mid 最多、low 较多。
-# 注：high 占比降低会让它学得更慢；可用更长 timesteps 或更强 high shaping 来补偿。
-VALUE_MIX = {"low": 0.40, "mid": 0.50, "high": 0.10}
+# 目标：仍保持 mid 最多，但不要把 high 压到过少，否则 mixed 单模型会长期学不会高价值世界。
+# 这组配比比“真实服里 high 极少”更偏训练友好，目的是先学会分层，再追求真实分布。
+VALUE_MIX = {"low": 0.35, "mid": 0.45, "high": 0.20}
 
 # 物品“年龄”（以 AI 周期为单位），用于冷启动识别特征：
 # - IPO episode 近似新物品：年龄接近 0
