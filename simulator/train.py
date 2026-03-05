@@ -252,6 +252,31 @@ def _find_latest_checkpoint(checkpoint_dir: str, prefix: str) -> str | None:
             best_path = os.path.join(checkpoint_dir, name)
     return best_path
 
+
+def _matching_vecnormalize_path(model_path: str | None, checkpoint_dir: str, prefix: str, root_vecnorm_path: str) -> str | None:
+    """
+    Pick the VecNormalize file that matches the model we are resuming from.
+    """
+    if not model_path:
+        return root_vecnorm_path if os.path.exists(root_vecnorm_path) else None
+
+    name = os.path.basename(os.path.normpath(model_path))
+    if name == f"{prefix}.zip":
+        return root_vecnorm_path if os.path.exists(root_vecnorm_path) else None
+
+    if name == f"{prefix}_latest.zip":
+        latest_vec = os.path.join(checkpoint_dir, f"{prefix}_latest_vecnormalize.pkl")
+        if os.path.exists(latest_vec):
+            return latest_vec
+
+    m = re.match(rf"^{re.escape(prefix)}_checkpoint_(\d+)\.zip$", name)
+    if m:
+        checkpoint_vec = os.path.join(checkpoint_dir, f"{prefix}_checkpoint_{m.group(1)}_vecnormalize.pkl")
+        if os.path.exists(checkpoint_vec):
+            return checkpoint_vec
+
+    return root_vecnorm_path if os.path.exists(root_vecnorm_path) else None
+
 class SaveModelAndVecNormalizeCallback(BaseCallback):
     """
     Periodically save:
@@ -370,15 +395,24 @@ def train_model(
     model_name = "ecobrain_ppo_value"
     model_path = f"{model_name}.zip"
     vecnorm_path = f"{model_name}_vecnormalize.pkl"
+    load_path = None
+    if resume:
+        if os.path.exists(model_path):
+            load_path = model_path
+        else:
+            latest = _find_latest_checkpoint(checkpoint_dir, model_name)
+            if latest:
+                load_path = latest
+    resume_vecnorm_path = _matching_vecnormalize_path(load_path, checkpoint_dir, model_name, vecnorm_path)
 
     # Optional: normalize observations & rewards for stability.
     # IMPORTANT: If norm_obs=True, we bake the normalization into exported ONNX
     # so the Java plugin can keep feeding raw obs without mismatch.
     if vecnorm:
-        if resume and os.path.exists(vecnorm_path):
+        if resume and resume_vecnorm_path and os.path.exists(resume_vecnorm_path):
             try:
-                env = VecNormalize.load(vecnorm_path, env)
-                print(f"Loaded VecNormalize stats from {vecnorm_path}")
+                env = VecNormalize.load(resume_vecnorm_path, env)
+                print(f"Loaded VecNormalize stats from {resume_vecnorm_path}")
             except Exception as e:
                 print(f"Warning: failed to load VecNormalize stats ({e}); starting fresh normalization.")
                 env = VecNormalize(env, norm_obs=norm_obs, norm_reward=norm_reward, clip_obs=10.0, clip_reward=10.0, gamma=gamma)
@@ -432,8 +466,9 @@ def train_model(
             },
         )
         if vecnorm:
-            if os.path.exists(vecnorm_path):
-                eval_env = VecNormalize.load(vecnorm_path, eval_env)
+            eval_vecnorm_path = resume_vecnorm_path or vecnorm_path
+            if eval_vecnorm_path and os.path.exists(eval_vecnorm_path):
+                eval_env = VecNormalize.load(eval_vecnorm_path, eval_env)
             else:
                 eval_env = VecNormalize(eval_env, norm_obs=norm_obs, norm_reward=norm_reward, clip_obs=10.0, clip_reward=10.0, gamma=gamma)
             eval_env.training = False
@@ -504,6 +539,7 @@ def train_model(
             "checkpoint_freq": int(checkpoint_freq),
             "checkpoint_dir": checkpoint_dir,
             "resume": bool(resume),
+            "resume_vecnorm_path": resume_vecnorm_path,
             "eval_freq": int(eval_freq),
             "eval_episodes": int(eval_episodes),
             "early_stop_patience": int(early_stop_patience),
@@ -512,16 +548,6 @@ def train_model(
             "log_formats": formats,
         },
     )
-
-    # Resume logic: prefer latest checkpoint if requested
-    load_path = None
-    if resume:
-        if os.path.exists(model_path):
-            load_path = model_path
-        else:
-            latest = _find_latest_checkpoint(checkpoint_dir, model_name)
-            if latest:
-                load_path = latest
 
     if load_path:
         print(f"Loading model from {load_path} and resuming training...")

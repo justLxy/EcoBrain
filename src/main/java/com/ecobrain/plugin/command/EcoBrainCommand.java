@@ -8,6 +8,7 @@ import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.EconomyService;
+import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -180,9 +181,12 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         int finalAmount = amount;
         SellMode finalMode = mode;
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            ItemOperationCoordinator.Permit itemPermit = null;
+            boolean permitHandedOff = false;
             try {
                 String base64 = itemSerializer.serializeToBase64(template.asOne());
                 String hash = itemSerializer.sha256(base64);
+                itemPermit = marketService.acquireItemPermit(hash);
                 MarketService.IpoState ipoState = marketService.ensureIpoForSellAsync(hash, base64, finalAmount).join();
                 ItemMarketRecord record = ipoState.record();
                 MarketService.TradeQuote quote = marketService.quoteSell(record, finalAmount);
@@ -201,6 +205,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
 
+                ItemOperationCoordinator.Permit finalPermit = itemPermit;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
                         PlayerInventory inventory = player.getInventory();
@@ -211,7 +216,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             if (latest.getType() == Material.AIR || latest.getAmount() < finalAmount || !latest.isSimilar(template)) {
                                 player.sendMessage(ChatColor.RED + "你的主手物品已变化，交易已取消。");
                                 long cents = payoutCents;
-                                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                runAsyncWithPermit(finalPermit, () -> {
                                     repository.releaseTreasuryCents(cents);
                                     if (ipoState.createdNow()) {
                                         try {
@@ -230,7 +235,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             if (available < finalAmount) {
                                 player.sendMessage(ChatColor.RED + "背包同类物品不足，交易已取消。");
                                 long cents = payoutCents;
-                                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                runAsyncWithPermit(finalPermit, () -> {
                                     repository.releaseTreasuryCents(cents);
                                     if (ipoState.createdNow()) {
                                         try {
@@ -249,7 +254,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             inventory.setStorageContents(storageBefore);
                             player.sendMessage(ChatColor.RED + "发放金币失败，交易已回滚。");
                             long cents = payoutCents;
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                            runAsyncWithPermit(finalPermit, () -> {
                                 repository.releaseTreasuryCents(cents);
                                 if (ipoState.createdNow()) {
                                     try {
@@ -264,15 +269,32 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
 
                         player.sendMessage(ChatColor.GREEN + "出售成功，共出售 " + finalAmount + " 个，获得 "
                             + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin,
+                        runAsyncWithPermit(finalPermit,
                             () -> marketService.settleSell(player, hash, record, quote, finalAmount, ipoState.createdNow()));
+                    } catch (Exception e) {
+                        player.sendMessage(ChatColor.RED + "出售失败: " + e.getMessage());
+                        long cents = payoutCents;
+                        runAsyncWithPermit(finalPermit, () -> {
+                            repository.releaseTreasuryCents(cents);
+                            if (ipoState.createdNow()) {
+                                try {
+                                    repository.deleteByHash(hash);
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        });
                     } finally {
                         releaseLock(player);
                     }
                 });
+                permitHandedOff = true;
             } catch (Exception e) {
                 sendMessageSync(player, ChatColor.RED + "出售失败: " + e.getMessage());
                 releaseLock(player);
+            } finally {
+                if (!permitHandedOff) {
+                    closePermitQuietly(itemPermit);
+                }
             }
         });
         return true;
@@ -308,9 +330,12 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             boolean reserved = false;
             String hash = null;
+            ItemOperationCoordinator.Permit itemPermit = null;
+            boolean permitHandedOff = false;
             try {
                 String base64 = itemSerializer.serializeToBase64(snapshot.asOne());
                 hash = itemSerializer.sha256(base64);
+                itemPermit = marketService.acquireItemPermit(hash);
                 Optional<ItemMarketRecord> optionalRecord = repository.findByHash(hash);
                 if (optionalRecord.isEmpty()) {
                     sendMessageSync(player, ChatColor.RED + "市场没有收录该物品，请先由玩家卖出触发 IPO。");
@@ -350,16 +375,17 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                 int finalAmount = amount;
                 ItemMarketRecord finalRecord = record;
                 MarketService.TradeQuote finalQuote = quote;
+                ItemOperationCoordinator.Permit finalPermit = itemPermit;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
                         if (economyService.getBalance(player) < finalQuote.totalPrice()) {
                             player.sendMessage(ChatColor.RED + "金币不足，需要 " + String.format("%.2f", finalQuote.totalPrice()));
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
+                            runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
                             return;
                         }
                         if (!economyService.withdraw(player, finalQuote.totalPrice())) {
                             player.sendMessage(ChatColor.RED + "扣款失败，交易取消。");
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
+                            runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
                             return;
                         }
                         ItemStack item = itemSerializer.deserializeFromBase64(finalRecord.getItemBase64());
@@ -378,19 +404,30 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", finalQuote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.settleBuyAfterReservation(player, finalHash, finalRecord, finalQuote, finalAmount));
+                        runAsyncWithPermit(finalPermit,
+                            () -> marketService.settleBuyAfterReservation(player, finalHash, finalRecord, finalQuote, finalAmount));
+                    } catch (Exception e) {
+                        player.sendMessage(ChatColor.RED + "购买失败: " + e.getMessage());
+                        runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
                     } finally {
                         releaseLock(player);
                     }
                 });
+                permitHandedOff = true;
             } catch (Exception e) {
                 sendMessageSync(player, ChatColor.RED + "购买失败: " + e.getMessage());
                 if (reserved && hash != null) {
                     String finalHash = hash;
                     int finalAmount = amount;
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
+                    ItemOperationCoordinator.Permit finalPermit = itemPermit;
+                    runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(finalHash, finalAmount));
+                    permitHandedOff = true;
                 }
                 releaseLock(player);
+            } finally {
+                if (!permitHandedOff) {
+                    closePermitQuietly(itemPermit);
+                }
             }
         });
         return true;
@@ -459,6 +496,22 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             copy[i] = source[i] == null ? null : source[i].clone();
         }
         return copy;
+    }
+
+    private void runAsyncWithPermit(ItemOperationCoordinator.Permit permit, Runnable action) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                action.run();
+            } finally {
+                closePermitQuietly(permit);
+            }
+        });
+    }
+
+    private void closePermitQuietly(ItemOperationCoordinator.Permit permit) {
+        if (permit != null) {
+            permit.close();
+        }
     }
 
     /**

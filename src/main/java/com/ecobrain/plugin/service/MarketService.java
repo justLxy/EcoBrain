@@ -22,15 +22,18 @@ public class MarketService {
     private final ItemMarketRepository repository;
     private final AMMCalculator ammCalculator;
     private final CircuitBreaker circuitBreaker;
+    private final ItemOperationCoordinator itemOperationCoordinator;
     private volatile PluginSettings.Economy economySettings;
 
     public MarketService(JavaPlugin plugin, ItemMarketRepository repository, AMMCalculator ammCalculator,
-                         CircuitBreaker circuitBreaker, PluginSettings.Economy economySettings) {
+                         CircuitBreaker circuitBreaker, PluginSettings.Economy economySettings,
+                         ItemOperationCoordinator itemOperationCoordinator) {
         this.plugin = plugin;
         this.repository = repository;
         this.ammCalculator = ammCalculator;
         this.circuitBreaker = circuitBreaker;
         this.economySettings = economySettings;
+        this.itemOperationCoordinator = itemOperationCoordinator;
     }
 
     /**
@@ -105,6 +108,10 @@ public class MarketService {
         }
         TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
         return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);
+    }
+
+    public ItemOperationCoordinator.Permit acquireItemPermit(String itemHash) {
+        return itemOperationCoordinator.acquire(itemHash);
     }
 
     /**

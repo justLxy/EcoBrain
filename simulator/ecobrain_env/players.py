@@ -172,7 +172,10 @@ class VeteranPlayer(Player):
 
 class ReplayPlayer(Player):
     """
-    Driven by probabilities and amounts extracted from a real server's CSV data.
+    Legacy probability-based replay helper.
+
+    The environment now replays dataset CSVs by time bucket directly in
+    `EcoBrainEnv`, so this class is kept only for backward compatibility.
     """
     def __init__(
         self,

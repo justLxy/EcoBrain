@@ -5,6 +5,7 @@ import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.AMMCalculator;
+import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.inventory.ItemStack;
@@ -27,6 +28,7 @@ public class AIScheduler {
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
     private final AMMCalculator ammCalculator;
+    private final ItemOperationCoordinator itemOperationCoordinator;
     private volatile PluginSettings.AI settings;
     private BukkitTask task;
 
@@ -35,13 +37,15 @@ public class AIScheduler {
 
     public AIScheduler(JavaPlugin plugin, OnnxModelRunner onnxModelRunner,
                        ItemMarketRepository repository, AMMCalculator ammCalculator, 
-                       PluginSettings.AI settings, ItemSerializer itemSerializer) {
+                       PluginSettings.AI settings, ItemSerializer itemSerializer,
+                       ItemOperationCoordinator itemOperationCoordinator) {
         this.plugin = plugin;
         this.onnxModelRunner = onnxModelRunner;
         this.repository = repository;
         this.ammCalculator = ammCalculator;
         this.settings = settings;
         this.itemSerializer = itemSerializer;
+        this.itemOperationCoordinator = itemOperationCoordinator;
     }
 
     public void setFullSettings(PluginSettings fullSettings) {
@@ -128,6 +132,7 @@ public class AIScheduler {
         int downCount = 0;
 
         for (ItemMarketRecord item : items) {
+            try (ItemOperationCoordinator.Permit ignored = itemOperationCoordinator.acquire(item.getItemHash())) {
             // == 1. 动态自适应目标库存 ==
             if (settings.adaptiveTarget().enabled()) {
                 int currentPhysical = item.getPhysicalStock();
@@ -302,6 +307,7 @@ public class AIScheduler {
                         result.newKFactor()
                     ));
                 }
+            }
             }
         }
 

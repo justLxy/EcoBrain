@@ -3,8 +3,7 @@ class AMM:
     与插件端 `AMMCalculator` 对齐的 vAMM：
     - 价格公式：P = basePrice * (targetInventory / max(1, currentInventory))^k
     - 买入/卖出采用离散积分求和（逐个滑点）
-    - 卖出带动态印花税：base 5% + dumpingTax（基于 physical_stock）
-    注意：插件端目前 TWAP 近似=当前价（volatilitySpread≈0），这里也保持一致。
+    - 卖出带动态印花税：base 5% + volatilitySpread + dumpingTax
     """
     def __init__(self, base_price, target_inventory, current_inventory, k_factor, physical_stock, is_ipo=False,
                  treasury_balance: float = 0.0,
@@ -42,7 +41,7 @@ class AMM:
     def get_twap(self):
         hint = self.twap_hint
         if hint is None:
-            # 插件端旧行为：getTwapPrice() 近似=当前价
+            # 没有外部 TWAP 提示时，退化为当前价。
             return self.get_current_price()
         try:
             hint_f = float(hint)
@@ -62,11 +61,17 @@ class AMM:
     def calculate_dynamic_spread(self, sell_amount: int) -> float:
         """
         对齐插件端 `AMMCalculator.calculateDynamicSpread(record, sellAmount)`：
-        - volatilitySpread≈0（TWAP=当前价）
+        - volatilitySpread = 0.5 * |P_current - TWAP| / TWAP
         - dumpingTax 基于当前 physical_stock
         """
         if sell_amount <= 0:
             return 0.0
+
+        current_price = float(self.get_current_price())
+        twap = float(self.get_twap())
+        volatility_spread = 0.0
+        if twap > 0.0:
+            volatility_spread = abs(current_price - twap) / twap * 0.5
 
         dumping_tax = 0.0
         current_physical = max(1, int(self.physical_stock))
@@ -74,7 +79,7 @@ class AMM:
             ratio = sell_amount / current_physical
             dumping_tax = (ratio - self.dumping_trigger_multiplier) * self.dumping_tax_per_multiple
 
-        dynamic_spread = self.base_spread + dumping_tax
+        dynamic_spread = self.base_spread + volatility_spread + dumping_tax
         return min(self.max_spread, max(0.0, dynamic_spread))
 
     def simulate_buy(self, quantity):

@@ -49,7 +49,7 @@ public class OnnxModelRunner {
     public double[] predictAction(float[] obs, double kDeltaMax) {
         if (session == null) {
             // Fallback to doing nothing if model isn't loaded
-            return new double[]{0.0, 0.0};
+            return new double[]{1.0, 0.0};
         }
 
         try {

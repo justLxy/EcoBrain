@@ -7,6 +7,7 @@ import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.EconomyService;
+import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
 import com.ecobrain.plugin.gui.LeaderboardGUI;
 import com.ecobrain.plugin.model.PlayerStat;
@@ -358,7 +359,10 @@ public class MarketViewListener implements Listener {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             boolean reserved = false;
             int reservedAmount = 0;
+            ItemOperationCoordinator.Permit itemPermit = null;
+            boolean permitHandedOff = false;
             try {
+                itemPermit = marketService.acquireItemPermit(itemHash);
                 Optional<ItemMarketRecord> optionalRecord = repository.findByHash(itemHash);
                 if (optionalRecord.isEmpty()) {
                     Bukkit.getScheduler().runTask(plugin, () -> {
@@ -422,22 +426,23 @@ public class MarketViewListener implements Listener {
                     return;
                 }
                 int finalAmount1 = finalAmount;
+                ItemOperationCoordinator.Permit finalPermit = itemPermit;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
                         int currentMax = computeMaxAddable(player.getInventory(), template);
                         if (currentMax < finalAmount1) {
                             player.sendMessage(ChatColor.RED + "背包空间不足，交易已取消。（可放: " + currentMax + " 个）");
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
+                            runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
                         if (economyService.getBalance(player) < quote.totalPrice()) {
                             player.sendMessage(ChatColor.RED + "金币不足，需要 " + String.format("%.2f", quote.totalPrice()));
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
+                            runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
                         if (!economyService.withdraw(player, quote.totalPrice())) {
                             player.sendMessage(ChatColor.RED + "扣款失败，交易取消。");
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
+                            runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                             return;
                         }
 
@@ -456,7 +461,7 @@ public class MarketViewListener implements Listener {
                             rest -= stack;
                         }
                         player.sendMessage(ChatColor.GREEN + "购买成功，花费 " + String.format("%.2f", quote.totalPrice()) + " 金币。");
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        runAsyncWithPermit(finalPermit, () -> {
                             marketService.settleBuyAfterReservation(player, itemHash, record, quote, finalAmount1);
                             // 关键：不要“重开并重新排序”，否则库存/价格变化会让物品换位置，玩家连续点击旧位置可能误买。
                             // - 若购买来自 GUI 点击：原地刷新被点击的槽位
@@ -486,19 +491,29 @@ public class MarketViewListener implements Listener {
                                 Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, reopenPage, treasury));
                             }
                         });
+                    } catch (Exception e) {
+                        player.sendMessage(ChatColor.RED + "购买失败: " + e.getMessage());
+                        runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(itemHash, finalAmount1));
                     } finally {
                         releaseLock(player);
                     }
                 });
+                permitHandedOff = true;
             } catch (Exception e) {
                 if (reserved) {
                     int finalReservedAmount = reservedAmount;
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> marketService.cancelReservedBuy(itemHash, finalReservedAmount));
+                    ItemOperationCoordinator.Permit finalPermit = itemPermit;
+                    runAsyncWithPermit(finalPermit, () -> marketService.cancelReservedBuy(itemHash, finalReservedAmount));
+                    permitHandedOff = true;
                 }
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     player.sendMessage(ChatColor.RED + "购买失败: " + e.getMessage());
                     releaseLock(player);
                 });
+            } finally {
+                if (!permitHandedOff) {
+                    closePermitQuietly(itemPermit);
+                }
             }
         });
     }
@@ -560,5 +575,21 @@ public class MarketViewListener implements Listener {
             free += Math.max(0, maxStack - offhand.getAmount());
         }
         return Math.max(0, free);
+    }
+
+    private void runAsyncWithPermit(ItemOperationCoordinator.Permit permit, Runnable action) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                action.run();
+            } finally {
+                closePermitQuietly(permit);
+            }
+        });
+    }
+
+    private void closePermitQuietly(ItemOperationCoordinator.Permit permit) {
+        if (permit != null) {
+            permit.close();
+        }
     }
 }

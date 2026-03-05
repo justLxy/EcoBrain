@@ -4,6 +4,7 @@ import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.EconomyService;
+import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -162,6 +163,8 @@ public class BulkSellListener implements Listener {
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             List<String> createdNowHashes = new ArrayList<>();
+            List<ItemOperationCoordinator.Permit> itemPermits = new ArrayList<>();
+            boolean permitsHandedOff = false;
             try {
                 Map<String, AggregatedItem> grouped = new HashMap<>();
                 for (ItemStack item : snapshot) {
@@ -176,11 +179,16 @@ public class BulkSellListener implements Listener {
                     });
                 }
 
+                List<String> sortedHashes = new ArrayList<>(grouped.keySet());
+                sortedHashes.sort(String::compareTo);
+                for (String hash : sortedHashes) {
+                    itemPermits.add(marketService.acquireItemPermit(hash));
+                }
+
                 double total = 0.0D;
                 List<Runnable> settleActions = new ArrayList<>();
-                for (Map.Entry<String, AggregatedItem> entry : grouped.entrySet()) {
-                    String hash = entry.getKey();
-                    AggregatedItem aggregatedItem = entry.getValue();
+                for (String hash : sortedHashes) {
+                    AggregatedItem aggregatedItem = grouped.get(hash);
                     MarketService.IpoState ipoState = marketService
                         .ensureIpoForSellAsync(hash, aggregatedItem.base64, aggregatedItem.amount).join();
                     ItemMarketRecord record = ipoState.record();
@@ -229,7 +237,7 @@ public class BulkSellListener implements Listener {
                             }
                         }
                         long cents = payoutCents;
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        runAsyncAndReleasePermits(itemPermits, () -> {
                             repository.releaseTreasuryCents(cents);
                             for (String hash : createdNowHashes) {
                                 try {
@@ -243,8 +251,9 @@ public class BulkSellListener implements Listener {
                         return;
                     }
                     player.sendMessage(ChatColor.GREEN + "批量出售成功，共获得 " + String.format("%.2f", finalTotal) + " 金币。");
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> settleActions.forEach(Runnable::run));
+                    runAsyncAndReleasePermits(itemPermits, () -> settleActions.forEach(Runnable::run));
                 });
+                permitsHandedOff = true;
             } catch (Exception e) {
                 for (String hash : createdNowHashes) {
                     try {
@@ -264,6 +273,10 @@ public class BulkSellListener implements Listener {
                     session.setSettled(false);
                     player.sendMessage(ChatColor.RED + "结算异常，物品已退回: " + e.getMessage());
                 });
+            } finally {
+                if (!permitsHandedOff) {
+                    closePermitsQuietly(itemPermits);
+                }
             }
         });
     }
@@ -279,6 +292,24 @@ public class BulkSellListener implements Listener {
                     }
                 }
                 inventory.setItem(slot, null);
+            }
+        }
+    }
+
+    private void runAsyncAndReleasePermits(List<ItemOperationCoordinator.Permit> permits, Runnable action) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                action.run();
+            } finally {
+                closePermitsQuietly(permits);
+            }
+        });
+    }
+
+    private void closePermitsQuietly(List<ItemOperationCoordinator.Permit> permits) {
+        for (ItemOperationCoordinator.Permit permit : permits) {
+            if (permit != null) {
+                permit.close();
             }
         }
     }

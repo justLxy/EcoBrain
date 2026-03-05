@@ -18,6 +18,7 @@ import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.AMMCalculator;
 import com.ecobrain.plugin.service.EconomyService;
+import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
 import com.ecobrain.plugin.safety.CircuitBreaker;
 import org.bukkit.Bukkit;
@@ -63,9 +64,17 @@ public class EcoBrainPlugin extends JavaPlugin {
             getLogger().warning("Vault 未就绪，EcoBrain 将无法处理经济交易。");
         }
 
+        ItemOperationCoordinator itemOperationCoordinator = new ItemOperationCoordinator();
         this.ammCalculator = new AMMCalculator();
         this.circuitBreaker = new CircuitBreaker(repository, ammCalculator, settings.circuitBreaker());
-        this.marketService = new MarketService(this, repository, ammCalculator, circuitBreaker, settings.economy());
+        this.marketService = new MarketService(
+            this,
+            repository,
+            ammCalculator,
+            circuitBreaker,
+            settings.economy(),
+            itemOperationCoordinator
+        );
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
         this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui(), settings.ai());
         this.leaderboardGUI = new LeaderboardGUI();
@@ -113,7 +122,15 @@ public class EcoBrainPlugin extends JavaPlugin {
         }
         this.onnxModelRunner = new com.ecobrain.plugin.ai.OnnxModelRunner(modelDir, getLogger());
 
-        this.aiScheduler = new AIScheduler(this, this.onnxModelRunner, repository, ammCalculator, settings.ai(), itemSerializer);
+        this.aiScheduler = new AIScheduler(
+            this,
+            this.onnxModelRunner,
+            repository,
+            ammCalculator,
+            settings.ai(),
+            itemSerializer,
+            itemOperationCoordinator
+        );
         this.aiScheduler.setFullSettings(settings);
         this.aiScheduler.start();
 
