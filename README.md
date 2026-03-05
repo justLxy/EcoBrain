@@ -1,571 +1,542 @@
-# EcoBrain: 会自己呼吸的经济大脑 3.0
+# EcoBrain 3.0
 
-传统服务器的经济系统像是一个僵硬的自动售货机：服主写死苹果 5 块钱一个，玩家一旦找到刷金币或刷苹果的漏洞，这个售货机就会被彻底掏空，最后导致服务器物价崩溃。
+EcoBrain 是一个面向 Minecraft 服务器的动态经济插件。它的目标不是“把价格写死”，而是让系统商店根据真实库存、真实交易和真实服务器节奏持续自我修正。
 
-EcoBrain 是为了打破这种僵局而生的。可以把它想象成一个“不仅知道根据库存自动改价，还能根据全服玩家消费习惯不断自我反省和学习的超级商人”。
+当前版本的关键词只有四个：
 
-在 3.0 版本中，我们进一步做了两件关键升级：
-- **单模型（无路由/无分层）**：全服所有物品只使用一个 ONNX 大脑 `ecobrain_value.onnx`。
-- **全局金库（收入=支出）**：系统不是无限发钱；玩家 BUY 让金库变富，玩家 SELL 从金库支出（不足则拒绝收购）。
-
-EcoBrain 3.0 的核心引擎是：**vAMM 动态定价与动态印花税**、**零信任 IPO 冷启动**、**PPO 连续强化学习大脑 (ONNX)** 与 **金库守恒约束**。
-
----
-
-## 1. 零信任 IPO (Zero-Trust IPO) 与初始价值发现
-
-过去，玩家把未知的新物品（哪怕是泥土）第一次卖给系统时，系统会给出一个较高的初始盲猜价，这导致极易产生首发套利漏洞。
-在 3.0 中，系统对任何未知物品秉持**零信任**原则。
-任何未在系统登记过的物品，其首次卖给系统的价格永远是 **100.0 金币**。
-
-**价值由买单决定，而非卖单**：只有当其他玩家愿意花真金白银从系统里**买走**这个物品时，AI 才会认为该物品有真实的“需求价值”，从而真正激活调价引擎将其价格拉升。
-
-> 注意：**100.0 只属于“新物品/首次登记”的 IPO 冷启动阶段**。进入成熟交易期（Mature）后，物品价格会在区间内波动并由市场持续修正；离线模拟器在 reset 时也会混合采样 IPO 与 Mature（见 3.1）。
+- **单模型**：全服统一使用一个 ONNX 模型 `ecobrain_value.onnx`
+- **零信任 IPO**：未知物品首次卖给系统时一律从 `100.0` 金币起步
+- **vAMM 动态定价**：价格跟随库存、滑点和动态印花税变化
+- **全局金库守恒**：玩家 BUY 给系统进钱，玩家 SELL 从系统出钱；金库不够就拒绝收购
 
 ---
 
-## 2. AMM 自动做市商与防套利引擎 (The AMM Engine)
+## 1. 核心机制
 
-### 2.1 动态定价公式
-系统是一个永远开门的商人，他对每件物品都有一个“理想库存量”（Target Inventory）。这个理想库存并非死板固定的，系统会根据全服真实的物理流通量，通过 EMA（指数移动平均）算法**自动且平滑地调整**该物品的理想库存，从而免去服主手动配置成百上千种物品库存的痛苦。
-*   如果你疯狂把苹果卖给他，导致仓库爆满，他会恐慌并**疯狂压低收购价**。
-*   反之，如果全服都来找他买苹果，苹果快绝版了，他会**疯狂抬高售卖价**。
+### 1.1 零信任 IPO
 
-背后的数学公式：
-> **当前价格 = 基准价 × (理想库存 ÷ 当前实际库存) ^ K系数**
+任何未被系统登记过的物品，第一次卖给系统时都不会“盲猜高价”，而是固定按 `100.0` 金币起步。
 
-### 2.2 滑点计算 (Slippage)
-假设苹果现在是 10 块钱一个。玩家想一次性卖给系统 64 个苹果。系统**绝对不会**直接给他 `10 × 64 = 640 块钱`！
-因为只要玩家卖出第 1 个苹果，系统的库存就增加了，根据上面的公式，第 2 个苹果的收购价就已经跌到了 9.9 块；第 3 个跌到了 9.8 块……第 64 个可能只值 5 块钱了。系统会在后台把这 64 个苹果不断下跌的价格**逐个积分相加**，这就是滑点，从数学底层堵死了大户砸盘刷钱。
+这意味着：
 
-### 2.3 动态印花税与反倾销熔断税 (Dynamic Spread & Dumping Tax)
-为了杜绝投机倒把的“羊毛党”和“杀猪盘”，系统引入了**时间加权平均价 (TWAP) 与防倾销惩罚**机制。
-正常情况下，系统对**卖给系统（SELL）**收取 5% 的基础印花税（买入侧不额外收取该税）。
+- 新物品不会因为首单盲猜而被套利
+- 价值主要由后续真实 **BUY** 行为发现，而不是靠首个 **SELL** 行为“抬出来”
 
-**1. 防恶意套现熔断税：** 针对“开局只卖 1 个建仓，左右手互倒把价格炒到 1 万块，最后一次性倾销 1000 个套现”的恶意操控，系统加入了物理库存校验。如果玩家单次抛售量超过当前全服已知物理库存的 3 倍，开始征收超额抛售税（每超出 1 倍加收 10%）。
+### 1.2 vAMM 动态定价
 
-> **DynamicSpread = BaseSpread(5%) + VolatilitySpread + DumpingTax** (最高拦截至 99.9%)
+系统对每个物品维护 3 个关键量：
 
-**2. TWAP / Volatility 的用途：** 当前实现中，TWAP/Volatility 同时用于：
-- **交易风控/税费**：SELL 侧动态印花税会参考 `|P_current - TWAP|/TWAP`，把“剧烈波动”转化为更高的卖出成本（见 `AMMCalculator.calculateDynamicSpread`）。
-- **AI 观测特征**：作为第 5 维 `volatility` 输入 ONNX（见 3.2）。
+- `target_inventory`：理想库存
+- `current_inventory`：虚拟库存池，用于 AMM 曲线定价
+- `physical_stock`：真实库存，用于判断能不能卖给玩家，以及 SELL 风控
 
-这意味着，任何人想要趁机抛售存货砸盘套利，都会被极高的印花税直接没收全部收益，一分钱都套不走。只有真实玩家的正常交易才能享受低滑点。
+当前价公式：
+
+```text
+P_current = base_price * (target_inventory / max(1, current_inventory)) ^ k
+```
+
+直觉上可以理解为：
+
+- 库存越接近枯竭，价格越高
+- 库存越堆积，价格越低
+- `k` 越大，价格对库存变化越敏感
+
+### 1.3 滑点与动态印花税
+
+批量买卖不是简单的“单价 × 数量”。系统会按逐个成交的方式做离散积分，因此天然存在滑点。
+
+SELL 侧还会额外收取动态印花税：
+
+```text
+DynamicSpread = BaseSpread(5%) + VolatilitySpread + DumpingTax
+```
+
+其中：
+
+- `BaseSpread`：基础 5% 税
+- `VolatilitySpread`：当前价偏离 TWAP 越多，SELL 税越高
+- `DumpingTax`：单次抛售量远超当前真实库存时，额外征收防倾销税
+
+### 1.4 全局金库
+
+EcoBrain 3.0 不是无限发钱系统，而是金库守恒系统：
+
+- 玩家 **BUY**：钱进入系统金库
+- 玩家 **SELL**：钱从系统金库支出
+- 金库余额不足时，系统会拒绝收购
+
+### 1.5 AI 的职责边界
+
+AI 不负责逐笔交易定价。逐笔交易的即时价格变化主要来自 vAMM 的库存滑点。
+
+AI 的职责是：
+
+- 每个调控周期读取市场状态
+- 调整 `base_price`
+- 调整 `k`
+
+也就是说，AI 做的是**慢变量宏观调控**，不是逐单撮合。
 
 ---
 
-## 3. 强化学习与宏观调控引擎 (The ONNX AI Brain)
+## 2. 线上插件如何工作
 
-### 3.0 PPO/ONNX/插件整体架构总览
+Java 插件在线上**只做推理，不做训练**。
 
-#### 3.0.1 生产→导出→训练→部署→推理
+一个标准周期大致如下：
 
-```text
-Minecraft 服务器（Java 插件，线上只做推理，不训练）
+1. 插件从数据库读取每个物品的 `base_price / k / target_inventory / current_inventory / physical_stock`
+2. 再聚合最近一段时间的交易数据，构造 16 维 observation
+3. 如果该物品在活动窗口内**没有真实成交**，本周期直接 `HOLD`
+4. 如果有成交，则把 observation 喂给 `ecobrain_value.onnx`
+5. ONNX 输出两个连续动作分量，插件先 `clip -> [-1, 1]`
+6. 再映射为：
+   - `basePriceMultiplier`
+   - `kDelta`
+7. 最后仅保留硬性 clamp，把新的 `base_price / k` 写回数据库
 
-  玩家买卖
-     |
-     v
-  ecobrain.db  (真实交易日志 + AI 决策日志)
-     |
-     |  (按周期统计窗口: schedule / AOV / TWAP)
-     v
-  构造 16 维观测 obs = [6 个核心特征 + 10 个冷启动/信号/风险/金库特征]
-     |
-     v
-  ONNX 推理: OnnxModelRunner.predictAction(obs)
-     |
-     |  (ONNX 输出为连续动作分量；插件端做安全裁剪 clip -> [-1, 1])
-     v
-  连续动作 action = {base_price multiplier, k_delta}
-     |
-     v
-  AIScheduler.applyActionToItem  (安全夹紧/阈值/写库落盘)
+线上插件还会持续记录：
 
+- 真实交易日志
+- AI 调参审计事件
 
-离线训练（Python 模拟器，产出可热更的 ONNX 模型文件）
-
-  Gymnasium 环境: EcoBrainEnv  (simulator/ecobrain_env/env.py)
-     |
-     v
-  Stable-Baselines3 PPO: PPO("MlpPolicy", ...)  (simulator/train.py)
-     |
-     v
-  训练产物: ecobrain_ppo_value.zip + VecNormalize 统计
-     |
-     v
-  导出推理模型: ecobrain_value.onnx
-     |
-     v
-  复制到服务器: plugins/EcoBrain/models/  (覆盖即可热更)
-
-
-闭环数据回流（用真实服情微调）
-
-  /ecobrain admin exportdata  -> 导出训练 CSV
-  python train.py --dataset <path/to/csv>  -> 按时间桶回放真实节奏
-```
-
-你可以把它理解为两条闭环：
-- **线上闭环（实时推理）**：插件按周期统计 → ONNX 推理 → 调参 → 写库落盘（不在线算 reward、不在线训练）
-- **离线闭环（训练/微调）**：用模拟器自博弈或回放 CSV → SB3 PPO 训练 → 导出 ONNX → 覆盖模型文件热更
-
-#### 3.0.2 “接口契约”写死，保证模拟器与插件完全对齐
-
-这几个点是对齐的硬约束（任何一处改了都要同步改另一端）：
-
-- **观测（Observation）**
-  - **维度**：16 维（`float32`）
-  - **shape**：`[1, 16]`
-  - **语义**：前 6 维与旧版一致；后 10 维用于冷启动/信号强度/慢变量/金库约束（见代码实现）
-  - **生成位置**
-    - 插件端：`src/main/java/com/ecobrain/plugin/ai/AIScheduler.java`
-    - 模拟器端：`simulator/ecobrain_env/env.py::_get_obs()`（当前版本固定使用 `log(P_current)`，不再暴露兼容开关）
-
-- **ONNX 输入/输出**
-  - **输入名**：`observation`（插件端按这个名字喂数据）
-  - **输出 shape**：`[1, 2]`
-  - **输出语义**：actor 的 **原始动作（action_net 输出，未 squash）**；插件端会做 `clip -> [-1, 1]` 以对齐训练动作域
-
-- **动作（Action）后处理与映射（插件端真实执行语义）**
-  - 插件端会把两个输出分量做安全裁剪 `clip(out, -1, 1)`（实现：`src/main/java/com/ecobrain/plugin/ai/OnnxModelRunner.java`）。
-  - **动作 0（底价倍率）**：`basePriceMultiplier = 1 + clip(out0,-1,1) * 1.00`
-    - 其中 `1.00` 与模拟器训练侧的 `ACTION_BASE_PRICE_MAX_PERCENT = 1.00` 对齐（`simulator/ecobrain_env/config.py`）
-  - **动作 1（K 微调）**：`kDelta = clip(out1,-1,1) * kDeltaMax`
-    - `kDeltaMax` 为全局安全上限（插件端来自 `ai.tuning.k-delta`，模拟器端由 `ACTION_K_FACTOR_MAX_DELTA` 约束）
-
-> 重要：如果你启用了 `VecNormalize(norm_obs=True)`，训练导出 ONNX 时会把 obs normalization **烘焙进 ONNX**（见 `simulator/train.py` 的导出 wrapper）。因此插件端应持续喂 **raw obs**，不要再做二次归一化。
-
-#### 3.0.3 PPO 的网络（MLP）架构到底是什么？
-
-EcoBrain 的训练使用 SB3 的 `PPO("MlpPolicy", ...)`（见 `simulator/train.py`）。因此策略网络本质上是 **Actor-Critic**：
-- **Actor（策略网络）**：obs → MLP → 输出 2 维连续动作的均值（训练时内部再 squashing）
-- **Critic（价值网络）**：obs → MLP → 输出状态价值 \(V(s)\)
-
-在本仓库当前实现中：
-- **激活函数**：`Tanh`（因为没有显式传 `activation_fn`，SB3 默认就是 `Tanh`）
-- **隐藏层层数与宽度**
-  - **默认（不传 `--net-arch`）**：actor/critic **各自 2 层隐藏层**，宽度 **64 → 64**
-  - **自定义**：传 `--net-arch 256,256,256` 则 actor/critic **各自 3 层隐藏层**（256→256→256）
-- **配置入口**：`simulator/train.py` 会把 `--net-arch` 解析为 `policy_kwargs["net_arch"]` 传给 SB3；不传则走 SB3 默认。
-
-#### 3.0.4 线上“单模型 + AI 调参”的运行时流程（按一个周期）
-每个调控周期（默认 15 分钟，`ai.schedule-minutes`）`AIScheduler` 会对所有已收录物品循环执行：
-
-1) **取数**：从 `ecobrain_items` 拉取 `base_price/k/target/current/physical_stock`，并从 `ecobrain_trade_stats` 聚合统计窗口（AOV/TWAP/净流速等）。  
-2) **构造 obs（16 维）**：前 6 维为 `[saturation, flow, inflation, elasticity, volatility, log_price]`；后 10 维为冷启动/信号强度/慢变量/金库特征（见 3.2）。其中 `log_price = log(P_current)`，`P_current` 来自 AMM 公式而不是 `base_price`。  
-3) **活跃门槛**：若该物品在活动窗口内成交额为 0，则本周期 **不跑 AI**（避免无人问津的物品被乱调）。  
-4) **推理**：所有物品统一走 `ecobrain_value.onnx`（无路由/无分层）。  
-5) **推理**：ONNX 输出 2 维动作分量，插件端 clip 到 \([-1,1]\)，映射为 `basePriceMultiplier` 与 `kDelta`。  
-6) **落地**：`base_price *= basePriceMultiplier`，`k += kDelta`，仅保留硬 clamp（`base_price` 全局上限 `ai.tuning.max-base-price`、`k` 的 `k-min/k-max`、全局最小底价等），然后写回数据库并记录审计事件。  
-
-> 备注：玩家交易发生时，价格“即时变化”主要由 AMM 的库存滑点驱动；AI 的角色是每个周期调整 `base_price/k` 两个慢变量，做宏观调参。
-
-### 3.1 AI 是如何学习的？(The Training Mechanism)
-从 2.0 起我们接入了 PPO (Proximal Policy Optimization) 连续强化学习算法；在 3.0 中升级为 **单模型 mixed-regime**（一个大脑覆盖全价域）。训练仍分为两个阶段：**本地高仿真虚拟推演 (Offline Training)** 和 **生产服数据回流微调 (Online Fine-tuning)**。
-
-#### 阶段一：本地高仿真虚拟推演 (Offline Simulator)
-在把 AI 放到你的服务器之前，我们用 Python `Gymnasium` 框架为它搭建了一个“高仿真的虚拟世界”（代码位于 `simulator/` 目录）。在这个阶段，我们利用计算机的强大算力**“折叠时间”**：把现实中需要 60 分钟才能收集到的一轮市场数据，在 Python 中压缩到零点几毫秒内推演完毕。这意味着 AI 可以在十几秒内经历服务器上百年的经济兴衰史。
-
-**技术逻辑路径如下：**
-1. **环境初始化 (`env.py`)**：构建一个符合 `gymnasium` 标准的强化学习环境。在这里，**我们不是在训练一个具体的物品（比如“钻石剑”），而是在训练一种“商业逻辑”**。环境会虚拟出一个“测试商品”，并给它三组核心状态：
-   - **`target_inventory`**：理想库存（对齐插件端的自适应目标库存逻辑）
-   - **`current_inventory`（虚拟库存池）**：用于 AMM 曲线定价的库存（离线模拟器会在 IPO 冷启动时将其初始化为 `target_inventory`，使开局饱和度约为 100%）
-   - **`physical_stock`（真实库存）**：代表系统真实可卖库存（影响能否买入与防倾销税）
-   
-   **Reset 时的“物品状态混合采样”（更贴近真实服）**：
-   - 以 `IPO_RESET_PROB` 的概率采样 **IPO 冷启动**：`base_price = 100.0` 且 `is_ipo = true`
-   - 否则采样 **成熟物品（Mature）**：`base_price ~ initial_base_price`（支持分布采样），并做 `[MIN_BASE_PRICE, MAX_BASE_PRICE]` 夹紧
-   - 其中 `initial_base_price` 推荐按该 tier 的 hard 区间设置（例如 low 1~1000、mid 1000~10000、high ≥10000）
-2. **单一宇宙（单脑覆盖全价域）**
-  3.0 不再训练/部署多个分层模型。我们把不同供需形态（原 low/mid/high 的三类市场世界）混合进同一个训练环境，让一个大脑在 16 维观测下学会：
-  - 冷启动（新物品/无成交）时先稳住
-  - 有真实买压与成交信号时快速发现价格
-  - 在风控与金库约束下保持长期稳定
-
-3. **高强度的微观博弈 (The Micro-ticks)**
-   在一百万步（timesteps）的训练周期中，每一个 `step()` 回合都经历着经典的 **深度强化学习（Deep Reinforcement Learning）循环**：
-   *   **前向传播 (Observation -> Action)**：AI 神经网络接收当前的 16 维经济状态张量（前 6 维为库存饱和度、净流量、全局通胀率、价格弹性、波动率、**log(当前价)**；后 10 维为冷启动/成交信号/库存尺度/金库强度等）。尤其是**“价格弹性”**，它告诉 AI 涨价后玩家是不买了（廉价品）还是照买不误（必需品/极品）。随后，AI 吐出两个动作：调整底价的百分比和微调 K 系数的幅度。
-   *   **黑盒推演 (Interaction)**：将 AI 决定的价格应用到 AMM 中。接着，在这个价格下，虚拟的“老玩家”、“新玩家”和“倒爷”会通过 micro-ticks 进入市场进行买卖。
-       - **玩家卖出需要自己真的有物品库存**（不会出现“无限倾销凭空造物品”的假象）
-       - 每个 micro-tick 会先进行一次 **产出/消耗 tick**（用 Poisson 过程模拟自动化产出与消耗），再决定是否买/卖
-   *   **结算打分 (Reward Calculation)**：周期结束，环境统算。Reward 只用于离线训练（插件端不在线算 reward）。核心目标是：交易活跃但不过度通胀、库存围绕目标、价格长期稳定在每个 tier 的 hard range / reward band 内（band 外采用连续惩罚，避免“常数罚”导致学不到方向）。
-   *   **反向传播 (Backpropagation)**：`Stable-Baselines3` 框架收集到这批 `<状态, 动作, 得分>` 的经验池后，利用梯度下降计算损失，**反向传播去更新神经网络内部的权重**。让 AI 逐渐形成“肌肉记忆”。
-
-#### 3.1.1 离线模拟器机制速览（通俗版）
-
-模拟器只“虚拟一种商品”，但它的经济机制与插件端保持同一套核心语义（vAMM 定价 + 双库存 + 动态印花税 + 风控约束）。每个 `step()` 约等于线上一次 AI 调控周期（默认 15 分钟）。
-
-- **step 内发生顺序**：
-  - **AI 调参**：输出两个连续动作：`base_price` 的倍率、`k_factor` 的增量（并会做安全夹紧/上下限）。
-  - **玩家交易**：同一个 step 里会跑多轮 micro-ticks（默认 10 轮），让“买卖”更像连续发生。
-  - **更新状态/奖励**：计算 16 维观测（见下文）与 reward（reward 仅用于离线训练，插件端不在线计算 reward）。
-
-- **双库存**：
-  - **`physical_stock`**：真实库存（决定是否能买、影响 dumpingTax）。
-  - **`current_inventory`**：虚拟库存池（决定 vAMM 曲线与价格敏感度）。
-
-- **动态印花税（SELL 侧）**：基础 5% + volatilitySpread + dumpingTax（最高可到 99.9%）。
-
-
-#### 3.1.2 更鲁棒的“玩家生态”随机化（Domain Randomization）
-
-如果你不提供真实 CSV 数据，模拟器默认不会死记一套固定概率，而是**每个 episode 抽样一套生态**（更通用、更抗服情变化）：
-
-- **Market Regime（市场状态）**：如 `quiet / normal / dumping / event_buying`，用乘子整体放大或缩小买卖概率与单量，模拟“养老服低频”“清仓倾销”“活动周末买压”等。
-- **玩家 Archetype 分布**：老玩家/新玩家/倒爷的数量、buy/sell 概率、单量、资金均从分布采样（`beta/loguniform/choice` 等）。
-- **供需来源也随机化**：每类玩家都可以配置 `initial_item_inventory / produce_lambda / consume_lambda`，让“供大于求/活动买压/清仓倾销”等服情来自可控的产出与消耗，而不是无上限卖出。
-
-配置入口都在 `simulator/ecobrain_env/config.py`：
-
-- `ECOSYSTEM_RANDOMIZATION.enabled`: 是否启用生态随机化
-- `MARKET_REGIMES`: 各 regime 的权重与乘子
-- `SIMULATED_PLAYER_ARCHETYPES`: 各类玩家的分布化参数
-
-> 如果你提供了真实 CSV（`--dataset`），模拟器会优先按 `created_at` 时间桶回放你服的真实交易节奏，并按 `item_hash` 选择与当前 latent tier 匹配的代表物品作为单品回放对象；全局宏观特征仍使用整份 CSV 的聚合统计。这样会比“压成固定概率”更贴近真实服情，并保留少量“倒爷”作为压力测试。
-
-#### 3.1.3 Reward 设计要点（开发者，防遗忘）
-Reward 只存在于模拟器，用来让 PPO 学到“宏观调控”的偏好。实现位置：`simulator/ecobrain_env/env.py`，权重在 `simulator/ecobrain_env/config.py`。
-
-- **交易激励信号**：
-  - `low/mid`：用 `trade_qty`（数量）而不是 `trade_value`（金额），避免策略学出“抬价刷成交额”的捷径
-  - `high`：用 `log1p(trade_value)` 压缩金额信号，避免极端高价 runaway
-- **通胀惩罚**：
-  - `low/mid`：用 `inflation_ratio = max(0, sell-buy)/(sell+buy)`（价格无关）替代 `netEmission/dynamicAOV`（避免通过抬价让 AOV 变大来“洗掉”惩罚）
-- **价格 shaping**：
-  - 所有 tier：hard range 外按越界距离加重惩罚；hard range 内对 band 外做连续惩罚（而非常数罚），让梯度“有方向”
-  - 注意：当前实现中 shaping 的 `price` 指 **AMM 当前价 \(P_{current}\)**（与观测第 6 维 `log_price` 完全一致），而不是 `base_price`
-
-4. **导出成果 (ONNX Export)**：
-   经过亿万次试错和梯度更新，AI 的权重收敛到了最优状态。`train.py` 会将这个饱经风霜的 PyTorch 神经网络，剥离掉不需要的训练代码，**打包成一个只包含纯粹前向传播计算图的 `.onnx` 模型文件**。
-   这个文件极其轻量，随后交给 Java 插件在真实的 Minecraft 服务器中**瞬间完成毫秒级的免环境推理（Inference）**，这就是我们在 Java 端不需要再等 60 分钟去训练，也不会卡死主线程的根本原因。
-
-#### 阶段二：闭环数据回流 (Online Fine-tuning)
-每个服务器的玩家生态都是不同的。本地模拟器训练出来的模型虽然强大，但可能不是最贴合你服务器“服情”的。
-
-为此，EcoBrain 3.0 提供了**生产数据回流机制**：
-1. **数据捕获**：Java 插件在运行过程中，会把每一次真实的玩家交易、AI 每次看到的真实状态（State）以及作出的决策（Action），默默记录在 `ecobrain.db` 数据库中。
-2. **导出提炼**：服主可以在游戏中执行 `/ecobrain admin exportdata`，系统会立刻把生产服内**所有的真实玩家交易日志**打包为 CSV 文件导出到 `plugins/EcoBrain/` 目录。
-3. **二次进化 (Fine-tuning)**：你可以随时把这些真实的交易日志丢回 Python 模拟器中。模拟器会按真实时间顺序和时间桶回放这些交易节奏，并按 `item_hash` 选取与当前训练 tier 匹配的代表物品来驱动单品市场；同时保留全局宏观统计用于 observation。这就相当于让 AI **在回放你服务器的真实历史**中重新挨打、重新学习。
-4. **无缝热更**：训练后生成的新 `.onnx` 模型可以直接覆盖回服务器的 `models/` 目录。不需要占用服务器 CPU，你就能获得一个 100% 懂你服务器玩家的“专武大脑”。
+但**当前 `exportdata` 导出的训练 CSV 只包含真实交易日志**，不会导出完整 observation 或完整 action。
 
 ---
 
-### 3.2 状态空间 (Observation Space)
-AI 每次调控（默认每 15 分钟，可在 `config.yml` 里调整）会提取 **16 维**经济指标作为输入张量（与模拟器完全对齐，顺序固定）：
+## 3. 离线训练如何工作
 
-1. **Saturation (饱和度)**：`current_inventory / target_inventory`
-2. **Recent Flow (近期流速)**：净流量（BUY 正 / SELL 负），按分钟归一
-3. **Global Inflation (全局通胀率)**：`周期净印发 / 动态客单价(AOV)`
-4. **Price Elasticity (价格弹性, 启发式)**：`recentFlow / |ΔP|`（剪裁稳定）
-5. **Volatility (波动率)**：`|P_current - TWAP| / TWAP`
-6. **Log Price（绝对价位）**：`log(P_current)`（用于让策略“看见”绝对价位）
-7. **Log Age（冷启动年龄）**：物品建档至今经历了多少个 AI 周期的对数压缩
-8. **Has Activity Trade（是否有成交）**：活动窗口内是否存在真实成交（0/1）
-9. **Log Activity（成交强度）**：活动窗口成交额/分钟的对数压缩
-10. **Log Target Inventory（目标库存规模）**：`log1p(target_inventory)`
-11. **Log Physical Stock（真实库存规模）**：`log1p(physical_stock)`
-12. **Price Change Pct（周期均价变化）**：本周期单位均价相对上周期的变化率（剪裁）
-13. **Log Base Price（底价对数）**：`log(base_price)`
-14. **K Factor（k 系数）**：当前 k（夹紧在 `k-min~k-max`）
-15. **Physical Ratio（真实/目标比例）**：`physical_stock / target_inventory`（剪裁）
-16. **Log Treasury（系统金库强度）**：`log1p(treasury / AOV)`（归一化到服情尺度）
+离线训练由 `simulator/` 下的 Python 环境完成，使用 `Gymnasium + Stable-Baselines3 PPO`。
 
-> 开发者提示：**模拟器与插件必须完全一致**。当前版本已经把第 6 维固定为 `log(P_current)`，不再提供“退回旧语义”的兼容开关，以避免误训练出 Java 端无法正确消费的模型。模拟器由 `simulator/ecobrain_env/env.py::_get_obs()` 生成；插件端由 `src/main/java/com/ecobrain/plugin/ai/AIScheduler.java` 生成。
+训练产物：
 
-#### 3.2.1 具体公式（按当前实现）
+- `ecobrain_ppo_value.zip`
+- `ecobrain_ppo_value_vecnormalize.pkl`（若启用）
+- `ecobrain_value.onnx`
 
-设：
-- 调控周期窗口 `W_ms`（毫秒）= `ai.schedule-minutes` × 60 × 1000
-- AOV/TWAP 窗口 `H_ms`（毫秒）= `ai.aov-window-hours` × 60 × 60 × 1000
-- 当前时刻 `t`，则本周期区间为 `[t-W_ms, t)`，上周期为 `[t-2W_ms, t-W_ms)`
+导出的 `ecobrain_value.onnx` 会被复制回服务器，由 Java 插件做推理。
 
-**1) Saturation**
+### 3.1 模拟器里的市场
+
+模拟器一次只控制**一个被训练的单品市场**，但它仍然维护和线上同语义的核心状态：
+
+- `target_inventory`
+- `current_inventory`
+- `physical_stock`
+- `base_price`
+- `k`
+- `treasury`
+
+一个 `step()` 约等于线上一次 AI 调控周期。
+
+模拟器里会发生两类市场驱动：
+
+- **自博弈模式**：随机化的老玩家 / 新玩家 / 倒爷生态
+- **数据回放模式**：按线上导出的 CSV 时间桶回放真实交易节奏
+
+### 3.2 训练里的 low / mid / high 是什么
+
+这点很重要：
+
+**`low / mid / high` 是离线训练里的“环境 bucket / reward shaping bucket”，不是线上插件的真实物品标签。**
+
+线上插件并不会给物品打一个“真实 tier”再按 tier 路由模型。当前版本线上只有：
+
+- 一个模型
+- 一套连续 observation
+- 一套统一推理逻辑
+
+离线训练里的 `low / mid / high` 主要用于：
+
+- 采样不同价位区间的训练环境
+- 使用不同的 reward band / shaping
+- 在回放真实 CSV 时，按价格区间选一个更合适的代表物品
+
+所以：
+
+- **tier 不是线上硬标签**
+- **tier 也不是模型在线推理时必须知道的真值**
+- 它只是离线训练时帮助模型见到不同价位世界的一种组织方式
+
+### 3.3 线上导出的 CSV 有什么用
+
+当前 `exportdata` 导出的核心字段是：
+
+- `item_hash`
+- `trade_type`
+- `quantity`
+- `total_price`
+- `created_at`
+
+这些字段的价值分别是：
+
+- `item_hash`：把同一种物品的交易串起来
+- `trade_type`：区分真实买压和卖压
+- `quantity`：重建流速、单量和库存压力
+- `total_price`：重建单位成交价、AOV、金库收支尺度
+- `created_at`：重建真实时间节奏
+
+### 3.4 CSV 在训练里是怎么被使用的
+
+CSV 不是被当成“监督学习标签”直接喂给模型，而是被当成**真实服务器节奏的证据**，放进模拟器里让 PPO 继续试错。
+
+当前流程是：
+
+1. 把整份 CSV 按 `created_at` 切成与 `schedule-minutes` 对齐的时间桶
+2. 所有物品的交易一起用于构造**全局宏观统计**
+   - AOV
+   - 全局收支压力
+   - 全局市场节奏
+3. 同时按 `item_hash` 拆分单物品交易
+4. 每个 episode 选择一个代表性 `item_hash` 作为“当前被控制的单品市场”
+5. PPO 仍然自己输出 `base_price` 和 `k` 的动作
+6. 模拟器在这个动作下，回放该时间桶里的真实交易节奏
+7. 根据结果计算 reward，继续更新模型
+
+所以它是：
+
+- **真实交易节奏回放**
+- **模拟器内状态演化**
+- **PPO 继续试错学习**
+
+而不是：
+
+- 直接拿真实数据做监督学习
+- 也不是逐帧完整复刻线上全部内部状态
+
+### 3.5 数据回放模式的边界
+
+当前 CSV 回放很有用，但它不是“100% 服务器状态录像”。
+
+它能提供：
+
+- 哪个时间点有买卖
+- 买还是卖
+- 量有多大
+- 成交总价多少
+- 全局市场节奏如何变化
+
+它不能直接提供：
+
+- 当时完整 observation
+- 当时完整 action
+- 当时的 `base_price / k / target_inventory / current_inventory / physical_stock` 快照
+
+所以现阶段的离线训练更准确地说是：
+
+**交易日志驱动的半回放训练**，不是逐帧状态镜像。
+
+---
+
+## 4. Observation / Action 契约
+
+这是 Java 插件和 Python 模拟器之间最重要的“接口契约”。
+
+### 4.1 Observation
+
+输入维度固定为：
+
+- 类型：`float32`
+- shape：`[1, 16]`
+- 输入名：`observation`
+
+16 维 observation 顺序固定如下：
+
+1. `saturation`
+2. `recent_flow`
+3. `global_inflation`
+4. `elasticity`
+5. `volatility`
+6. `log_price`
+7. `log_age`
+8. `has_activity_trade`
+9. `log_activity`
+10. `log_target_inventory`
+11. `log_physical_stock`
+12. `price_change_pct`
+13. `log_base_price`
+14. `k_factor`
+15. `physical_ratio`
+16. `log_treasury`
+
+开发者注意：
+
+- 第 6 维已经固定为 `log(P_current)`，不再保留旧语义开关
+- 如果训练启用了 `VecNormalize(norm_obs=True)`，obs normalization 会被**烘焙进 ONNX**
+- 因此 Java 插件应继续喂 **raw obs**，不要再做二次归一化
+
+### 4.2 Action
+
+ONNX 输出 shape 固定为 `[1, 2]`。
+
+两个动作分量的含义是：
+
+- `out0`：底价倍率控制
+- `out1`：`k` 的增量控制
+
+插件端会先做：
 
 ```text
-saturation = current_inventory / max(1, target_inventory)
+clip(out, -1, 1)
 ```
 
-**2) Recent Flow（按分钟归一）**
+再映射为：
 
 ```text
-# trade sign:
-#   BUY  -> +1
-#   SELL -> -1
-
-netFlow = Σ_{tr in [t-W_ms, t)} sign(tr) * quantity(tr)
-recentFlow = netFlow / max(1, scheduleMinutes)
+basePriceMultiplier = 1 + clip(out0, -1, 1) * ACTION_BASE_PRICE_MAX_PERCENT
+kDelta              =     clip(out1, -1, 1) * ai.tuning.k-delta
 ```
 
-**3) Global Inflation**
+之后再对真实执行值做硬性 clamp：
 
-```text
-# money sign:
-#   SELL -> +total_price (system emits money)
-#   BUY  -> -total_price (system sinks money)
+- `base_price`：`[MIN_BASE_PRICE, ai.tuning.max-base-price]`
+- `k`：`[ai.tuning.k-min, ai.tuning.k-max]`
 
-netEmission = Σ_{tr in [t-W_ms, t)} moneySign(tr) * totalPrice(tr)
+---
 
-dynamicAOV = (Σ_{tr in [t-H_ms, t)} totalPrice(tr)) / max(1, count(tr))
+## 5. 自己训练 AI
 
-globalInflation = netEmission / max(eps, dynamicAOV)
-```
+### 5.1 准备环境
 
-**4) Elasticity（启发式）**
-
-先算“本周期单位均价”（窗口 VWAP）：
-
-```text
-unitPriceNow  = (Σ totalPrice in [t-W_ms, t))   / max(eps, Σ quantity in [t-W_ms, t))
-unitPricePrev = (Σ totalPrice in [t-2W_ms, t-W_ms)) / max(eps, Σ quantity in [t-2W_ms, t-W_ms))
-
-deltaP = (unitPriceNow - unitPricePrev) / max(eps, unitPricePrev)
-
-elasticity = clip(
-  recentFlow / max(eps, abs(deltaP) * 100),
-  -1e4, 1e4
-)
-```
-
-**5) Volatility（TWAP 桶均价近似）**
-
-将 `[t-H_ms, t)` 按时间桶大小 `B_ms = W_ms` 切分。对每个非空桶 `b`：
-
-```text
-bucketVWAP[b] = (Σ_{tr in bucket b} totalPrice(tr)) / max(eps, Σ_{tr in bucket b} quantity(tr))
-TWAP = average(bucketVWAP[b]) over all non-empty buckets
-
-volatility = abs(P_current - TWAP) / max(eps, TWAP)
-```
-
-其中 `P_current` 为 AMM 当前价：
-
-```text
-P_current = basePrice * (targetInventory / max(1, currentInventory))^k
-```
-
-**6) Log Price（第 6 维观测）**
-
-```text
-logPrice = clip( log(max(eps, P_current)), -20, 20 )
-```
-
-**7) Log Age（第 7 维）**
-
-```text
-ageCycles = (now_ms - created_at_ms) / max(1, W_ms)
-logAge = clip( log1p(max(0, ageCycles)), 0, 20 )
-```
-
-**8) Has Activity Trade（第 8 维）**
-
-```text
-hasActivity = 1 if activityVolume > 0 else 0
-```
-
-**9) Log Activity（第 9 维）**
-
-```text
-logActivity = clip( log1p( max(0, activityVolume / scheduleMinutes) ), 0, 20 )
-```
-
-**10) Log Target / 11) Log Physical（第 10~11 维）**
-
-```text
-logTarget = clip( log1p(targetInventory), 0, 20 )
-logPhysical = clip( log1p(physicalStock), 0, 20 )
-```
-
-**12) Price Change Pct（第 12 维）**
-
-```text
-priceChangePct = clip( (unitPriceNow - unitPricePrev) / max(eps, unitPricePrev), -10, 10 )
-```
-
-**13) Log Base Price（第 13 维）**
-
-```text
-logBasePrice = clip( log(max(eps, basePrice)), -20, 20 )
-```
-
-**14) K Factor（第 14 维）**
-
-```text
-kFactor = clamp(k, k_min, k_max)
-```
-
-**15) Physical Ratio（第 15 维）**
-
-```text
-physicalRatio = clip( physicalStock / max(1, targetInventory), 0, 1000 )
-```
-
-**16) Log Treasury（第 16 维）**
-
-```text
-treasuryScaled = treasuryMoney / max(eps, dynamicAOV)
-logTreasury = clip( log1p(max(0, treasuryScaled)), 0, 20 )
-```
-
-### 3.3 动作空间 (Action Space) 与推理
-ONNX 导出的是 actor 的原始动作分量（未 squash，数值理论上可超出 \([-1,1]\)），插件端会先做 `clip(out, -1, 1)`，再映射到实际的调控幅度：
-*   **Base Price Multiplier (`[-100% ~ +100%]`)**：AI 直接决定基准价上涨或下跌的百分比。最新版本默认全权放权给 AI（单次最大翻倍或跌底，即 100% 变幅），给予 AI 极大的调控权力来应对如老玩家疯狂倾销等极端市场变化。你可以在 `simulator/ecobrain_env/config.py` 中自定义此上限（`ACTION_BASE_PRICE_MAX_PERCENT`）。
-*   **K-Factor Delta (`[-kDeltaMax ~ +kDeltaMax]`)**：AI 微调 AMM 曲线的陡峭程度。K 系数非常敏感，直接影响滑点深度。**模拟器端上限**在 `simulator/ecobrain_env/config.py`（`ACTION_K_FACTOR_MAX_DELTA`）；**插件端上限**来自 `config.yml` 的 `ai.tuning.k-delta`。
-
-为了保证性能与跨平台兼容，Java 插件通过集成 `ONNX Runtime` 实现了**脱离 Python 环境的毫秒级端侧推理**。Java 插件对所有物品统一使用 `ecobrain_value.onnx` 推理，不再存在分层路由。
-
-#### 3.3.1 ONNX 推理对齐要点（开发者勿忘）
-- **输入名与 shape**：输入名固定为 `observation`，shape 为 `[1, 16]`（batch 维可变）。
-- **输入应为 raw obs**：若训练启用了 `VecNormalize(norm_obs=True)`，导出 ONNX 时会把 obs normalization **烘焙进 ONNX**；因此插件端不要再做二次归一化。
-- **动作裁剪**：插件端会对 ONNX 输出做 `clip(out, -1, 1)` 作为安全裁剪（见 `OnnxModelRunner`），然后按 `ACTION_BASE_PRICE_MAX_PERCENT` 与全局 `kDeltaMax` 上限映射为真实调参幅度。
-- **Pure RL（生产执行语义）**：插件端不再做“爆仓/稀缺/无供给衰减”等动作覆盖，**只保留硬 clamp 与交易风控**。否则会造成“模型输出的动作 ≠ 实际执行动作”的分布错位，影响收敛与线上效果。
-- **硬性 clamp（3.0 单模型）**：线上与离线都只保留全局硬上限/下限夹紧：
-  - `base_price`：`[MIN_BASE_PRICE, MAX_BASE_PRICE]`（插件端 `ai.tuning.max-base-price` 与模拟器 `MAX_BASE_PRICE` 对齐）
-  - `k`：`[k-min, k-max]`
-
-### 3.4 动手实践：如何自己训练 AI (How to Train)
-想要在本地复现训练过程，或者使用自己服务器的数据微调模型，请按照以下步骤操作：
-
-**1. 准备 Python 环境**
 ```bash
 cd simulator
 pip install -r requirements.txt
 ```
-> 你可以按需使用 venv/conda，但不是必须；关键是安装 `simulator/requirements.txt` 里的依赖。ONNX 导出需要 `onnxscript`。
 
-**2. 自定义物品阈值（可选）**
-如果你想调整各阶级物品的目标库存、奖惩门槛、价格判定标准，可以直接打开并修改 `simulator/ecobrain_env/config.py`。所有的参数都已经用中文写好了注释，无需修改底层算法逻辑。
+### 5.2 本地从头训练
 
-**3. 启动本地高仿真训练 (Offline Training)**
-直接运行 `train.py`，程序会训练 **单一 mixed-regime 大脑**（一个模型覆盖全价域）。在百万级的博弈推演后，代码会自动把 PPO 模型导出为 Java 可读的 ONNX 格式。
 ```bash
 python train.py
 ```
-> 如果你本机没装 tensorboard，可以用 `--log-formats stdout,csv`，避免 SB3 logger 报错。
-训练完成后，你会在 `simulator` 目录下看到 `ecobrain_value.onnx` 文件。将它复制到服务器的 `plugins/EcoBrain/models/` 目录下，并在游戏内输入 `/ecobrain reload` 即可完成大模型的无缝热更！
 
-**4. 使用生产服数据进行微调 (Online Fine-tuning)**
-当服务器运行一段时间后：
-1. 在游戏内管理员输入命令：`/ecobrain admin exportdata`
-2. 插件会在 `plugins/EcoBrain/` 目录下生成一个包含真实玩家经济行为的日志文件（如 `ecobrain_training_data_1700000000.csv`）。
-3. 复制该文件的绝对路径，直接用 `--dataset` 参数告诉训练脚本去读取它：
+如果你不需要 tensorboard，可以这样跑：
+
+```bash
+python train.py --log-formats stdout,csv
+```
+
+### 5.3 用真实服务器数据继续训练
+
+1. 服务器运行一段时间
+2. 在游戏内执行：
+
+```text
+/ecobrain admin exportdata
+```
+
+3. 拿到导出的 CSV 路径后训练：
+
 ```bash
 python train.py --dataset /你的服务器路径/plugins/EcoBrain/ecobrain_training_data_1700000000.csv
 ```
-4. 脚本会自动解析 CSV 文件，按 `created_at` 把真实交易切成与 `schedule-minutes` 对齐的时间桶，并按 `item_hash` 选出与当前训练 tier 匹配的代表物品进行单品回放；全局宏观特征仍用整份 CSV 聚合，因而比“购买率/抛售率压缩”更接近真实服情。
-5. 等待训练完成，将生成的新 `.onnx` 模型覆盖回服务器即可！不需要再手动改任何代码了！
 
-> 重要提示：如果你修改了模拟器的核心机制（例如“玩家卖出必须有库存”“产出/消耗模型”“reset 的 IPO/Mature 混合”），这属于**环境分布变化**，建议删除旧的 `ecobrain_ppo_*.zip` / `*_vecnormalize.pkl` 或使用 `--no-resume` 从头训练，否则容易在旧分布策略上继续跑导致效果很差。
+### 5.4 训练完成后部署
 
-> 同样重要：如果你修改了 Observation 的含义（例如第 6 维从 `is_ipo_flag` 改为 `log(price)`），也属于**观测分布变化**，必须从头训练并重新导出 ONNX；插件端构造观测也要保持一致。
+训练完成后会得到 `ecobrain_value.onnx`。
 
-#### 3.4.1 训练产物与目录约定（开发者）
-- **模型权重（SB3）**：`ecobrain_ppo_value.zip`
-- **VecNormalize 统计**：`ecobrain_ppo_value_vecnormalize.pkl`（若启用 VecNormalize）
-- **导出推理模型（ONNX）**：`ecobrain_value.onnx`
-- **断点续训/评估日志**：`simulator/checkpoints/`（默认；可用 `--checkpoint-dir` 修改）
-- **训练日志**：`simulator/runs/ecobrain_ppo_value/`（默认；可用 `--log-dir` 修改）
+把它复制到服务器：
 
-> 提示：3.0 训练默认会尝试在已有模型/断点上继续训练；如果你改了观测维度或核心机制，请用 `--no-resume` 从头训练。
+```text
+plugins/EcoBrain/models/ecobrain_value.onnx
+```
+
+然后在游戏内执行：
+
+```text
+/ecobrain reload
+```
+
+### 5.5 什么时候必须从头训练
+
+如果你改了下面这些内容，请不要继续接旧 checkpoint，直接 `--no-resume` 从头训练：
+
+- observation 语义
+- 动作映射语义
+- SELL 税费机制
+- 自适应 target 更新逻辑
+- 数据回放逻辑
+- 玩家生态模型
+
+建议命令：
+
+```bash
+python train.py --no-resume
+```
+
+### 5.6 训练产物
+
+- 模型权重：`ecobrain_ppo_value.zip`
+- VecNormalize 统计：`ecobrain_ppo_value_vecnormalize.pkl`
+- ONNX 推理模型：`ecobrain_value.onnx`
+- Checkpoints：`simulator/checkpoints/`
+- 训练日志：`simulator/runs/ecobrain_ppo_value/`
 
 ---
 
-## 3.5 管理员：回收“系统资金”（QuickTax 集成）
+## 6. 配置对齐清单
 
-EcoBrain 会把玩家与系统商店的每笔交易写入 `ecobrain.db`（`ecobrain_player_transactions`）：
-- 玩家**卖给系统（SELL）**：系统向玩家**发钱**
-- 玩家**从系统购买（BUY）**：系统从玩家**收钱**
+如果你修改了下面这些配置，请记得同步检查 Java 插件和 Python 模拟器两边是否一致：
 
-当你希望“一键收回所有系统净支出的钱”时，可以使用：
+- `ai.schedule-minutes`
+- `ai.aov-window-hours`
+- `ai.tuning.max-base-price`
+- `ai.tuning.k-delta`
+- `ai.tuning.k-min`
+- `ai.tuning.k-max`
+- `ai.adaptive-target.smoothing-factor`
+- `ai.adaptive-target.quantity-cap`
+- `economy.treasury.initial-balance`
+- `circuit-breaker.critical-inventory`
 
-- **预览（不扣钱）**：`/ecobrain admin reclaimmoney preview`
-- **执行回收**：`/ecobrain admin reclaimmoney`
+---
 
-回收逻辑按玩家聚合：
+## 7. 管理员功能
+
+### 7.1 导出训练数据
+
+命令：
+
+```text
+/ecobrain admin exportdata
+```
+
+作用：
+
+- 导出当前服务器的真实交易日志
+- 供离线训练时用 `--dataset` 回放
+
+### 7.2 回收系统资金（QuickTax）
+
+EcoBrain 会把玩家和系统商店的交易累计到 `ecobrain_player_transactions`。
+
+当你想回收系统历史净支出时，可以使用：
+
+- 预览：`/ecobrain admin reclaimmoney preview`
+- 执行：`/ecobrain admin reclaimmoney`
+
+回收公式：
+
 \[
 \text{outstanding} = \sum(\text{SELL}) - \sum(\text{BUY}) - \sum(\text{已回收})
 \]
 
-执行时插件会用控制台批量派发 QuickTax 命令（默认）：
-- `qt collectname {player} {amount}`
+默认 QuickTax 命令模板：
 
-要允许扣成负数，请在 QuickTax 的 `config.yml` 设置 **`debt-mode: 2`**。
+```text
+qt collectname {player} {amount}
+```
 
-## 4. Use Case (一个物品的完整一生)
+如果要允许扣到负数，请在 QuickTax 的 `config.yml` 中设置：
 
-1. **IPO**：玩家把未知的“附魔钻石剑”第一次卖给系统，只能拿到可怜的 100.0 金币。
-2. **价值发现**：另一名土豪玩家路过商店，发现这把剑不错，花钱买走了它。
-3. **AMM 接管**：系统库存减少，触发 AMM 机制，价格出现基础滑动。
-4. **防套利启动**：投机者看到价格被炒高，试图抛售几千把“附魔钻石剑”赚差价，却触发了“防倾销熔断税”，被扣除了 99.9% 的手续费，血本无归。
-5. **自适应与 AI 宏观定调**：系统根据该物品长期的真实流通量极少，**自动将其目标库存自适应缩减为个位数**，从而使其被划分为“高价值宇宙”。AI 经理接管后，发现这把剑在稀缺状态下依然有买压，会把底价拉升到你配置的高价值区间上沿（受 `ai.tuning.max-base-price` 天花板约束；例如配置为 10w，则最多到 10w）。
-6. **最终**：市场在没有服主人工干预、无需手动设置库存和价格的情况下，依靠 AI 自治与动态安全网，精准且安全地找到了每一件物品最真实的社会价值。
+```text
+debt-mode: 2
+```
 
 ---
 
-## 4.1 主手市场提示（Title / 副Title）
+## 8. 一个物品的完整生命周期
 
-为提高玩家对“系统市场”的感知，EcoBrain 支持在玩家**主手切换到市场已在售的物品**时，向玩家发送一次 Title/副Title 提示（约 2 秒）。  
+1. 玩家第一次把未知物品卖给系统，系统按 `100.0` 金币 IPO 价接收
+2. 之后有其他玩家真实 BUY，这个物品开始出现成交信号
+3. `current_inventory` 因买卖变化，vAMM 价格随之变化
+4. 如果价格偏离 TWAP 或有人恶意大额倾销，SELL 税会明显升高
+5. AI 在有活动信号的周期里，逐步调 `base_price` 和 `k`
+6. 经过多轮真实交易和调控，价格靠近服务器真实愿意接受的区间
+
+注意：
+
+- 当前版本线上没有“真实 tier 标签”驱动推理
+- AI 依赖的是连续 observation，而不是某个固定类别名
+
+---
+
+## 9. 主手市场提示（Title / Subtitle）
+
+EcoBrain 支持在玩家主手切换到“市场里有货的物品”时发送一次标题提示。
+
 特点：
-- **只提示主手**：玩家持续手持同一物品不重复提示；切换到新物品会提示新物品（带防抖，避免滚轮刷屏）。  
-- **避免误导**：默认仅在“至少能买 1 个”（未冻结、未触发库存保护）时才提示。  
-- **文案可配置**：支持 `{item}` / `{price}` / `{cmd}` 占位符（见 `config.yml` 的 `market-hint`）。  
 
-提示中默认展示购买指令：`/ecobrain sell buy <数量>`（插件已做兼容，等价于 `/ecobrain buy <数量>`）。
+- 只在主手切换时提示
+- 有防抖，避免滚轮刷屏
+- 默认仅在“至少还能买 1 个”时提示
+- 文案支持 `{item}` / `{price}` / `{cmd}`
 
-## 5. PlaceholderAPI 占位符（系统商店买卖排行榜 / 个人数据）
+默认展示的命令文案是：
 
-EcoBrain 支持将“系统商店交易榜单（卖给系统/从系统购买）”与“玩家个人统计”以 PlaceholderAPI 变量形式暴露，便于在计分板、GUI、聊天、公告等任意支持 PAPI 的地方使用。
+```text
+/ecobrain sell buy <数量>
+```
 
-- **依赖**：需要服务器安装 `PlaceholderAPI`（EcoBrain 为 `softdepend`，不装不会报错，只是不会注册占位符）
-- **占位符前缀**：`ecobrain`
-- **空值约定**：
-  - **榜单 name**：该名次不存在时返回空字符串
-  - **金额 money**：该名次/该玩家没有记录时返回 `0.00`（`*_raw` 返回 `0`）
-  - **名次 rank**：该玩家没有记录时返回 `0`
+插件内部已兼容，它等价于：
 
-### 1) 排行榜 TopN（出售榜/消费榜）
+```text
+/ecobrain buy <数量>
+```
 
-出售榜 = 玩家把物品**卖给系统**（`SELL`）累计成交额排行  
-消费榜 = 玩家从系统**买入物品**（`BUY`）累计成交额排行
+---
 
-- **出售榜 TopN**
-  - `%ecobrain_top_sell_name_<N>%`：第 N 名玩家名
-  - `%ecobrain_top_sell_money_<N>%`：第 N 名出售总额（两位小数）
-  - `%ecobrain_top_sell_money_<N>_raw%`：第 N 名出售总额（原始数值）
+## 10. PlaceholderAPI 占位符
 
-- **消费榜 TopN**
-  - `%ecobrain_top_buy_name_<N>%`：第 N 名玩家名
-  - `%ecobrain_top_buy_money_<N>%`：第 N 名消费总额（两位小数）
-  - `%ecobrain_top_buy_money_<N>_raw%`：第 N 名消费总额（原始数值）
+依赖：
 
-示例：
+- 服务器安装 `PlaceholderAPI`
+- 前缀固定为 `ecobrain`
+
+### 10.1 排行榜 TopN
+
+出售榜 = 玩家 **SELL 给系统** 的累计成交额排行  
+消费榜 = 玩家 **BUY 自系统** 的累计成交额排行
+
+出售榜：
+
+- `%ecobrain_top_sell_name_<N>%`
+- `%ecobrain_top_sell_money_<N>%`
+- `%ecobrain_top_sell_money_<N>_raw%`
+
+消费榜：
+
+- `%ecobrain_top_buy_name_<N>%`
+- `%ecobrain_top_buy_money_<N>%`
+- `%ecobrain_top_buy_money_<N>_raw%`
+
+兼容别名：
+
+- `top_`
+- `lb_`
+- `leaderboard_`
+
+例如：
+
 - `%ecobrain_top_sell_name_1%`
-- `%ecobrain_top_sell_money_1%`
-- `%ecobrain_top_buy_name_3%`
-- `%ecobrain_top_buy_money_3_raw%`
+- `%ecobrain_lb_sell_money_1%`
 
-（兼容前缀别名：`top_` / `lb_` / `leaderboard_` 三者都可用，例如 `%ecobrain_lb_sell_money_1%`）
+### 10.2 玩家个人数据
 
-### 2) 玩家个人数据（我的金额/数量/名次）
+我的出售：
 
-这些占位符需要有玩家上下文（例如计分板、聊天格式、对玩家打开的 GUI）。  
-个人数据会做缓存：占位符解析时只读缓存，过期后触发异步刷新，避免主线程查库卡顿。
+- `%ecobrain_self_sell_money%`
+- `%ecobrain_self_sell_money_raw%`
+- `%ecobrain_self_sell_qty%`
+- `%ecobrain_self_sell_rank%`
 
-- **我的出售（卖给系统 / SELL）**
-  - `%ecobrain_self_sell_money%`：我的出售总额（两位小数）
-  - `%ecobrain_self_sell_money_raw%`：我的出售总额（原始数值）
-  - `%ecobrain_self_sell_qty%`：我累计卖给系统的物品数量（SUM(quantity)）
-  - `%ecobrain_self_sell_rank%`：我的出售榜位（按总额降序；无记录为 0）
+我的消费：
 
-- **我的消费（从系统购买 / BUY）**
-  - `%ecobrain_self_buy_money%`
-  - `%ecobrain_self_buy_money_raw%`
-  - `%ecobrain_self_buy_qty%`：我累计从系统买入的物品数量（SUM(quantity)）
-  - `%ecobrain_self_buy_rank%`
+- `%ecobrain_self_buy_money%`
+- `%ecobrain_self_buy_money_raw%`
+- `%ecobrain_self_buy_qty%`
+- `%ecobrain_self_buy_rank%`
 
-（兼容前缀别名：`self_` 与 `me_` 等价，例如 `%ecobrain_me_sell_rank%`）
+兼容别名：
 
-### 3) 更新时间（调试/观测用）
+- `self_`
+- `me_`
 
-- `%ecobrain_leaderboard_updated_ms%`：排行榜 TopN 缓存更新时间（毫秒时间戳）
-- `%ecobrain_self_updated_ms%`：个人缓存更新时间（毫秒时间戳）
+例如：
+
+- `%ecobrain_me_sell_rank%`
+
+### 10.3 更新时间
+
+- `%ecobrain_leaderboard_updated_ms%`
+- `%ecobrain_self_updated_ms%`
