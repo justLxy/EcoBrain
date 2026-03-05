@@ -45,7 +45,8 @@ public class LeaderboardListener implements Listener {
                 List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
                 MarketViewGUI.Session session = marketViewGUI.getSession(player.getUniqueId());
                 int page = session != null ? session.page() : 1;
-                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page));
+                double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
+                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page, treasury));
             });
         }
     }

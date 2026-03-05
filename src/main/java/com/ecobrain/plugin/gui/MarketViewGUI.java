@@ -139,20 +139,32 @@ public class MarketViewGUI {
     }
 
     private String tierLabelFor(ItemMarketRecord item) {
-        // EcoBrain 3.0 single-brain: no tier routing/labels.
-        return "&f-";
+        // EcoBrain 3.0 single-brain:
+        // There is no tier routing anymore, but GUI can still show an informational "value grade"
+        // derived from the observable current price (same bands as the simulator eval).
+        double price = ammCalculator.calculateCurrentPrice(item);
+        if (!Double.isFinite(price) || price <= 0.0D) {
+            return "&7暂时未知";
+        }
+        if (price <= 500.0D) {
+            return "&f普通";
+        }
+        if (price <= 10_000.0D) {
+            return "&d稀有";
+        }
+        return "&e传说";
     }
 
     /**
      * 打开市场主菜单。
      * 菜单支持：左键购买 1 个，Shift+左键购买 1 组，Shift+右键购买 10 组，右键(管理员)删除该物品档案。
      */
-    public void open(Player player, List<ItemMarketRecord> allRecords, int page) {
+    public void open(Player player, List<ItemMarketRecord> allRecords, int page, double treasuryBalance) {
         int maxPage = Math.max(1, (int) Math.ceil(allRecords.size() / (double) PAGE_SIZE));
         int safePage = Math.max(1, Math.min(page, maxPage));
         Inventory inventory = Bukkit.createInventory(player, 54, TITLE_PREFIX + safePage + "页");
         Map<Integer, String> slotToHash = new HashMap<>();
-        decorateBorder(inventory, player);
+        decorateBorder(inventory, player, treasuryBalance);
         List<Integer> contentSlots = getContentSlots();
 
         int start = (safePage - 1) * PAGE_SIZE;
@@ -286,7 +298,7 @@ public class MarketViewGUI {
     /**
      * 将 6x9 菜单外圈全部铺满黑玻璃，形成视觉边框。
      */
-    private void decorateBorder(Inventory inventory, Player player) {
+    private void decorateBorder(Inventory inventory, Player player, double treasuryBalance) {
         ItemStack border = namedItem(Material.BLACK_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + " ");
         for (int slot = 0; slot < 54; slot++) {
             if (isBorderSlot(slot)) {
@@ -306,6 +318,7 @@ public class MarketViewGUI {
             headLore.add(ChatColor.YELLOW + "/ecobrain sell all" + ChatColor.WHITE + " - 出售背包内所有同类物品");
             headLore.add(ChatColor.YELLOW + "/ecobrain buy <数量>" + ChatColor.WHITE + " - 按指定数量购买");
             headLore.add(ChatColor.GRAY + "或点击下方漏斗进行批量出售");
+            headLore.add(ChatColor.GREEN + "系统金库余额: " + ChatColor.GOLD + String.format("%,.2f", Math.max(0.0D, treasuryBalance)));
             headLore.add("");
             headLore.add(ChatColor.AQUA + "▶ 点击查看交易排行榜");
             meta.setLore(headLore);

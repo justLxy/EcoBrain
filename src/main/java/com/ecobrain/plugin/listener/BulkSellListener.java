@@ -161,6 +161,7 @@ public class BulkSellListener implements Listener {
         }
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            List<String> createdNowHashes = new ArrayList<>();
             try {
                 Map<String, AggregatedItem> grouped = new HashMap<>();
                 for (ItemStack item : snapshot) {
@@ -185,6 +186,9 @@ public class BulkSellListener implements Listener {
                     ItemMarketRecord record = ipoState.record();
                     MarketService.TradeQuote quote = marketService.quoteSell(record, aggregatedItem.amount);
                     total += quote.totalPrice();
+                    if (ipoState.createdNow()) {
+                        createdNowHashes.add(hash);
+                    }
                     settleActions.add(() -> marketService.settleSell(
                         player, hash, record, quote, aggregatedItem.amount, ipoState.createdNow()));
                 }
@@ -193,6 +197,13 @@ public class BulkSellListener implements Listener {
                 long payoutCents = moneyToCents(finalTotal);
                 boolean reservedMoney = repository.tryReserveTreasuryCents(payoutCents);
                 if (!reservedMoney) {
+                    // rollback IPO records created only for this failed attempt
+                    for (String hash : createdNowHashes) {
+                        try {
+                            repository.deleteByHash(hash);
+                        } catch (Exception ignored) {
+                        }
+                    }
                     Bukkit.getScheduler().runTask(plugin, () -> {
                         for (ItemStack item : snapshot) {
                             java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
@@ -218,7 +229,15 @@ public class BulkSellListener implements Listener {
                             }
                         }
                         long cents = payoutCents;
-                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> repository.releaseTreasuryCents(cents));
+                        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                            repository.releaseTreasuryCents(cents);
+                            for (String hash : createdNowHashes) {
+                                try {
+                                    repository.deleteByHash(hash);
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        });
                         player.sendMessage(ChatColor.RED + "批量出售失败，物品已退回。");
                         session.setSettled(false);
                         return;
@@ -227,6 +246,12 @@ public class BulkSellListener implements Listener {
                     Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> settleActions.forEach(Runnable::run));
                 });
             } catch (Exception e) {
+                for (String hash : createdNowHashes) {
+                    try {
+                        repository.deleteByHash(hash);
+                    } catch (Exception ignored) {
+                    }
+                }
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     for (ItemStack item : snapshot) {
                         java.util.Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);

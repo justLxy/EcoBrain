@@ -268,7 +268,8 @@ public class MarketViewListener implements Listener {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             List<ItemMarketRecord> records = repository.findAll();
             List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
-            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page));
+            double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
+            Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page, treasury));
         });
     }
 
@@ -481,7 +482,8 @@ public class MarketViewListener implements Listener {
                             } else {
                                 List<ItemMarketRecord> refreshed = repository.findAll();
                                 List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(refreshed, player.getUniqueId());
-                                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, reopenPage));
+                                double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
+                                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, reopenPage, treasury));
                             }
                         });
                     } finally {

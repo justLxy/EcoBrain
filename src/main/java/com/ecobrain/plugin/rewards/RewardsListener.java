@@ -69,7 +69,8 @@ public final class RewardsListener implements Listener {
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
                 List<ItemMarketRecord> records = marketRepository.findAll();
                 List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
-                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, 1));
+                double treasury = ItemMarketRepository.centsToMoney(marketRepository.getTreasuryBalanceCents());
+                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, 1, treasury));
             });
             return;
         }

@@ -176,6 +176,13 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                 long payoutCents = moneyToCents(quote.totalPrice());
                 boolean reservedMoney = repository.tryReserveTreasuryCents(payoutCents);
                 if (!reservedMoney) {
+                    // rollback IPO record that was created only for this failed sell attempt
+                    if (ipoState.createdNow()) {
+                        try {
+                            repository.deleteByHash(hash);
+                        } catch (Exception ignored) {
+                        }
+                    }
                     sendMessageSync(player, ChatColor.RED + "系统金库不足，暂无法收购该物品。请稍后再试。");
                     releaseLock(player);
                     return;
@@ -190,6 +197,16 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             ItemStack latest = inventory.getItemInMainHand();
                             if (latest.getType() == Material.AIR || latest.getAmount() < finalAmount || !latest.isSimilar(template)) {
                                 player.sendMessage(ChatColor.RED + "你的主手物品已变化，交易已取消。");
+                                long cents = payoutCents;
+                                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                    repository.releaseTreasuryCents(cents);
+                                    if (ipoState.createdNow()) {
+                                        try {
+                                            repository.deleteByHash(hash);
+                                        } catch (Exception ignored) {
+                                        }
+                                    }
+                                });
                                 releaseLock(player);
                                 return;
                             }
@@ -199,6 +216,16 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             int available = countSimilarInStorage(inventory, template);
                             if (available < finalAmount) {
                                 player.sendMessage(ChatColor.RED + "背包同类物品不足，交易已取消。");
+                                long cents = payoutCents;
+                                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                    repository.releaseTreasuryCents(cents);
+                                    if (ipoState.createdNow()) {
+                                        try {
+                                            repository.deleteByHash(hash);
+                                        } catch (Exception ignored) {
+                                        }
+                                    }
+                                });
                                 releaseLock(player);
                                 return;
                             }
@@ -209,7 +236,15 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                             inventory.setStorageContents(storageBefore);
                             player.sendMessage(ChatColor.RED + "发放金币失败，交易已回滚。");
                             long cents = payoutCents;
-                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> repository.releaseTreasuryCents(cents));
+                            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                repository.releaseTreasuryCents(cents);
+                                if (ipoState.createdNow()) {
+                                    try {
+                                        repository.deleteByHash(hash);
+                                    } catch (Exception ignored) {
+                                    }
+                                }
+                            });
                             releaseLock(player);
                             return;
                         }
@@ -358,7 +393,8 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             try {
                 List<ItemMarketRecord> records = repository.findAll();
                 List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
-                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page));
+                double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
+                Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page, treasury));
             } finally {
                 releaseLock(player);
             }
