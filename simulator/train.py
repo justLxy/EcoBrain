@@ -78,6 +78,57 @@ def _parse_log_formats(formats: str | None) -> list[str]:
     return out or ["stdout", "csv", "tensorboard"]
 
 
+def _parse_value_phases(spec: str | None) -> list[str]:
+    if not spec:
+        return []
+    phases = [p.strip().lower() for p in str(spec).split(",") if p.strip()]
+    allowed = {"low", "mid", "high", "mixed"}
+    invalid = [p for p in phases if p not in allowed]
+    if invalid:
+        raise ValueError(f"Invalid curriculum phase(s): {invalid}. Allowed: low, mid, high, mixed")
+    return phases
+
+
+def _parse_phase_ratios(spec: str | None, phase_count: int) -> list[float] | None:
+    if not spec:
+        return None
+    parts = [p.strip() for p in str(spec).split(",") if p.strip()]
+    if len(parts) != int(phase_count):
+        raise ValueError(
+            f"--curriculum-ratios expects {phase_count} values to match --curriculum, got {len(parts)}"
+        )
+    values = [float(p) for p in parts]
+    if any(v <= 0.0 for v in values):
+        raise ValueError("--curriculum-ratios must contain only positive values")
+    total = float(sum(values))
+    return [float(v / total) for v in values]
+
+
+def _allocate_phase_timesteps(total_timesteps: int, ratios: list[float], phase_count: int) -> list[int]:
+    total = max(1, int(total_timesteps))
+    if phase_count <= 0:
+        return []
+    if ratios is None:
+        ratios = [1.0 / float(phase_count) for _ in range(phase_count)]
+
+    allocations: list[int] = []
+    remaining_steps = int(total)
+    remaining_weight = float(sum(ratios))
+    for idx, ratio in enumerate(ratios):
+        phases_left = int(phase_count - idx)
+        if idx == phase_count - 1:
+            steps = remaining_steps
+        else:
+            normalized = float(ratio) / max(1e-9, remaining_weight)
+            steps = max(1, int(round(remaining_steps * normalized)))
+            max_allowed = max(1, remaining_steps - (phases_left - 1))
+            steps = min(steps, max_allowed)
+        allocations.append(int(steps))
+        remaining_steps -= int(steps)
+        remaining_weight -= float(ratio)
+    return allocations
+
+
 def _write_json(path: str, obj):
     _safe_makedirs(os.path.dirname(path))
     with open(path, "w", encoding="utf-8") as f:
@@ -341,6 +392,7 @@ def train_model(
     checkpoint_freq: int = 100_000,
     checkpoint_dir: str = "checkpoints",
     resume: bool = True,
+    resume_vecnorm: bool = True,
     eval_freq: int = 0,
     eval_episodes: int = 5,
     early_stop_patience: int = 10,
@@ -406,7 +458,11 @@ def train_model(
             latest = _find_latest_checkpoint(checkpoint_dir, model_name)
             if latest:
                 load_path = latest
-    resume_vecnorm_path = _matching_vecnormalize_path(load_path, checkpoint_dir, model_name, vecnorm_path)
+    resume_vecnorm_path = None
+    if bool(resume_vecnorm):
+        resume_vecnorm_path = _matching_vecnormalize_path(load_path, checkpoint_dir, model_name, vecnorm_path)
+    elif resume and load_path is not None:
+        print("Resume requested but VecNormalize stats will be reset for this phase.")
 
     # Optional: normalize observations & rewards for stability.
     # IMPORTANT: If norm_obs=True, we bake the normalization into exported ONNX
@@ -542,6 +598,7 @@ def train_model(
             "checkpoint_freq": int(checkpoint_freq),
             "checkpoint_dir": checkpoint_dir,
             "resume": bool(resume),
+            "resume_vecnorm": bool(resume_vecnorm),
             "resume_vecnorm_path": resume_vecnorm_path,
             "eval_freq": int(eval_freq),
             "eval_episodes": int(eval_episodes),
@@ -735,6 +792,25 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EcoBrain 2.0 PPO Training & Export")
     parser.add_argument("--dataset", type=str, help="Path to the real server CSV data for online fine-tuning", default=None)
     parser.add_argument("--timesteps", type=int, help="Total timesteps for training", default=100000)
+    parser.add_argument(
+        "--value-type",
+        type=str,
+        default="mixed",
+        choices=["low", "mid", "high", "mixed"],
+        help="Train a single value world (default: mixed)",
+    )
+    parser.add_argument(
+        "--curriculum",
+        type=str,
+        default="",
+        help="Comma-separated curriculum phases, e.g. high,mid,low,mixed. Overrides --value-type.",
+    )
+    parser.add_argument(
+        "--curriculum-ratios",
+        type=str,
+        default="",
+        help="Comma-separated positive weights matching --curriculum, e.g. 0.35,0.25,0.15,0.25",
+    )
     parser.add_argument("--device", type=str, default="auto", help="auto/cpu/cuda/mps")
     parser.add_argument("--n-envs", type=int, default=0, help="Number of parallel envs; 0 = auto (CPU utilization key)")
     parser.add_argument("--n-envs-cap", type=int, default=64, help="Safety cap for auto n_envs (avoid too many processes)")
@@ -789,17 +865,27 @@ if __name__ == "__main__":
 
     print("Starting EcoBrain 2.0 PPO Training & Export")
 
-    value_type = "mixed"
+    value_type = str(args.value_type).lower()
+    curriculum_phases = _parse_value_phases(args.curriculum)
+    curriculum_ratios = _parse_phase_ratios(args.curriculum_ratios, len(curriculum_phases)) if curriculum_phases else None
 
     if args.num_threads and args.num_threads > 0:
         torch.set_num_threads(int(args.num_threads))
     if args.num_interop_threads and args.num_interop_threads > 0:
         torch.set_num_interop_threads(int(args.num_interop_threads))
     
-    def _train_one(vt: str):
+    def _train_one(
+        vt: str,
+        phase_timesteps: int,
+        resume_flag: bool,
+        resume_vecnorm_flag: bool,
+        phase_log_dir: str,
+        phase_checkpoint_dir: str,
+        export_final_onnx: bool,
+    ):
         model = train_model(
             value_type=vt,
-            total_timesteps=args.timesteps,
+            total_timesteps=phase_timesteps,
             dataset_path=args.dataset,
             device=args.device,
             n_envs=args.n_envs,
@@ -818,22 +904,55 @@ if __name__ == "__main__":
             norm_obs=not args.no_norm_obs,
             norm_reward=not args.no_norm_reward,
             checkpoint_freq=args.checkpoint_freq,
-            checkpoint_dir=args.checkpoint_dir,
-            resume=not args.no_resume,
+            checkpoint_dir=phase_checkpoint_dir,
+            resume=resume_flag,
+            resume_vecnorm=resume_vecnorm_flag,
             eval_freq=args.eval_freq,
             eval_episodes=args.eval_episodes,
             early_stop_patience=args.early_stop_patience,
-            log_dir=args.log_dir,
+            log_dir=phase_log_dir,
             log_formats=args.log_formats,
             post_eval_episodes=int(args.post_eval_episodes),
         )
-        if not args.skip_onnx:
+        if export_final_onnx:
             export_to_onnx(model, "ecobrain_value.onnx")
         return model
 
     success = False
     try:
-        _train_one(value_type)
+        if curriculum_phases:
+            phase_steps = _allocate_phase_timesteps(int(args.timesteps), curriculum_ratios, len(curriculum_phases))
+            print(f"Curriculum phases: {curriculum_phases}")
+            print(f"Curriculum timesteps: {phase_steps}")
+            for idx, (phase_vt, steps) in enumerate(zip(curriculum_phases, phase_steps), start=1):
+                resume_flag = (idx > 1) or (not args.no_resume)
+                resume_vecnorm_flag = not (idx > 1)
+                phase_log_dir = os.path.join(str(args.log_dir or "runs"), f"phase_{idx}_{phase_vt}")
+                phase_checkpoint_dir = os.path.join(str(args.checkpoint_dir or "checkpoints"), f"phase_{idx}_{phase_vt}")
+                export_final_onnx = (idx == len(curriculum_phases)) and (not args.skip_onnx)
+                print(
+                    f"\n=== Curriculum phase {idx}/{len(curriculum_phases)}: "
+                    f"{phase_vt} ({int(steps)} timesteps, resume={resume_flag}, resume_vecnorm={resume_vecnorm_flag}) ==="
+                )
+                _train_one(
+                    phase_vt,
+                    int(steps),
+                    resume_flag,
+                    resume_vecnorm_flag,
+                    phase_log_dir,
+                    phase_checkpoint_dir,
+                    export_final_onnx,
+                )
+        else:
+            _train_one(
+                value_type,
+                int(args.timesteps),
+                not args.no_resume,
+                not args.no_resume,
+                str(args.log_dir or "runs"),
+                str(args.checkpoint_dir or "checkpoints"),
+                not args.skip_onnx,
+            )
         success = True
         print("All done!")
     finally:
