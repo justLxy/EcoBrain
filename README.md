@@ -2,12 +2,64 @@
 
 EcoBrain 是一个面向 Minecraft 服务器的动态经济插件。它的目标不是“把价格写死”，而是让系统商店根据真实库存、真实交易和真实服务器节奏持续自我修正。
 
+如果把市面上常见的服务器经济系统拆开看，问题往往不是“没有 AI”，而是更底层的约束从一开始就没立住。
+
 当前版本的关键词只有四个：
 
 - **单模型**：全服统一使用一个 ONNX 模型 `ecobrain_value.onnx`
 - **零信任 IPO**：未知物品首次卖给系统时一律从 `100.0` 金币起步
 - **vAMM 动态定价**：价格跟随库存、滑点和动态印花税变化
 - **全局金库守恒**：玩家 BUY 给系统进钱，玩家 SELL 从系统出钱；金库不够就拒绝收购
+
+---
+
+## 0. 市面方案的不足与 EcoBrain 的回答
+
+### 0.1 常见经济插件的几个结构性问题
+
+很多“动态商店”看起来会涨会跌，但本质上仍然有下面这些问题：
+
+- **价格不是被市场发现出来的，而是被管理员写出来的**  
+  常见做法是手工配置一个初始价、一个上下浮动区间，再按销量做加减法。这种方法能动，但它并不真正理解“库存稀缺性”和“成交节奏”。
+
+- **新物品上架时没有可靠的价格发现机制**  
+  如果系统一开始就允许首个卖家把价格锚在高位，玩家很容易靠首单或小号互倒把系统带偏，后面所有价格都会在错误起点上继续演化。
+
+- **把交易次数当成市场强度，却忽略真实库存和成交金额**  
+  有些系统只看“买了几次”“卖了几次”，但不看一笔交易到底有多大，也不看系统手里到底有没有货。结果就是：账面上像在做市场，实际上定价和供给约束已经脱节。
+
+- **无限发钱或者弱资金约束，会让价格信号失真**  
+  如果系统可以无限收购、无限付款，那么很多价格并不是市场给出来的，而是插件自己印钱印出来的。长期看，这会把交易行为和真实价值判断搅在一起。
+
+- **训练和线上推理常常不是同一个问题**  
+  很多项目离线训练看起来很漂亮，但训练时看到的状态、线上推理时读取的状态、动作的执行方式并不完全一致。最后模型不是学坏了，而是“上线后题目变了”。
+
+### 0.2 EcoBrain 的核心创新点
+
+EcoBrain 的重点不是“给商店套一个 AI”，而是把**价格发现、库存约束、资金守恒、训练闭环**放进同一个系统里。
+
+- **零信任 IPO**  
+  新物品第一次进入系统时，不相信任何人的报价，统一从 `100.0` 金币起步。这样做不是为了保守，而是为了切断“首单定价权”。
+
+- **虚拟库存和真实库存分离**  
+  `current_inventory` 用来沿着 AMM 曲线定价，`physical_stock` 用来决定能不能真实交付，以及 SELL 风控要不要触发。  
+  这让“价格弹性”和“真实有货”不再混成一团。
+
+- **单模型 + 连续 observation，而不是线上 tier 路由**  
+  线上不是先给物品贴一个 `low/mid/high` 标签，再切模型或切规则；而是统一交给一个模型，输入同一套 16 维连续状态。  
+  这样做的好处是：线上逻辑更简单，训练与部署的契约也更稳定。
+
+- **交易日志驱动的事件回放训练**  
+  `exportdata` 导出的不是“旧模型当时想了什么”，而是“服务器真实发生了什么”。  
+  离线训练时，PPO 继续在这些真实交易节奏下试错，而不是单纯模仿历史动作。
+
+- **全局金库守恒 + 无活动不调控**  
+  价格系统不仅要会涨跌，还要知道什么时候该闭嘴。  
+  如果没有真实交易活动，AI 会保持 HOLD；如果系统金库不足，SELL 会被拒绝。这两条约束一起保证了价格调整必须建立在真实市场证据和真实资金能力上。
+
+如果用一句话概括 EcoBrain 的设计思路，就是：
+
+> 不是让插件“看起来像会调价”，而是让它在真实交易、真实库存、真实资金和统一训练契约下，持续做出可解释的价格修正。
 
 ---
 
@@ -194,6 +246,43 @@ CSV 不是被当成“监督学习标签”直接喂给模型，而是被当成*
 6. 模拟器在这个动作下，回放该时间桶里的真实交易节奏
 7. 根据结果计算 reward，继续更新模型
 
+这里的“代表性 `item_hash`”不是人工指定，也不是固定名单，而是每个 episode 都按下面的规则重新抽样：
+
+1. 先对整份 CSV 里每个 `item_hash` 统计：
+   - 总成交额 `value_sum`
+   - 总成交量 `qty_sum`
+   - 事件数 `event_count`
+   - 最早/最晚出现在哪个时间桶
+2. 计算该物品的平均成交单价：
+
+```text
+avg_unit_price = value_sum / max(1, qty_sum)
+```
+
+3. 再按 `avg_unit_price` 把它归进离线训练里的 `low / mid / high` bucket
+4. 当前 episode 会先抽到一个 latent value type；候选物品优先从同 bucket 里选
+5. 如果这个 bucket 在 CSV 里一个候选都没有，就退化为“全量物品都可选”
+6. 候选之间不是平均随机，而是按 `event_count` 加权抽样  
+   也就是说，交易更活跃、样本更多的物品更容易被选中，但不会变成永远只训练某一个 hash
+7. 选中后还会再随机一个 `cycle_offset`，但这个随机不是无边界的，而是会被 episode 长度约束：
+
+```text
+max_start = max(0, dataset_max_cycle - max_steps + 1)
+preferred_start     = min(selected_min_cycle, max_start)
+latest_useful_start = min(selected_max_cycle, max_start)
+
+cycle_offset ~ Uniform(preferred_start, latest_useful_start)
+```
+
+这样做的目的，是既尽量让回放从这个物品“真正开始活跃”的区间进入，又避免 episode 起点总是固定
+8. 被选中的那个 `item_hash` 会作为“当前被控制的单品市场”；而同一时间桶里其他物品的交易，仍然继续参与**全局宏观统计**
+
+所以“代表性”的真正含义不是“它是这个 tier 的官方样板”，而是：
+
+- 它落在当前训练想看的价格区间里
+- 它有足够的真实交易事件
+- 它只是本回合被抽中的一个真实物品，不是永久主角
+
 所以它是：
 
 - **真实交易节奏回放**
@@ -259,6 +348,194 @@ CSV 不是被当成“监督学习标签”直接喂给模型，而是被当成*
 14. `k_factor`
 15. `physical_ratio`
 16. `log_treasury`
+
+这 16 个量不是随意拼出来的，它们都有固定计算方式。先约定几个公共记号：
+
+```text
+windowMinutes = ai.schedule-minutes
+windowMs      = windowMinutes * 60 * 1000
+aovWindowMs   = ai.aov-window-hours * 60 * 60 * 1000
+
+P_current = base_price * (target_inventory / max(1, current_inventory)) ^ k
+
+TWAP = mean(bucket_unit_price over non-empty buckets in AOV window)
+bucket_unit_price = SUM(total_price in bucket) / SUM(quantity in bucket)
+if TWAP <= 0:
+    TWAP = P_current
+
+unit_price_now  = SUM(total_price in current window) / SUM(quantity in current window)
+unit_price_prev = SUM(total_price in previous window) / SUM(quantity in previous window)
+if unit_price_now <= 0:
+    unit_price_now = P_current
+if unit_price_prev <= 0:
+    unit_price_prev = TWAP if TWAP > 0 else P_current
+
+dynamicAOV = SUM(global total_price in AOV window) / COUNT(global trades in AOV window)
+if dynamicAOV <= 0:
+    dynamicAOV = IPO_BASE_PRICE_FALLBACK * 20
+```
+
+然后每一维具体如下：
+
+1. `saturation`
+
+```text
+saturation = current_inventory / max(1, target_inventory)
+```
+
+表示“虚拟库存相对理想库存的饱和度”。  
+大于 `1` 说明库存偏多，小于 `1` 说明库存偏紧。
+
+2. `recent_flow`
+
+```text
+recent_flow =
+(
+    SUM(BUY quantity in current window)
+  - SUM(SELL quantity in current window)
+) / windowMinutes
+```
+
+它不是总成交额，而是**按分钟归一化后的净流速**。  
+正数偏买压，负数偏卖压。
+
+3. `global_inflation`
+
+```text
+cycleNetEmission =
+    SUM(SELL total_price in current window)
+  - SUM(BUY total_price in current window)
+
+global_inflation = cycleNetEmission / max(1e-9, dynamicAOV)
+```
+
+这里的“通胀”不是宏观经济学里的 CPI，而是一个工程化指标：  
+当前周期系统净支出了多少金币，再用动态客单价做尺度归一化。
+
+4. `elasticity`
+
+```text
+price_change_pct_raw =
+    (unit_price_now - unit_price_prev) / max(1e-9, unit_price_prev)
+
+elasticity_raw =
+    recent_flow / max(1e-6, abs(price_change_pct_raw) * 100)
+
+elasticity = clip(elasticity_raw, -1e4, 1e4)
+```
+
+这是一个启发式“价格弹性”特征。  
+直觉上，它在问：价格只变了这么一点，需求流速却动了多少。
+
+5. `volatility`
+
+```text
+volatility = abs(P_current - TWAP) / max(1e-9, TWAP)
+```
+
+表示当前价偏离时间加权均价的程度。  
+它既进入 observation，也会影响 SELL 侧的动态印花税。
+
+6. `log_price`
+
+```text
+log_price = clip(log(max(1e-9, P_current)), -20, 20)
+```
+
+因为服务器里物品价格跨度可能非常大，所以这里用对数压缩量级。
+
+7. `log_age`
+
+```text
+age_cycles = listing_age_ms / max(1, windowMs)
+log_age    = clip(log1p(max(0, age_cycles)), 0, 20)
+```
+
+它表示“这个物品进入系统已经经历了多少个调控周期”。  
+训练端内部直接维护等价的 `age_cycles` 语义。
+
+8. `has_activity_trade`
+
+```text
+activityVolume = SUM(item total_price in activity window)
+activityWindow = max(windowMs, aovWindowMs)
+
+has_activity_trade = 1 if activityVolume > 0 else 0
+```
+
+这是最关键的门控信号之一。  
+如果这一维为 `0`，当前版本会让 AI 直接 HOLD，不主动乱调价格。
+
+9. `log_activity`
+
+```text
+log_activity = clip(log1p(max(0, activityVolume / windowMinutes)), 0, 20)
+```
+
+它反映的不是“有没有交易”，而是“有多活跃”。  
+同样也做了对数压缩，避免大额热门物品把量级拉爆。
+
+10. `log_target_inventory`
+
+```text
+log_target_inventory = clip(log1p(max(0, target_inventory)), 0, 20)
+```
+
+把理想库存规模压成稳定范围，方便一个模型同时看小宗商品和大宗材料。
+
+11. `log_physical_stock`
+
+```text
+log_physical_stock = clip(log1p(max(0, physical_stock)), 0, 20)
+```
+
+表示系统手里真实有多少货，而不是 AMM 曲线上的虚拟库存。
+
+12. `price_change_pct`
+
+```text
+price_change_pct =
+    clip((unit_price_now - unit_price_prev) / max(1e-9, unit_price_prev), -10, 10)
+```
+
+这里看的是**成交均价的环比变化**，不是 `base_price` 的变化。  
+这样更接近玩家实际感受到的成交价格变化。
+
+13. `log_base_price`
+
+```text
+log_base_price = clip(log(max(1e-9, base_price)), -20, 20)
+```
+
+`base_price` 是 AI 真正直接调的慢变量之一，所以要显式告诉模型它现在站在什么底价上。
+
+14. `k_factor`
+
+```text
+k_factor = clip(k, ai.tuning.k-min, ai.tuning.k-max)
+```
+
+`k` 决定价格曲线对库存变化的敏感度。  
+它是另一个被 AI 直接调控的核心参数。
+
+15. `physical_ratio`
+
+```text
+physical_ratio = clip(physical_stock / max(1, target_inventory), 0, 1000)
+```
+
+它和 `saturation` 不一样：  
+`saturation` 看的是虚拟库存池，`physical_ratio` 看的是现实仓库。
+
+16. `log_treasury`
+
+```text
+treasury_scaled = treasury_balance / max(1e-9, dynamicAOV)
+log_treasury    = clip(log1p(max(0, treasury_scaled)), 0, 20)
+```
+
+这里不是直接把金库余额原样塞进模型，而是先用动态客单价归一化。  
+这样不同服务器规模下，金库特征的量级更稳定。
 
 开发者注意：
 
