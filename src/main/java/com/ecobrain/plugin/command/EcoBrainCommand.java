@@ -104,6 +104,19 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(ChatColor.RED + "Vault 经济未就绪，请联系管理员。");
             return true;
         }
+
+        // Compatibility: allow `/ecobrain sell buy <amount>` to route to `/ecobrain buy <amount>`
+        // so the hand hint copy can stay immersive while the actual buy logic remains unchanged.
+        if (args.length >= 2 && "sell".equalsIgnoreCase(args[0]) && "buy".equalsIgnoreCase(args[1])) {
+            String[] buyArgs;
+            if (args.length >= 3) {
+                buyArgs = new String[] {"buy", args[2]};
+            } else {
+                buyArgs = new String[] {"buy"};
+            }
+            return handleBuy(player, buyArgs);
+        }
+
         return switch (args[0].toLowerCase()) {
             case "sell" -> handleSell(player, args);
             case "buy" -> handleBuy(player, args);
@@ -503,7 +516,10 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             return List.of("sell", "buy", "market", "rewards", "reload", "admin");
         }
         if (args.length == 2 && "sell".equalsIgnoreCase(args[0])) {
-            return List.of("all", "1", "16", "64");
+            return List.of("all", "buy", "1", "16", "64");
+        }
+        if (args.length == 3 && "sell".equalsIgnoreCase(args[0]) && "buy".equalsIgnoreCase(args[1])) {
+            return List.of("1", "16", "64");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
             return List.of("clear", "freeze", "unfreeze", "clearleaderboard", "settarget", "exportdata", "reclaimmoney");

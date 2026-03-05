@@ -10,6 +10,7 @@ import com.ecobrain.plugin.gui.BulkSellGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
 import com.ecobrain.plugin.gui.LeaderboardGUI;
 import com.ecobrain.plugin.listener.BulkSellListener;
+import com.ecobrain.plugin.listener.MarketHandHintListener;
 import com.ecobrain.plugin.listener.MarketViewListener;
 import com.ecobrain.plugin.listener.QDropBulkSellListener;
 import com.ecobrain.plugin.persistence.DatabaseManager;
@@ -96,6 +97,8 @@ public class EcoBrainPlugin extends JavaPlugin {
             new MarketViewListener(this, marketViewGUI, bulkSellGUI, leaderboardGUI, rewardsGUI, repository, marketService, economyService, itemSerializer), this);
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
+        Bukkit.getPluginManager().registerEvents(
+            new MarketHandHintListener(this, repository, itemSerializer, ammCalculator, circuitBreaker), this);
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.rewards.RewardsListener(this, rewardsGUI, rewardsManager, marketViewGUI, repository, rewardClaimRepository, rewardCommandRunner), this);
         Bukkit.getPluginManager().registerEvents(

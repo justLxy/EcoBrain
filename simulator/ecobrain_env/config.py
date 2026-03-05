@@ -33,7 +33,7 @@ IPO_BASE_PRICE_FALLBACK = 100.0      # 对齐 economy.ipo.base-price（zero-trus
 # ==========================================
 # 插件 3.0 采用全局金库：玩家 BUY -> 金库增加；玩家 SELL -> 金库支出。
 # 为避免冷启动“没人买就永远没钱收购”，允许设置一个初始金库余额。
-TREASURY_INITIAL_BALANCE = 200_000.0  # 对齐 economy.treasury.initial-balance（推荐给一个能启动市场的资金量）
+TREASURY_INITIAL_BALANCE = 500_000.0  # 对齐 economy.treasury.initial-balance（推荐给一个能启动市场的资金量）
 
 # ==========================================
 # Episode 初始化：IPO vs Mature Item 混合
