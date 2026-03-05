@@ -349,8 +349,9 @@ def train_model(
     post_eval_episodes: int = 12,
 ):
     # Reward normalization can hide the effect of strong shaping penalties and slow down convergence
-    # for band-stabilization tasks (especially low/mid). Keep obs normalization but disable reward norm.
-    if value_type in ("low", "mid") and bool(norm_reward):
+    # for band-stabilization tasks. Mixed single-brain training contains the same low/mid/high
+    # shaping, so keep obs normalization but disable reward norm there as well.
+    if value_type in ("low", "mid", "mixed") and bool(norm_reward):
         print(f"Note: disabling reward normalization for {value_type} (norm_reward=False) for better band learning.")
         norm_reward = False
 
@@ -359,6 +360,8 @@ def train_model(
         print(f"Training PPO for {value_type}-value items using real server data from: {dataset_path}")
     else:
         print(f"Training PPO for {value_type}-value items using simulated data...")
+    if str(value_type).lower() == "mixed" and int(post_eval_episodes or 0) <= 0:
+        print("Warning: mixed training with --post-eval-episodes 0 disables the mixed_by_latent diagnosis summary.")
 
     check_env(EcoBrainEnv(value_type=value_type, dataset_path=dataset_path if using_real else None))
 
@@ -610,6 +613,26 @@ def train_model(
                     "- price_p50/mean/p95: "
                     f"**{summary['price_p50_mean']:.6g} / {summary['price_mean_mean']:.6g} / {summary['price_p95_mean']:.6g}**\n"
                 )
+                mixed_by_latent = summary.get("mixed_by_latent")
+                if isinstance(mixed_by_latent, dict) and mixed_by_latent:
+                    f.write("\n## Mixed By Latent\n\n")
+                    f.write("Overall mixed return can stay negative even when some latent buckets are improving.\n\n")
+                    for latent in ("low", "mid", "high"):
+                        latent_summary = mixed_by_latent.get(latent)
+                        if not isinstance(latent_summary, dict):
+                            continue
+                        f.write(f"### {latent}\n")
+                        f.write(f"- steps: **{latent_summary.get('episodes_steps', 0)}**\n")
+                        f.write(f"- hard_range: **{latent_summary.get('hard_range')}**\n")
+                        f.write(f"- reward_band: **{latent_summary.get('reward_band')}**\n")
+                        f.write(f"- hard_hit_rate: **{float(latent_summary.get('hard_hit_rate', 0.0)):.6g}**\n")
+                        f.write(f"- band_hit_rate: **{float(latent_summary.get('band_hit_rate', 0.0)):.6g}**\n")
+                        f.write(
+                            "- price_p50/mean/p95: "
+                            f"**{float(latent_summary.get('price_p50', float('nan'))):.6g} / "
+                            f"{float(latent_summary.get('price_mean', float('nan'))):.6g} / "
+                            f"{float(latent_summary.get('price_p95', float('nan'))):.6g}**\n\n"
+                        )
             print(f"[eval] Wrote {json_path}")
     except Exception as e:
         print(f"[eval] Warning: failed to write eval summary: {e}")
