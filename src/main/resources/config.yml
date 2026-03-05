@@ -144,8 +144,8 @@ market-hint:
   title: "&7你感受到一笔&f交易机会"
   subtitle: "&f{item} &7在市场有货：&e{price}&7｜&b{cmd}"
 
-  # 指令展示文案（插件已兼容 /ecobrain sell buy <数量>）
-  command: "/ecobrain sell buy <数量>"
+  # 指令展示文案
+  command: "/ecobrain buy <数量>"
 
 # ==========================================================
 # 管理命令扩展（QuickTax 集成）

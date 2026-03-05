@@ -66,8 +66,7 @@ public class PluginSettings {
 
         AI ai = new AI(
             c.getBoolean("ai.debug-log", true),
-            // 新字段：按分钟调度；兼容旧字段 schedule-hours（自动换算成分钟）
-            c.getInt("ai.schedule-minutes", Math.max(1, c.getInt("ai.schedule-hours", 2) * 60)),
+            c.getInt("ai.schedule-minutes", 120),
             c.getInt("ai.aov-window-hours", 24),
             c.getInt("ai.garbage-collection-days", 7),
             c.getDouble("ai.tuning.k-delta", 0.03D),

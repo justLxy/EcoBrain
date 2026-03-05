@@ -141,7 +141,7 @@ public final class MarketHandHintListener implements Listener {
         ));
         String cmd = plugin.getConfig().getString(
             "market-hint.command",
-            "/ecobrain sell buy <数量>"
+            "/ecobrain buy <数量>"
         );
         String subtitleTemplate = plugin.getConfig().getString(
             "market-hint.subtitle",
