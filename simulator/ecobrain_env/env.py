@@ -256,12 +256,10 @@ class EcoBrainEnv(gym.Env):
         """
         Observation 对齐插件端 `AIScheduler`（单模型 16 维）：
         [saturation, recent_flow_per_minute, global_inflation_rate, elasticity, volatility, log_price,
-         log_age, has_activity_trade, log_activity, price_change_pct, sat_delta,
-         log_base_price, k_factor, physical_ratio, emission_ratio, sell_share]
+         log_age, has_activity_trade, log_activity, log_target_inventory, log_physical_stock,
+         price_change_pct, log_base_price, k_factor, physical_ratio, log_treasury]
         """
         saturation = self.amm.current_inventory / max(1.0, float(self.amm.target_inventory))
-        sat_delta = float(saturation - float(self._prev_saturation))
-        sat_delta = float(np.clip(sat_delta, -2.0, 2.0))
         self._prev_saturation = float(saturation)
 
         net_flow = float(self.recent_buys - self.recent_sells)
@@ -306,6 +304,10 @@ class EcoBrainEnv(gym.Env):
         k_factor = float(np.clip(float(self.amm.k_factor), float(K_MIN), float(K_MAX)))
         physical_ratio = float(self.amm.physical_stock) / max(1.0, float(self.amm.target_inventory))
         physical_ratio = float(np.clip(physical_ratio, 0.0, 1000.0))
+        log_target = float(np.log1p(max(0.0, float(self.amm.target_inventory))))
+        log_target = float(np.clip(log_target, 0.0, 20.0))
+        log_physical = float(np.log1p(max(0.0, float(self.amm.physical_stock))))
+        log_physical = float(np.clip(log_physical, 0.0, 20.0))
 
         return np.array(
             [
@@ -318,12 +320,12 @@ class EcoBrainEnv(gym.Env):
                 log_age,
                 has_activity,
                 log_activity,
+                log_target,
+                log_physical,
                 float(np.clip(price_change_pct, -10.0, 10.0)),
-                sat_delta,
                 log_base_price,
                 k_factor,
                 physical_ratio,
-                float(np.clip(emission_ratio, 0.0, 10.0)),
                 log_treasury,
             ],
             dtype=np.float32,
@@ -599,11 +601,17 @@ class EcoBrainEnv(gym.Env):
                     if price < band_min:
                         denom = max(1e-9, band_min - hard_min)
                         ratio = (band_min - price) / denom
+                        # Make "far below band" much more painful to avoid the single-brain collapsing
+                        # high-regime prices into mid-range (common mixed-training failure mode).
+                        dist_mult = (band_min / max(1e-9, price)) - 1.0
+                        scale = 1.0 + float(np.log1p(max(0.0, float(dist_mult))))
                     else:
                         denom = max(1e-9, hard_max - band_max)
                         ratio = (price - band_max) / denom
+                        dist_mult = (price / max(1e-9, band_max)) - 1.0
+                        scale = 1.0 + float(np.log1p(max(0.0, float(dist_mult))))
                     ratio = float(np.clip(ratio, 0.0, 1.0))
-                    reward -= penalty * ratio
+                    reward -= penalty * ratio * scale
 
             # 真实库存枯竭惩罚（防被买空）
             if int(self.amm.physical_stock) <= 0:
@@ -666,11 +674,15 @@ class EcoBrainEnv(gym.Env):
                     if price < band_min:
                         denom = max(1e-9, band_min - hard_min)
                         ratio = (band_min - price) / denom
+                        dist_mult = (band_min / max(1e-9, price)) - 1.0
+                        scale = 1.0 + float(np.log1p(max(0.0, float(dist_mult))))
                     else:
                         denom = max(1e-9, hard_max - band_max)
                         ratio = (price - band_max) / denom
+                        dist_mult = (price / max(1e-9, band_max)) - 1.0
+                        scale = 1.0 + float(np.log1p(max(0.0, float(dist_mult))))
                     ratio = float(np.clip(ratio, 0.0, 1.0))
-                    reward -= penalty * ratio
+                    reward -= penalty * ratio * scale
                 
         # 4. Check done
         done = self.step_count >= self.max_steps

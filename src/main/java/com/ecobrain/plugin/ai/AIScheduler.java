@@ -210,16 +210,15 @@ public class AIScheduler {
             double logActivity = Math.log1p(Math.max(0.0D, activityVolume / Math.max(1.0D, windowMinutes)));
             logActivity = clamp(logActivity, 0.0D, 20.0D);
 
-            double prevSat = prevSaturationByHash.getOrDefault(item.getItemHash(), saturation);
-            double satDelta = saturation - prevSat;
-            satDelta = clamp(satDelta, -2.0D, 2.0D);
-            prevSaturationByHash.put(item.getItemHash(), saturation);
-
             double logBasePrice = Math.log(Math.max(1e-9D, item.getBasePrice()));
             logBasePrice = clamp(logBasePrice, -20.0D, 20.0D);
             double kFactor = clamp(item.getKFactor(), settings.kMin(), settings.kMax());
             double physicalRatio = item.getTargetInventory() > 0 ? ((double) item.getPhysicalStock() / (double) item.getTargetInventory()) : 0.0D;
             physicalRatio = clamp(physicalRatio, 0.0D, 1000.0D);
+            double logTargetInv = Math.log1p(Math.max(0.0D, (double) item.getTargetInventory()));
+            logTargetInv = clamp(logTargetInv, 0.0D, 20.0D);
+            double logPhysical = Math.log1p(Math.max(0.0D, (double) item.getPhysicalStock()));
+            logPhysical = clamp(logPhysical, 0.0D, 20.0D);
 
             float[] obs = new float[] {
                 (float) saturation,
@@ -231,12 +230,12 @@ public class AIScheduler {
                 (float) logAge,
                 (float) (hasActivityTrade ? 1.0D : 0.0D),
                 (float) logActivity,
+                (float) logTargetInv,
+                (float) logPhysical,
                 (float) clamp(priceChangePct, -10.0D, 10.0D),
-                (float) satDelta,
                 (float) logBasePrice,
                 (float) kFactor,
                 (float) physicalRatio,
-                (float) clamp(emissionRatio, 0.0D, 10.0D),
                 (float) logTreasury
             };
 

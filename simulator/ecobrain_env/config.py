@@ -91,7 +91,9 @@ ADAPTIVE_TARGET_SMOOTHING_FACTOR = 0.01
 REWARD_TRADE_VALUE_WEIGHT = 0.001     # 交易额越大越好（轻权重避免数值爆炸）
 # For low-value items, rewarding "money volume" tends to incentivize higher prices.
 # Use quantity-based trade signal instead.
-REWARD_TRADE_QTY_WEIGHT = 0.05
+# 低价值物品在“供大于求”的服情里，交易量往往对价格不敏感（尤其是卖压主导），
+# 若交易量权重过高，模型容易把 low 也推到 mid 价位来“洗分”。
+REWARD_TRADE_QTY_WEIGHT = 0.01
 # For mid-value items, also prefer quantity-based trade signal to avoid learning
 # "raise price to get more volume" as a shortcut.
 REWARD_TRADE_QTY_WEIGHT_MID = 0.05
@@ -143,13 +145,13 @@ TIERS = {
         "reward_band_max": 100_000.0,
         # high 在供大于求+买家少的环境里容易被单模型“降维”到几百块；
         # 因此 high 的 band shaping 需要明显强于 low/mid，给出足够梯度把价格抬回 15000+。
-        "reward_in_band": 30000.0,
-        "penalty_out_of_band": 30000.0,
+        "reward_in_band": 60000.0,
+        "penalty_out_of_band": 60000.0,
         "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
         # 让 high 不被“全局通胀惩罚”压死：按 tier 缩放
-        "inflation_weight_mult": 0.20,
+        "inflation_weight_mult": 0.10,
         # 允许 high 更积极地动 base_price/k（动作 L1 惩罚缩小）
-        "action_l1_mult": 0.30,
+        "action_l1_mult": 0.15,
     },
     
     # 中等价值物品 (如: 副本材料, 铁锭, 金锭)
@@ -199,11 +201,11 @@ TIERS = {
         # 说明：低价值玩家模型的 buy/sell 概率几乎不依赖价格，reward 需要更强的 shaping 才能稳定在带内。
         # 单模型在 mixed 里很容易“统一学成 mid 价位”（两三千），导致 low 失守。
         # 这里把 low 的 band shaping 显著拉强，强制它在 low 世界里把价格压回 10~500。
-        "reward_in_band": 20000.0,
-        "penalty_out_of_band": 20000.0,
+        "reward_in_band": 40000.0,
+        "penalty_out_of_band": 40000.0,
         # 使用 current_price 做 shaping 后，low 很容易通过把价格压到 hard_min 以下来优化其它项；
         # 因此需要更强的 hard-range 越界惩罚，把价格“拉回地面”。
-        "penalty_out_of_range": 80000.0,
+        "penalty_out_of_range": 200000.0,
         "inflation_weight_mult": 1.00,
         "action_l1_mult": 1.00,
     }
