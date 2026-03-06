@@ -10,8 +10,9 @@ EcoBrain 2.0 模拟器全局配置文件 (Simulator Configuration)
 # 控制 AI 单次决策所能带来的最大改变幅度。
 # 单模型 mixed 在 100%/1.0 这种激进幅度下很容易把 current_price 推到极端爆炸区间，
 # 导致 low/high 都出现“少量超大离群点拖垮回报”的现象。
-ACTION_BASE_PRICE_MAX_PERCENT = 0.25  # 底价单次最大涨跌幅 (+/-25%)
-ACTION_K_FACTOR_MAX_DELTA = 0.25      # K 因子单次最大微调幅度
+ACTION_BASE_PRICE_MAX_PERCENT = 0.12  # 底价单次最大涨跌幅 (+/-12%)
+ACTION_K_FACTOR_MAX_DELTA = 0.10      # K 因子单次最大微调幅度
+ACTION_INACTIVITY_DECAY = 0.35        # 冷启动/无成交时仍允许小幅调价，避免策略完全失去控制权
 
 # 说明：
 # 2.0 初版曾引入“每周期涨跌停”（PER_CYCLE_MAX_CHANGE_PERCENT）作为二次拦截；
@@ -88,33 +89,33 @@ ADAPTIVE_TARGET_QUANTITY_CAP = 10
 # Reward 权重（离线训练用；插件端不在线计算 reward）
 # ==========================================
 # 说明：为了减少“训练时用绝对金额、线上用归一化通胀率”造成的尺度断裂，这里用 inflation_rate（=netEmission/AOV）
-REWARD_TRADE_VALUE_WEIGHT = 0.001     # 交易额越大越好（轻权重避免数值爆炸）
+REWARD_TRADE_VALUE_WEIGHT = 1.25      # 交易额先归一化/对数化后再加权
 # For low-value items, rewarding "money volume" tends to incentivize higher prices.
 # Use quantity-based trade signal instead.
 # 低价值物品在“供大于求”的服情里，交易量往往对价格不敏感（尤其是卖压主导），
 # 若交易量权重过高，模型容易把 low 也推到 mid 价位来“洗分”。
-REWARD_TRADE_QTY_WEIGHT = 0.01
+REWARD_TRADE_QTY_WEIGHT = 1.00
 # For mid-value items, also prefer quantity-based trade signal to avoid learning
 # "raise price to get more volume" as a shortcut.
-REWARD_TRADE_QTY_WEIGHT_MID = 0.05
+REWARD_TRADE_QTY_WEIGHT_MID = 1.10
 # For high-value items, keep a money-based signal but compress it to avoid runaway
 # incentives at extreme prices.
-REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH = 5.0
-REWARD_INFLATION_RATE_WEIGHT = 2500.0   # 惩罚净印钞率（>0 时）
-REWARD_INVENTORY_IMBALANCE_WEIGHT = 10.0  # 库存偏离惩罚
+REWARD_TRADE_LOG_VALUE_WEIGHT_HIGH = 1.60
+REWARD_INFLATION_RATE_WEIGHT = 4.00    # 惩罚净印钞率（>0 时）
+REWARD_INVENTORY_IMBALANCE_WEIGHT = 1.50  # 库存偏离惩罚
 # Low-value items often have strong exogenous sell pressure in the simulator.
 # Inventory imbalance can become largely uncontrollable (players decide to sell/buy mostly independent of price),
 # so keep this weight modest to avoid making the task unsolvable.
-REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 30.0
+REWARD_INVENTORY_IMBALANCE_WEIGHT_LOW = 2.00
 
 # Reward 数值稳定性：
 # - 先做线性缩放把回报压到合理量级（避免 value_loss 爆炸）
 # - 再做可选裁剪防极端 outlier
-REWARD_SCALE = 1e-3
-REWARD_CLIP_ABS = 1e4  # 设为 None 可关闭裁剪
+REWARD_SCALE = 1.0
+REWARD_CLIP_ABS = 50.0  # 设为 None 可关闭裁剪
 
 # Penalize overly aggressive control actions (helps avoid pushing base_price/k to extremes early).
-REWARD_ACTION_L1_WEIGHT = 200.0
+REWARD_ACTION_L1_WEIGHT = 0.05
 
 # ==========================================
 # 各阶级物品参数 (Item Tier Parameters)
@@ -137,19 +138,19 @@ TIERS = {
         "price_min": 0.01,
         "price_max": 100_000.0,
         # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略用“贴边界”走捷径
-        "penalty_out_of_range": 40000.0,
+        "penalty_out_of_range": 10.0,
         # 奖励带：15000~10w 奖励；允许跌破/超出，按距离平滑惩罚
         "reward_band_min": 15000.0,
         "reward_band_max": 100_000.0,
         # high 在供大于求+买家少的环境里容易被单模型“降维”到几百块；
         # 因此 high 的 band shaping 需要明显强于 low/mid，给出足够梯度把价格抬回 15000+。
-        "reward_in_band": 60000.0,
-        "penalty_out_of_band": 60000.0,
-        "empty_stock_penalty": 5000.0,      # 真实库存枯竭惩罚（防被买空）
+        "reward_in_band": 4.0,
+        "penalty_out_of_band": 4.0,
+        "empty_stock_penalty": 2.0,      # 真实库存枯竭惩罚（防被买空）
         # 让 high 不被“全局通胀惩罚”压死：按 tier 缩放
-        "inflation_weight_mult": 0.10,
+        "inflation_weight_mult": 0.60,
         # 允许 high 更积极地动 base_price/k（动作 L1 惩罚缩小）
-        "action_l1_mult": 0.15,
+        "action_l1_mult": 0.30,
     },
     
     # 中等价值物品 (如: 副本材料, 铁锭, 金锭)
@@ -165,15 +166,15 @@ TIERS = {
         "price_min": 0.01,
         "price_max": 10000.0,
         # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略贴 0.01 / 10000 走捷径
-        "penalty_out_of_range": 12000.0,
+        "penalty_out_of_range": 5.0,
         # 奖励带：维持在 500~9000 奖励。带外极轻罚，确保 AI 面对通胀敢于一路砸盘
         "reward_band_min": 500.0,
         "reward_band_max": 9000.0,
         # 路线 B：强约束 base_price 长期落在 band 内（提高在带奖励 & 带外惩罚）
-        "reward_in_band": 8000.0,
-        "penalty_out_of_band": 8000.0,
-        "inflation_weight_mult": 0.60,
-        "action_l1_mult": 0.60,
+        "reward_in_band": 2.5,
+        "penalty_out_of_band": 2.5,
+        "inflation_weight_mult": 1.00,
+        "action_l1_mult": 0.70,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
@@ -195,13 +196,13 @@ TIERS = {
         # 说明：低价值玩家模型的 buy/sell 概率几乎不依赖价格，reward 需要更强的 shaping 才能稳定在带内。
         # 单模型在 mixed 里很容易“统一学成 mid 价位”（两三千），导致 low 失守。
         # 这里把 low 的 band shaping 显著拉强，强制它在 low 世界里把价格压回 10~500。
-        "reward_in_band": 40000.0,
-        "penalty_out_of_band": 40000.0,
+        "reward_in_band": 2.0,
+        "penalty_out_of_band": 3.0,
         # 使用 current_price 做 shaping 后，low 很容易通过把价格压到 hard_min 以下来优化其它项；
         # 因此需要更强的 hard-range 越界惩罚，把价格“拉回地面”。
-        "penalty_out_of_range": 200000.0,
-        "inflation_weight_mult": 1.00,
-        "action_l1_mult": 1.00,
+        "penalty_out_of_range": 8.0,
+        "inflation_weight_mult": 1.40,
+        "action_l1_mult": 0.90,
     }
 }
 
@@ -291,6 +292,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "sell_prob": {"dist": "beta", "a": 1.2, "b": 10.0, "min": 0.00, "max": 0.45},
             "buy_amount": {"dist": "choice", "values": [1, 1, 2, 3]},
             "sell_amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+            "price_response_strength": {"dist": "uniform", "low": 1.4, "high": 1.8},
             # 只有持仓低于目标才会买；持仓高于阈值才会卖（更像真实玩家）
             "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 2},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 0, "high": 4},
@@ -308,6 +310,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 25.0, "min": 0.00, "max": 0.15},
             "sell_prob": {"dist": "beta", "a": 1.0, "b": 60.0, "min": 0.00, "max": 0.05},
             "amount": {"dist": "choice", "values": [1, 1, 1, 2]},
+            "price_response_strength": {"dist": "uniform", "low": 1.1, "high": 1.5},
             "buy_inventory_target": {"dist": "int_uniform", "low": 1, "high": 4},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 0, "high": 2},
         },
@@ -334,6 +337,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 48, "integer": True},
             # 10-20 在线：中价值倾销一般不会太离谱，但仍保留长尾
             "sell_amount": {"dist": "loguniform", "low": 32, "high": 1024, "integer": True},
+            "price_response_strength": {"dist": "uniform", "low": 1.2, "high": 1.6},
             "buy_inventory_target": {"dist": "int_uniform", "low": 8, "high": 64},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 64, "high": 512},
         },
@@ -348,6 +352,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "buy_prob": {"dist": "beta", "a": 2.0, "b": 10.0, "min": 0.01, "max": 0.70},
             "sell_prob": {"dist": "beta", "a": 2.5, "b": 9.0, "min": 0.00, "max": 0.55},
             "amount": {"dist": "loguniform", "low": 1, "high": 128, "integer": True},
+            "price_response_strength": {"dist": "uniform", "low": 0.9, "high": 1.3},
             "buy_inventory_target": {"dist": "int_uniform", "low": 16, "high": 128},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 64, "high": 256},
         },
@@ -375,6 +380,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
             # 低价值倾销长尾仍然保留（自动化农场/清仓），但让常态更温和
             "sell_amount": {"dist": "loguniform", "low": 32, "high": 2048, "integer": True},
+            "price_response_strength": {"dist": "uniform", "low": 1.5, "high": 2.2},
             # 老玩家通常不会为了“囤低价垃圾”去买；但会在库存非常低时补一点
             "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 128},
             # 只有库存显著堆积才会倾销（避免每 tick 都卖、也更贴近“攒一仓库再卖”）
@@ -390,6 +396,7 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "buy_prob": {"dist": "beta", "a": 3.0, "b": 7.0, "min": 0.02, "max": 0.90},
             "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.0, "min": 0.02, "max": 0.90},
             "amount": {"dist": "loguniform", "low": 1, "high": 256, "integer": True},
+            "price_response_strength": {"dist": "uniform", "low": 1.0, "high": 1.4},
             "buy_inventory_target": {"dist": "int_uniform", "low": 32, "high": 256},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 128, "high": 512},
         },

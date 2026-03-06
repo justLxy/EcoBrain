@@ -18,6 +18,7 @@ class Player:
         self.produce_lambda = max(0.0, float(produce_lambda))
         self.consume_lambda = max(0.0, float(consume_lambda))
         self.rng = rng if rng is not None else np.random.default_rng()
+        self.price_response_strength = 1.0
         
     def reset(self):
         self.balance = self.initial_balance # Reset balance
@@ -39,6 +40,25 @@ class Player:
     def act(self, amm, step):
         pass
 
+    def _price_edge(self, amm):
+        current_price = float(amm.get_current_price())
+        reference_price = float(amm.get_reference_price())
+        twap = float(amm.get_twap())
+
+        ref_edge = (reference_price - current_price) / max(1e-9, reference_price)
+        twap_edge = (twap - current_price) / max(1e-9, twap)
+        blended_edge = (0.65 * ref_edge) + (0.35 * twap_edge)
+        return float(np.clip(blended_edge, -2.0, 2.0))
+
+    def _price_multipliers(self, amm):
+        edge = self._price_edge(amm)
+        strength = max(0.0, float(getattr(self, "price_response_strength", 1.0)))
+        buy_mult = float(np.clip(np.exp(strength * edge), 0.10, 6.0))
+        sell_mult = float(np.clip(np.exp(-strength * edge), 0.10, 6.0))
+        qty_buy_mult = float(np.clip(np.exp(0.5 * strength * edge), 0.50, 3.0))
+        qty_sell_mult = float(np.clip(np.exp(-0.5 * strength * edge), 0.50, 3.0))
+        return buy_mult, sell_mult, qty_buy_mult, qty_sell_mult
+
 class NewPlayer(Player):
     """
     New player (新玩家): Occasionally buys or sells small amounts. Does not heavily impact the market alone.
@@ -55,6 +75,7 @@ class NewPlayer(Player):
         item_inventory: int = 0,
         produce_lambda: float = 0.0,
         consume_lambda: float = 0.0,
+        price_response_strength: float = 1.0,
         rng=None,
     ):
         super().__init__(
@@ -70,28 +91,34 @@ class NewPlayer(Player):
         self.amount = amount
         self.buy_inventory_target = int(buy_inventory_target)
         self.sell_inventory_threshold = int(sell_inventory_threshold)
+        self.price_response_strength = max(0.0, float(price_response_strength))
         
     def act(self, amm, step):
+        buy_mult, sell_mult, qty_buy_mult, qty_sell_mult = self._price_multipliers(amm)
+        buy_probability = float(np.clip(float(self.buy_probability) * buy_mult, 0.0, 0.99))
+        sell_probability = float(np.clip(float(self.sell_probability) * sell_mult, 0.0, 0.99))
         action_rand = float(self.rng.random())
-        if action_rand < self.buy_probability:
+        if action_rand < buy_probability:
             # Buy
             if int(self.item_inventory) >= int(self.buy_inventory_target) and int(self.buy_inventory_target) > 0:
                 return 0, 0
             try:
-                cost = amm.simulate_buy(self.amount)
+                qty = max(1, int(round(float(self.amount) * qty_buy_mult)))
+                cost = amm.simulate_buy(qty)
                 if self.balance >= cost:
-                    actual_cost = amm.execute_buy(self.amount)
+                    actual_cost = amm.execute_buy(qty)
                     self.balance -= actual_cost
-                    self.item_inventory += int(self.amount)
-                    return self.amount, -actual_cost
+                    self.item_inventory += int(qty)
+                    return qty, -actual_cost
             except Exception:
                 return 0, 0
-        elif action_rand < self.buy_probability + self.sell_probability:
+        elif action_rand < buy_probability + sell_probability:
             # Sell
             if int(self.item_inventory) <= int(self.sell_inventory_threshold):
                 return 0, 0
             try:
-                qty = min(int(self.amount), int(self.item_inventory))
+                qty = max(1, int(round(float(self.amount) * qty_sell_mult)))
+                qty = min(int(qty), int(self.item_inventory))
                 if qty <= 0:
                     return 0, 0
                 revenue = amm.execute_sell(qty)
@@ -121,6 +148,7 @@ class VeteranPlayer(Player):
         item_inventory: int = 0,
         produce_lambda: float = 0.0,
         consume_lambda: float = 0.0,
+        price_response_strength: float = 1.0,
         rng=None,
     ):
         super().__init__(
@@ -137,28 +165,34 @@ class VeteranPlayer(Player):
         self.sell_amount = sell_amount
         self.buy_inventory_target = int(buy_inventory_target)
         self.sell_inventory_threshold = int(sell_inventory_threshold)
+        self.price_response_strength = max(0.0, float(price_response_strength))
         
     def act(self, amm, step):
+        buy_mult, sell_mult, qty_buy_mult, qty_sell_mult = self._price_multipliers(amm)
+        buy_probability = float(np.clip(float(self.buy_probability) * buy_mult, 0.0, 0.99))
+        sell_probability = float(np.clip(float(self.sell_probability) * sell_mult, 0.0, 0.99))
         action_rand = float(self.rng.random())
-        if action_rand < self.buy_probability:
+        if action_rand < buy_probability:
             # Buy
             if int(self.item_inventory) >= int(self.buy_inventory_target) and int(self.buy_inventory_target) > 0:
                 return 0, 0
             try:
-                cost = amm.simulate_buy(self.buy_amount)
+                qty = max(1, int(round(float(self.buy_amount) * qty_buy_mult)))
+                cost = amm.simulate_buy(qty)
                 if self.balance >= cost:
-                    actual_cost = amm.execute_buy(self.buy_amount)
+                    actual_cost = amm.execute_buy(qty)
                     self.balance -= actual_cost
-                    self.item_inventory += int(self.buy_amount)
-                    return self.buy_amount, -actual_cost
+                    self.item_inventory += int(qty)
+                    return qty, -actual_cost
             except Exception:
                 return 0, 0
-        elif action_rand < self.buy_probability + self.sell_probability:
+        elif action_rand < buy_probability + sell_probability:
             # Sell
             if int(self.item_inventory) <= int(self.sell_inventory_threshold):
                 return 0, 0
             try:
-                qty = min(int(self.sell_amount), int(self.item_inventory))
+                qty = max(1, int(round(float(self.sell_amount) * qty_sell_mult)))
+                qty = min(int(qty), int(self.item_inventory))
                 if qty <= 0:
                     return 0, 0
                 revenue = amm.execute_sell(qty)

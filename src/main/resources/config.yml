@@ -81,9 +81,17 @@ ai:
     # EcoBrain 3.0 单模型：全服统一上限（并让模拟器 MAX_BASE_PRICE 对齐）。
     max-base-price: 100000.0
 
+    # ONNX 动作第 1 维映射到 base_price 的每周期最大涨跌幅。
+    # 必须和训练端 ACTION_BASE_PRICE_MAX_PERCENT 保持一致。
+    base-price-max-percent: 0.12
+
+    # 冷启动/无成交时，仍允许 AI 以缩小后的力度微调，而不是直接完全 HOLD。
+    # 设为 0 = 保持旧逻辑；设为 1 = 与正常活跃周期同强度。
+    inactivity-action-decay: 0.35
+
     # 允许 AI 每次微调 k 系数的最大幅度。
     # 单模型 mixed 若步长过大，容易把 k 一路推到极端区间，造成离群价格爆炸。
-    k-delta: 0.25
+    k-delta: 0.10
 
     # k 系数的硬性上下限。
     k-min: 0.2

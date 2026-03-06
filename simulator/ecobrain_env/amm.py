@@ -30,6 +30,9 @@ class AMM:
         # Optional TWAP hint injected by env (used by Arbitrageur and future logic).
         # If unset, fallback to current price (plugin's old behavior).
         self.twap_hint = None
+        # A latent fair-value anchor provided by the simulator. Players use it to
+        # react to persistent over/under-pricing, which makes price actually controllable.
+        self.reference_price = None
 
     def set_frozen(self, frozen: bool):
         self.frozen = bool(frozen)
@@ -57,6 +60,22 @@ class AMM:
             self.twap_hint = float(twap_price)
         except Exception:
             self.twap_hint = None
+
+    def set_reference_price(self, reference_price: float | None):
+        if reference_price is None:
+            self.reference_price = None
+            return
+        try:
+            value = float(reference_price)
+        except Exception:
+            self.reference_price = None
+            return
+        self.reference_price = value if value > 0.0 else None
+
+    def get_reference_price(self):
+        if self.reference_price is not None:
+            return float(self.reference_price)
+        return self.get_twap()
 
     def calculate_dynamic_spread(self, sell_amount: int) -> float:
         """

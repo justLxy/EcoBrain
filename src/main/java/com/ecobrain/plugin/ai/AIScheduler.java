@@ -245,15 +245,14 @@ public class AIScheduler {
             };
 
             // 4. 为【当前周期】做决策 At
-            double[] action = new double[]{1.0, 0.0}; // [basePriceMultiplier, kDelta]
-            boolean shouldRunAi = hasActivityTrade;
-            if (shouldRunAi) {
-                action = onnxModelRunner.predictAction(obs, settings.kDelta());
-            }
-
+            double[] action = onnxModelRunner.predictAction(obs, settings.basePriceMaxPercent(), settings.kDelta());
             String tuningReason = "AI_ACTION";
             if (!hasActivityTrade) {
-                tuningReason = "NO_ACTIVITY_TRADE";
+                double decay = clamp(settings.inactivityActionDecay(), 0.0D, 1.0D);
+                double baseMult = 1.0D + ((action[0] - 1.0D) * decay);
+                double kDelta = action[1] * decay;
+                action = new double[]{baseMult, kDelta};
+                tuningReason = decay <= 0.0D ? "NO_ACTIVITY_TRADE" : "NO_ACTIVITY_DECAY";
             }
 
             // 5. 应用最终动作

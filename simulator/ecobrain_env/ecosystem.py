@@ -137,6 +137,7 @@ def build_players_from_archetypes(
             item_inventory = int(sample_from_spec(arch.get("initial_item_inventory", 0), rng))
             produce_lambda = float(sample_from_spec(arch.get("produce_lambda", 0.0), rng))
             consume_lambda = float(sample_from_spec(arch.get("consume_lambda", 0.0), rng))
+            price_response_strength = float(sample_from_spec(arch.get("price_response_strength", 1.0), rng))
 
             if p_type == "VeteranPlayer":
                 buy_prob = float(sample_from_spec(arch.get("buy_prob", 0.02), rng))
@@ -164,6 +165,7 @@ def build_players_from_archetypes(
                         item_inventory=item_inventory,
                         produce_lambda=produce_lambda,
                         consume_lambda=consume_lambda,
+                        price_response_strength=price_response_strength,
                         rng=rng,
                     )
                 )
@@ -190,6 +192,7 @@ def build_players_from_archetypes(
                         item_inventory=item_inventory,
                         produce_lambda=produce_lambda,
                         consume_lambda=consume_lambda,
+                        price_response_strength=price_response_strength,
                         rng=rng,
                     )
                 )

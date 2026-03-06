@@ -129,6 +129,11 @@ def _allocate_phase_timesteps(total_timesteps: int, ratios: list[float], phase_c
     return allocations
 
 
+def _default_mixed_curriculum() -> tuple[list[str], list[float]]:
+    # Warm the policy up on individually learnable worlds before the mixed phase.
+    return ["low", "mid", "high", "mixed"], [0.15, 0.20, 0.25, 0.40]
+
+
 def _write_json(path: str, obj):
     _safe_makedirs(os.path.dirname(path))
     with open(path, "w", encoding="utf-8") as f:
@@ -868,6 +873,9 @@ if __name__ == "__main__":
     value_type = str(args.value_type).lower()
     curriculum_phases = _parse_value_phases(args.curriculum)
     curriculum_ratios = _parse_phase_ratios(args.curriculum_ratios, len(curriculum_phases)) if curriculum_phases else None
+    if not curriculum_phases and value_type == "mixed":
+        curriculum_phases, curriculum_ratios = _default_mixed_curriculum()
+        print(f"Auto curriculum enabled for mixed training: {curriculum_phases} ratios={curriculum_ratios}")
 
     if args.num_threads and args.num_threads > 0:
         torch.set_num_threads(int(args.num_threads))
@@ -926,7 +934,8 @@ if __name__ == "__main__":
             print(f"Curriculum timesteps: {phase_steps}")
             for idx, (phase_vt, steps) in enumerate(zip(curriculum_phases, phase_steps), start=1):
                 resume_flag = (idx > 1) or (not args.no_resume)
-                resume_vecnorm_flag = not (idx > 1)
+                # Keep VecNormalize aligned with the resumed model across curriculum phases.
+                resume_vecnorm_flag = bool(resume_flag and (not args.no_vecnorm))
                 phase_log_dir = os.path.join(str(args.log_dir or "runs"), f"phase_{idx}_{phase_vt}")
                 phase_checkpoint_dir = os.path.join(str(args.checkpoint_dir or "checkpoints"), f"phase_{idx}_{phase_vt}")
                 export_final_onnx = (idx == len(curriculum_phases)) and (not args.skip_onnx)

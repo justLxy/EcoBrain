@@ -53,9 +53,9 @@ EcoBrain 的重点不是“给商店套一个 AI”，而是把**价格发现、
   `exportdata` 导出的不是“旧模型当时想了什么”，而是“服务器真实发生了什么”。  
   离线训练时，PPO 继续在这些真实交易节奏下试错，而不是单纯模仿历史动作。
 
-- **全局金库守恒 + 无活动不调控**  
+- **全局金库守恒 + 无活动弱调控**  
   价格系统不仅要会涨跌，还要知道什么时候该闭嘴。  
-  如果没有真实交易活动，AI 会保持 HOLD；如果系统金库不足，SELL 会被拒绝。这两条约束一起保证了价格调整必须建立在真实市场证据和真实资金能力上。
+  如果没有真实交易活动，AI 会把动作按衰减系数缩小，而不是满强度乱调；如果系统金库不足，SELL 会被拒绝。这两条约束一起保证了价格调整必须建立在真实市场证据和真实资金能力上。
 
 如果用一句话概括 EcoBrain 的设计思路，就是：
 
@@ -140,9 +140,9 @@ Java 插件在线上**只做推理，不做训练**。
 
 1. 插件从数据库读取每个物品的 `base_price / k / target_inventory / current_inventory / physical_stock`
 2. 再聚合最近一段时间的交易数据，构造 16 维 observation
-3. 如果该物品在活动窗口内**没有真实成交**，本周期直接 `HOLD`
-4. 如果有成交，则把 observation 喂给 `ecobrain_value.onnx`
-5. ONNX 输出两个连续动作分量，插件先 `clip -> [-1, 1]`
+3. 把 observation 喂给 `ecobrain_value.onnx`
+4. ONNX 输出两个连续动作分量，插件先 `clip -> [-1, 1]`
+5. 如果该物品在活动窗口内**没有真实成交**，则把动作按 `ai.tuning.inactivity-action-decay` 缩小
 6. 再映射为：
    - `basePriceMultiplier`
    - `kDelta`
@@ -464,7 +464,7 @@ has_activity_trade = 1 if activityVolume > 0 else 0
 ```
 
 这是最关键的门控信号之一。  
-如果这一维为 `0`，当前版本会让 AI 直接 HOLD，不主动乱调价格。
+如果这一维为 `0`，当前版本不会满强度调控，而是把 ONNX 动作按 `ai.tuning.inactivity-action-decay` 缩小后再执行。
 
 9. `log_activity`
 
@@ -561,8 +561,12 @@ clip(out, -1, 1)
 再映射为：
 
 ```text
-basePriceMultiplier = 1 + clip(out0, -1, 1) * ACTION_BASE_PRICE_MAX_PERCENT
+basePriceMultiplier = 1 + clip(out0, -1, 1) * ai.tuning.base-price-max-percent
 kDelta              =     clip(out1, -1, 1) * ai.tuning.k-delta
+
+if has_activity_trade == 0:
+    basePriceMultiplier = 1 + (basePriceMultiplier - 1) * ai.tuning.inactivity-action-decay
+    kDelta              = kDelta * ai.tuning.inactivity-action-decay
 ```
 
 之后再对真实执行值做硬性 clamp：
@@ -592,6 +596,11 @@ python train.py
 ```bash
 python train.py --log-formats stdout,csv
 ```
+
+当前默认行为补充：
+
+- 如果 `--value-type mixed` 且没有手动指定 `--curriculum`，训练会自动使用 `low -> mid -> high -> mixed`
+- 这样做是为了先学会各价位世界的基本控制方向，再进入单模型 mixed 阶段
 
 ### 5.3 用真实服务器数据继续训练
 
@@ -658,6 +667,8 @@ python train.py --no-resume
 - `ai.schedule-minutes`
 - `ai.aov-window-hours`
 - `ai.tuning.max-base-price`
+- `ai.tuning.base-price-max-percent`
+- `ai.tuning.inactivity-action-decay`
 - `ai.tuning.k-delta`
 - `ai.tuning.k-min`
 - `ai.tuning.k-max`
@@ -718,7 +729,7 @@ debt-mode: 2
 2. 之后有其他玩家真实 BUY，这个物品开始出现成交信号
 3. `current_inventory` 因买卖变化，vAMM 价格随之变化
 4. 如果价格偏离 TWAP 或有人恶意大额倾销，SELL 税会明显升高
-5. AI 在有活动信号的周期里，逐步调 `base_price` 和 `k`
+5. AI 在有活动信号的周期里按正常强度调 `base_price` 和 `k`；无活动时只做衰减后的小幅修正
 6. 经过多轮真实交易和调控，价格靠近服务器真实愿意接受的区间
 
 注意：
