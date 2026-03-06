@@ -50,8 +50,9 @@ IPO_RESET_PROB = 0.2  # 每次 reset 抽到 IPO 物品的概率（其余为 Matu
 # 这相当于把 low/mid/high 三个宇宙混在一起训练成一个大脑。
 # 训练采样配比（不改变玩家行为，只改变训练时“看到哪类世界”的频率）。
 # 目标：仍保持 mid 最多，但不要把 high 压到过少，否则 mixed 单模型会长期学不会高价值世界。
-# 这组配比比“真实服里 high 极少”更偏训练友好，目的是先学会分层，再追求真实分布。
-VALUE_MIX = {"low": 0.35, "mid": 0.45, "high": 0.20}
+# 在加入稳定市场锚点后，mixed 单模型不再需要极端偏向 mid。
+# 这里改成更均衡、并轻微照顾 high 的配比，避免最终 mixed 阶段把高价值世界遗忘掉。
+VALUE_MIX = {"low": 0.30, "mid": 0.35, "high": 0.35}
 
 # 物品“年龄”（以 AI 周期为单位），用于冷启动识别特征：
 # - IPO episode 近似新物品：年龄接近 0
@@ -138,19 +139,21 @@ TIERS = {
         "price_min": 0.01,
         "price_max": 100_000.0,
         # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略用“贴边界”走捷径
-        "penalty_out_of_range": 10.0,
+        "penalty_out_of_range": 9.0,
         # 奖励带：15000~10w 奖励；允许跌破/超出，按距离平滑惩罚
         "reward_band_min": 15000.0,
         "reward_band_max": 100_000.0,
         # high 在供大于求+买家少的环境里容易被单模型“降维”到几百块；
         # 因此 high 的 band shaping 需要明显强于 low/mid，给出足够梯度把价格抬回 15000+。
-        "reward_in_band": 4.0,
-        "penalty_out_of_band": 4.0,
+        "reward_in_band": 3.2,
+        "penalty_out_of_band": 3.8,
         "empty_stock_penalty": 2.0,      # 真实库存枯竭惩罚（防被买空）
         # 让 high 不被“全局通胀惩罚”压死：按 tier 缩放
-        "inflation_weight_mult": 0.60,
+        "inflation_weight_mult": 0.65,
         # 允许 high 更积极地动 base_price/k（动作 L1 惩罚缩小）
-        "action_l1_mult": 0.30,
+        "action_l1_mult": 0.35,
+        # Mixed 单模型里，high 样本天然更稀缺、更难学，给它稍强的训练权重。
+        "mixed_training_weight": 1.25,
     },
     
     # 中等价值物品 (如: 副本材料, 铁锭, 金锭)
@@ -166,15 +169,16 @@ TIERS = {
         "price_min": 0.01,
         "price_max": 10000.0,
         # 使用 current_price 做 shaping 后，提高越界惩罚，避免策略贴 0.01 / 10000 走捷径
-        "penalty_out_of_range": 5.0,
+        "penalty_out_of_range": 14.0,
         # 奖励带：维持在 500~9000 奖励。带外极轻罚，确保 AI 面对通胀敢于一路砸盘
         "reward_band_min": 500.0,
         "reward_band_max": 9000.0,
         # 路线 B：强约束 base_price 长期落在 band 内（提高在带奖励 & 带外惩罚）
-        "reward_in_band": 2.5,
-        "penalty_out_of_band": 2.5,
+        "reward_in_band": 4.0,
+        "penalty_out_of_band": 5.5,
         "inflation_weight_mult": 1.00,
-        "action_l1_mult": 0.70,
+        "action_l1_mult": 0.85,
+        "mixed_training_weight": 1.00,
     },
     
     # 低价值物品 (如: 泥土, 小麦, 圆石)
@@ -203,6 +207,7 @@ TIERS = {
         "penalty_out_of_range": 8.0,
         "inflation_weight_mult": 1.40,
         "action_l1_mult": 0.90,
+        "mixed_training_weight": 0.90,
     }
 }
 

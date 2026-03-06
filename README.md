@@ -46,7 +46,7 @@ EcoBrain 的重点不是“给商店套一个 AI”，而是把**价格发现、
   这让“价格弹性”和“真实有货”不再混成一团。
 
 - **单模型 + 连续 observation，而不是线上 tier 路由**  
-  线上不是先给物品贴一个 `low/mid/high` 标签，再切模型或切规则；而是统一交给一个模型，输入同一套 16 维连续状态。  
+  线上不是先给物品贴一个 `low/mid/high` 标签，再切模型或切规则；而是统一交给一个模型，输入同一套 18 维连续状态。  
   这样做的好处是：线上逻辑更简单，训练与部署的契约也更稳定。
 
 - **交易日志驱动的事件回放训练**  
@@ -139,7 +139,7 @@ Java 插件在线上**只做推理，不做训练**。
 一个标准周期大致如下：
 
 1. 插件从数据库读取每个物品的 `base_price / k / target_inventory / current_inventory / physical_stock`
-2. 再聚合最近一段时间的交易数据，构造 16 维 observation
+2. 再聚合最近一段时间的交易数据，构造 observation
 3. 把 observation 喂给 `ecobrain_value.onnx`
 4. ONNX 输出两个连续动作分量，插件先 `clip -> [-1, 1]`
 5. 如果该物品在活动窗口内**没有真实成交**，则把动作按 `ai.tuning.inactivity-action-decay` 缩小
@@ -327,10 +327,10 @@ cycle_offset ~ Uniform(preferred_start, latest_useful_start)
 输入维度固定为：
 
 - 类型：`float32`
-- shape：`[1, 16]`
+- shape：`[1, 18]`
 - 输入名：`observation`
 
-16 维 observation 顺序固定如下：
+18 维 observation 顺序固定如下：
 
 1. `saturation`
 2. `recent_flow`
@@ -338,18 +338,20 @@ cycle_offset ~ Uniform(preferred_start, latest_useful_start)
 4. `elasticity`
 5. `volatility`
 6. `log_price`
-7. `log_age`
-8. `has_activity_trade`
-9. `log_activity`
-10. `log_target_inventory`
-11. `log_physical_stock`
-12. `price_change_pct`
-13. `log_base_price`
-14. `k_factor`
-15. `physical_ratio`
-16. `log_treasury`
+7. `log_twap`
+8. `price_vs_twap`
+9. `log_age`
+10. `has_activity_trade`
+11. `log_activity`
+12. `log_target_inventory`
+13. `log_physical_stock`
+14. `price_change_pct`
+15. `log_base_price`
+16. `k_factor`
+17. `physical_ratio`
+18. `log_treasury`
 
-这 16 个量不是随意拼出来的，它们都有固定计算方式。先约定几个公共记号：
+这 18 个量不是随意拼出来的，它们都有固定计算方式。先约定几个公共记号：
 
 ```text
 windowMinutes = ai.schedule-minutes
@@ -444,7 +446,25 @@ log_price = clip(log(max(1e-9, P_current)), -20, 20)
 
 因为服务器里物品价格跨度可能非常大，所以这里用对数压缩量级。
 
-7. `log_age`
+7. `log_twap`
+
+```text
+log_twap = clip(log(max(1e-9, TWAP)), -20, 20)
+```
+
+这是单模型的“稳定市场锚点”之一。  
+`P_current` 可能已经被 AI 自己调偏，但 `TWAP` 更接近最近真实成交给出的市场公允价。
+
+8. `price_vs_twap`
+
+```text
+price_vs_twap = clip(log(max(1e-9, P_current) / max(1e-9, TWAP)), -10, 10)
+```
+
+这是第二个关键锚点，而且带方向。  
+正值表示“当前价高于近期公允价”，负值表示“当前价低于近期公允价”。
+
+9. `log_age`
 
 ```text
 age_cycles = listing_age_ms / max(1, windowMs)
@@ -454,7 +474,7 @@ log_age    = clip(log1p(max(0, age_cycles)), 0, 20)
 它表示“这个物品进入系统已经经历了多少个调控周期”。  
 训练端内部直接维护等价的 `age_cycles` 语义。
 
-8. `has_activity_trade`
+10. `has_activity_trade`
 
 ```text
 activityVolume = SUM(item total_price in activity window)
@@ -466,7 +486,7 @@ has_activity_trade = 1 if activityVolume > 0 else 0
 这是最关键的门控信号之一。  
 如果这一维为 `0`，当前版本不会满强度调控，而是把 ONNX 动作按 `ai.tuning.inactivity-action-decay` 缩小后再执行。
 
-9. `log_activity`
+11. `log_activity`
 
 ```text
 log_activity = clip(log1p(max(0, activityVolume / windowMinutes)), 0, 20)
@@ -475,7 +495,7 @@ log_activity = clip(log1p(max(0, activityVolume / windowMinutes)), 0, 20)
 它反映的不是“有没有交易”，而是“有多活跃”。  
 同样也做了对数压缩，避免大额热门物品把量级拉爆。
 
-10. `log_target_inventory`
+12. `log_target_inventory`
 
 ```text
 log_target_inventory = clip(log1p(max(0, target_inventory)), 0, 20)
@@ -483,7 +503,7 @@ log_target_inventory = clip(log1p(max(0, target_inventory)), 0, 20)
 
 把理想库存规模压成稳定范围，方便一个模型同时看小宗商品和大宗材料。
 
-11. `log_physical_stock`
+13. `log_physical_stock`
 
 ```text
 log_physical_stock = clip(log1p(max(0, physical_stock)), 0, 20)
@@ -491,7 +511,7 @@ log_physical_stock = clip(log1p(max(0, physical_stock)), 0, 20)
 
 表示系统手里真实有多少货，而不是 AMM 曲线上的虚拟库存。
 
-12. `price_change_pct`
+14. `price_change_pct`
 
 ```text
 price_change_pct =
@@ -501,7 +521,7 @@ price_change_pct =
 这里看的是**成交均价的环比变化**，不是 `base_price` 的变化。  
 这样更接近玩家实际感受到的成交价格变化。
 
-13. `log_base_price`
+15. `log_base_price`
 
 ```text
 log_base_price = clip(log(max(1e-9, base_price)), -20, 20)
@@ -509,7 +529,7 @@ log_base_price = clip(log(max(1e-9, base_price)), -20, 20)
 
 `base_price` 是 AI 真正直接调的慢变量之一，所以要显式告诉模型它现在站在什么底价上。
 
-14. `k_factor`
+16. `k_factor`
 
 ```text
 k_factor = clip(k, ai.tuning.k-min, ai.tuning.k-max)
@@ -518,7 +538,7 @@ k_factor = clip(k, ai.tuning.k-min, ai.tuning.k-max)
 `k` 决定价格曲线对库存变化的敏感度。  
 它是另一个被 AI 直接调控的核心参数。
 
-15. `physical_ratio`
+17. `physical_ratio`
 
 ```text
 physical_ratio = clip(physical_stock / max(1, target_inventory), 0, 1000)
@@ -527,7 +547,7 @@ physical_ratio = clip(physical_stock / max(1, target_inventory), 0, 1000)
 它和 `saturation` 不一样：  
 `saturation` 看的是虚拟库存池，`physical_ratio` 看的是现实仓库。
 
-16. `log_treasury`
+18. `log_treasury`
 
 ```text
 treasury_scaled = treasury_balance / max(1e-9, dynamicAOV)
@@ -600,7 +620,7 @@ python train.py --log-formats stdout,csv
 当前默认行为补充：
 
 - 如果 `--value-type mixed` 且没有手动指定 `--curriculum`，训练会自动使用 `low -> mid -> high -> mixed`
-- 这样做是为了先学会各价位世界的基本控制方向，再进入单模型 mixed 阶段
+- 这样做是为了先学会各价位世界的基本控制方向，再进入更长的 mixed 融合阶段
 
 ### 5.3 用真实服务器数据继续训练
 

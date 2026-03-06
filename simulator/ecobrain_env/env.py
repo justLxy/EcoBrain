@@ -68,9 +68,10 @@ class EcoBrainEnv(gym.Env):
         # [1]: K factor delta (-0.1 to +0.1, mapped from [-1, 1])
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         
-        # Observation space (plugin-aligned, single-brain, 16-dim):
-        # 0..5 legacy core features, 6..15 cold-start / signal / risk / treasury features
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(16,), dtype=np.float32)
+        # Observation space (plugin-aligned, single-brain, 18-dim):
+        # Add stable market anchors (log_twap and signed price-vs-twap gap) so the
+        # single model can tell "mid item temporarily overpriced" from "true high item".
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32)
         
         self.max_steps = 1000
         # If domain randomization is enabled, this can optionally keep the same sampled ecosystem across resets.
@@ -381,10 +382,10 @@ class EcoBrainEnv(gym.Env):
             
     def _get_obs(self):
         """
-        Observation 对齐插件端 `AIScheduler`（单模型 16 维）：
+        Observation 对齐插件端 `AIScheduler`（单模型 18 维）：
         [saturation, recent_flow_per_minute, global_inflation_rate, elasticity, volatility, log_price,
-         log_age, has_activity_trade, log_activity, log_target_inventory, log_physical_stock,
-         price_change_pct, log_base_price, k_factor, physical_ratio, log_treasury]
+         log_twap, price_vs_twap, log_age, has_activity_trade, log_activity, log_target_inventory,
+         log_physical_stock, price_change_pct, log_base_price, k_factor, physical_ratio, log_treasury]
         """
         saturation = self.amm.current_inventory / max(1.0, float(self.amm.target_inventory))
         self._prev_saturation = float(saturation)
@@ -404,6 +405,8 @@ class EcoBrainEnv(gym.Env):
         current_price = float(self.amm.get_current_price())
         twap = float(self._compute_twap_price(fallback=current_price))
         volatility = abs(current_price - twap) / max(1e-9, twap)
+        log_twap = float(np.log(max(1e-9, float(twap))))
+        log_twap = float(np.clip(log_twap, -20.0, 20.0))
 
         unit_now = float(self._unit_price_window[-1]) if self._unit_price_window else current_price
         unit_prev = float(self._prev_unit_price) if self._prev_unit_price > 0 else twap
@@ -413,6 +416,8 @@ class EcoBrainEnv(gym.Env):
         elasticity = float(np.clip(elasticity, -1.0e4, 1.0e4))
         log_price = float(np.log(max(1e-9, float(current_price))))
         log_price = float(np.clip(log_price, -20.0, 20.0))
+        price_vs_twap = float(np.log(max(1e-9, float(current_price)) / max(1e-9, float(twap))))
+        price_vs_twap = float(np.clip(price_vs_twap, -10.0, 10.0))
 
         log_age = float(np.log1p(max(0.0, float(self._age_cycles))))
         log_age = float(np.clip(log_age, 0.0, 20.0))
@@ -440,6 +445,8 @@ class EcoBrainEnv(gym.Env):
                 elasticity,
                 volatility,
                 log_price,
+                log_twap,
+                price_vs_twap,
                 log_age,
                 has_activity,
                 log_activity,
@@ -860,6 +867,13 @@ class EcoBrainEnv(gym.Env):
 
         if vt_key == "high" and int(self.amm.physical_stock) <= 0:
             reward -= float(tier_cfg.get("empty_stock_penalty", 0.0))
+
+        # Mixed single-brain training benefits from light per-latent balancing:
+        # high-value worlds are rarer/harder, while low-value worlds are easier and
+        # can otherwise dominate the policy. This is training-only and does not add
+        # any online routing logic.
+        if str(self.value_type).lower() == "mixed":
+            reward *= float(tier_cfg.get("mixed_training_weight", 1.0))
                 
         # 4. Check done
         done = self.step_count >= self.max_steps

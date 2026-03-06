@@ -130,8 +130,45 @@ def _allocate_phase_timesteps(total_timesteps: int, ratios: list[float], phase_c
 
 
 def _default_mixed_curriculum() -> tuple[list[str], list[float]]:
-    # Warm the policy up on individually learnable worlds before the mixed phase.
-    return ["low", "mid", "high", "mixed"], [0.15, 0.20, 0.25, 0.40]
+    # First learn separable worlds, then spend a larger final block on true mixed
+    # integration. After adding stable market anchors, the main risk is forgetting
+    # high-value behavior in the final phase, so we keep the final mixed block
+    # longer and more balanced instead of revisiting mid immediately before it.
+    return ["low", "mid", "high", "mixed"], [0.15, 0.20, 0.20, 0.45]
+
+
+def _phase_train_overrides(phase_vt: str, is_curriculum_phase: bool) -> dict:
+    phase = str(phase_vt).lower()
+    if not is_curriculum_phase:
+        return {}
+
+    if phase == "low":
+        return {
+            "learning_rate_mult": 1.0,
+            "clip_range": None,
+            "n_epochs": None,
+        }
+    if phase == "mid":
+        return {
+            "learning_rate_mult": 0.90,
+            "clip_range": 0.18,
+            "n_epochs": 8,
+        }
+    if phase == "high":
+        return {
+            "learning_rate_mult": 0.90,
+            "clip_range": 0.18,
+            "n_epochs": 8,
+        }
+    if phase == "mixed":
+        return {
+            # Final mixed adaptation should now do real integration work rather
+            # than just a tiny touch-up pass.
+            "learning_rate_mult": 0.35,
+            "clip_range": 0.12,
+            "n_epochs": 8,
+        }
+    return {}
 
 
 def _write_json(path: str, obj):
@@ -772,7 +809,11 @@ def export_to_onnx(model, filename):
     onnx_policy.eval()
     
     # Create dummy input with the right shape (must match env observation dim)
-    dummy_input = torch.randn(1, 16)
+    try:
+        obs_dim = int(model.observation_space.shape[0])
+    except Exception:
+        obs_dim = int(getattr(pytorch_policy, "features_dim", 18) or 18)
+    dummy_input = torch.randn(1, obs_dim)
     
     # Export to ONNX
     # We must move the model back to CPU before export because 
@@ -785,7 +826,7 @@ def export_to_onnx(model, filename):
         dummy_input,
         filename,
         export_params=True,
-        opset_version=14,
+        opset_version=18,
         do_constant_folding=True,
         input_names=['observation'],
         output_names=['action'],
@@ -890,6 +931,9 @@ if __name__ == "__main__":
         phase_log_dir: str,
         phase_checkpoint_dir: str,
         export_final_onnx: bool,
+        learning_rate_override: float | None = None,
+        clip_range_override: float | None = None,
+        n_epochs_override: int | None = None,
     ):
         model = train_model(
             value_type=vt,
@@ -898,13 +942,13 @@ if __name__ == "__main__":
             device=args.device,
             n_envs=args.n_envs,
             vec_env=args.vec_env,
-            learning_rate=args.learning_rate,
+            learning_rate=float(learning_rate_override if learning_rate_override is not None else args.learning_rate),
             n_steps=args.n_steps,
             batch_size=args.batch_size,
-            n_epochs=args.n_epochs,
+            n_epochs=int(n_epochs_override if n_epochs_override is not None else args.n_epochs),
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
-            clip_range=args.clip_range,
+            clip_range=float(clip_range_override if clip_range_override is not None else args.clip_range),
             seed=args.seed,
             net_arch=args.net_arch or None,
             n_envs_cap=args.n_envs_cap,
@@ -936,12 +980,18 @@ if __name__ == "__main__":
                 resume_flag = (idx > 1) or (not args.no_resume)
                 # Keep VecNormalize aligned with the resumed model across curriculum phases.
                 resume_vecnorm_flag = bool(resume_flag and (not args.no_vecnorm))
+                phase_overrides = _phase_train_overrides(phase_vt, is_curriculum_phase=True)
+                phase_learning_rate = float(args.learning_rate) * float(phase_overrides.get("learning_rate_mult", 1.0))
+                phase_clip_range = phase_overrides.get("clip_range", None)
+                phase_n_epochs = phase_overrides.get("n_epochs", None)
                 phase_log_dir = os.path.join(str(args.log_dir or "runs"), f"phase_{idx}_{phase_vt}")
                 phase_checkpoint_dir = os.path.join(str(args.checkpoint_dir or "checkpoints"), f"phase_{idx}_{phase_vt}")
                 export_final_onnx = (idx == len(curriculum_phases)) and (not args.skip_onnx)
                 print(
                     f"\n=== Curriculum phase {idx}/{len(curriculum_phases)}: "
-                    f"{phase_vt} ({int(steps)} timesteps, resume={resume_flag}, resume_vecnorm={resume_vecnorm_flag}) ==="
+                    f"{phase_vt} ({int(steps)} timesteps, resume={resume_flag}, resume_vecnorm={resume_vecnorm_flag}, "
+                    f"lr={phase_learning_rate:.3g}, clip={phase_clip_range if phase_clip_range is not None else args.clip_range}, "
+                    f"epochs={phase_n_epochs if phase_n_epochs is not None else args.n_epochs}) ==="
                 )
                 _train_one(
                     phase_vt,
@@ -951,6 +1001,9 @@ if __name__ == "__main__":
                     phase_log_dir,
                     phase_checkpoint_dir,
                     export_final_onnx,
+                    learning_rate_override=phase_learning_rate,
+                    clip_range_override=phase_clip_range,
+                    n_epochs_override=phase_n_epochs,
                 )
         else:
             _train_one(

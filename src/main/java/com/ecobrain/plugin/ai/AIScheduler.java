@@ -195,7 +195,12 @@ public class AIScheduler {
             double logPrice = Math.log(Math.max(1e-9D, currentPrice));
             logPrice = clamp(logPrice, -20.0D, 20.0D);
 
-            // === Single-brain observation (16-dim) ===
+            double logTwap = Math.log(Math.max(1e-9D, twap));
+            logTwap = clamp(logTwap, -20.0D, 20.0D);
+            double priceVsTwap = Math.log(Math.max(1e-9D, currentPrice) / Math.max(1e-9D, twap));
+            priceVsTwap = clamp(priceVsTwap, -10.0D, 10.0D);
+
+            // === Single-brain observation (18-dim) ===
             // Keep the first 6 dims aligned with the simulator's legacy layout.
             long createdAt = item.getCreatedAtMillis();
             double ageCycles = 0.0D;
@@ -232,6 +237,8 @@ public class AIScheduler {
                 (float) elasticity,
                 (float) volatility,
                 (float) logPrice,
+                (float) logTwap,
+                (float) priceVsTwap,
                 (float) logAge,
                 (float) (hasActivityTrade ? 1.0D : 0.0D),
                 (float) logActivity,
