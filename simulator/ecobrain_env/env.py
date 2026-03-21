@@ -616,9 +616,11 @@ class EcoBrainEnv(gym.Env):
             base_pen = float(tier_cfg.get("penalty_out_of_range", 0.0))
             if price < hard_min:
                 dist = (hard_min - price) / max(1e-9, hard_min)
+                dist_mult = float(tier_cfg.get("below_range_penalty_mult", 1.0))
             else:
                 dist = (price - hard_max) / max(1e-9, hard_max)
-            return -base_pen * (1.0 + float(np.log1p(max(0.0, dist))))
+                dist_mult = float(tier_cfg.get("above_range_penalty_mult", 1.0))
+            return -(base_pen * dist_mult) * (1.0 + float(np.log1p(max(0.0, dist))))
 
         if band_min <= price <= band_max:
             reward_in_band = float(tier_cfg.get("reward_in_band", 0.0))
@@ -634,9 +636,11 @@ class EcoBrainEnv(gym.Env):
         if price < band_min:
             denom = max(1e-9, band_min - hard_min)
             ratio = (band_min - price) / denom
+            ratio *= float(tier_cfg.get("below_band_penalty_mult", 1.0))
         else:
             denom = max(1e-9, hard_max - band_max)
             ratio = (price - band_max) / denom
+            ratio *= float(tier_cfg.get("above_band_penalty_mult", 1.0))
         ratio = float(np.clip(ratio, 0.0, 1.5))
         return -penalty * ratio
 

@@ -200,14 +200,18 @@ TIERS = {
         # 说明：低价值玩家模型的 buy/sell 概率几乎不依赖价格，reward 需要更强的 shaping 才能稳定在带内。
         # 单模型在 mixed 里很容易“统一学成 mid 价位”（两三千），导致 low 失守。
         # 这里把 low 的 band shaping 显著拉强，强制它在 low 世界里把价格压回 10~500。
-        "reward_in_band": 2.0,
-        "penalty_out_of_band": 3.0,
+        "reward_in_band": 3.0,
+        "penalty_out_of_band": 5.0,
         # 使用 current_price 做 shaping 后，low 很容易通过把价格压到 hard_min 以下来优化其它项；
         # 因此需要更强的 hard-range 越界惩罚，把价格“拉回地面”。
-        "penalty_out_of_range": 8.0,
+        "penalty_out_of_range": 12.0,
+        "below_band_penalty_mult": 1.8,
+        "above_band_penalty_mult": 1.4,
+        "below_range_penalty_mult": 1.8,
+        "above_range_penalty_mult": 1.5,
         "inflation_weight_mult": 1.40,
         "action_l1_mult": 0.90,
-        "mixed_training_weight": 0.90,
+        "mixed_training_weight": 1.10,
     }
 }
 
@@ -378,14 +382,14 @@ SIMULATED_PLAYER_ARCHETYPES = {
             # 供大于求的核心：持续产出（自动化农场/仓库清理），净产出>净消耗
             # 注意：每个 AI step 内会有 10 次 tick，所以这里的 lambda 是“每 tick 期望”
             # Rebalanced: reduce extreme oversupply so the low-tier price band is learnable.
-            "produce_lambda": {"dist": "uniform", "low": 0.6, "high": 3.0},
-            "consume_lambda": {"dist": "uniform", "low": 0.4, "high": 2.0},
+            "produce_lambda": {"dist": "uniform", "low": 0.5, "high": 2.6},
+            "consume_lambda": {"dist": "uniform", "low": 0.6, "high": 2.4},
             "buy_prob": {"dist": "beta", "a": 1.0, "b": 40.0, "min": 0.00, "max": 0.12},
-            "sell_prob": {"dist": "beta", "a": 14.0, "b": 1.3, "min": 0.55, "max": 0.99},
+            "sell_prob": {"dist": "beta", "a": 12.0, "b": 1.5, "min": 0.45, "max": 0.95},
             "buy_amount": {"dist": "loguniform", "low": 1, "high": 96, "integer": True},
             # 低价值倾销长尾仍然保留（自动化农场/清仓），但让常态更温和
-            "sell_amount": {"dist": "loguniform", "low": 32, "high": 2048, "integer": True},
-            "price_response_strength": {"dist": "uniform", "low": 1.5, "high": 2.2},
+            "sell_amount": {"dist": "loguniform", "low": 32, "high": 1536, "integer": True},
+            "price_response_strength": {"dist": "uniform", "low": 1.8, "high": 2.6},
             # 老玩家通常不会为了“囤低价垃圾”去买；但会在库存非常低时补一点
             "buy_inventory_target": {"dist": "int_uniform", "low": 0, "high": 128},
             # 只有库存显著堆积才会倾销（避免每 tick 都卖、也更贴近“攒一仓库再卖”）
@@ -396,12 +400,12 @@ SIMULATED_PLAYER_ARCHETYPES = {
             "count": {"dist": "int_uniform", "low": 0, "high": 3},
             "balance": {"dist": "loguniform", "low": 500_000, "high": 1_000_000},
             "initial_item_inventory": {"dist": "int_uniform", "low": 0, "high": 128},
-            "produce_lambda": {"dist": "uniform", "low": 0.0, "high": 1.5},
-            "consume_lambda": {"dist": "uniform", "low": 0.5, "high": 3.0},
-            "buy_prob": {"dist": "beta", "a": 3.0, "b": 7.0, "min": 0.02, "max": 0.90},
-            "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.0, "min": 0.02, "max": 0.90},
+            "produce_lambda": {"dist": "uniform", "low": 0.0, "high": 1.3},
+            "consume_lambda": {"dist": "uniform", "low": 0.6, "high": 3.2},
+            "buy_prob": {"dist": "beta", "a": 3.5, "b": 6.5, "min": 0.03, "max": 0.95},
+            "sell_prob": {"dist": "beta", "a": 4.0, "b": 6.5, "min": 0.02, "max": 0.80},
             "amount": {"dist": "loguniform", "low": 1, "high": 256, "integer": True},
-            "price_response_strength": {"dist": "uniform", "low": 1.0, "high": 1.4},
+            "price_response_strength": {"dist": "uniform", "low": 1.2, "high": 1.8},
             "buy_inventory_target": {"dist": "int_uniform", "low": 32, "high": 256},
             "sell_inventory_threshold": {"dist": "int_uniform", "low": 128, "high": 512},
         },

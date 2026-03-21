@@ -16,5 +16,6 @@ simulator/*_vecnormalize.pkl
 
 # Root training artifacts
 ecobrain_*.onnx
+ecobrain_*.onnx.data
 ecobrain_ppo_*.zip
 ecobrain_ppo_*_vecnormalize.pkl
