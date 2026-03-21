@@ -200,19 +200,19 @@ $$
 目标库存 $I_t^\star$ 不应被视为不可变常数，因为真实服务器会长期演化。EcoBrain 因此引入数量感知的指数平滑更新。若某次交易后真实库存变为 $S_{t+1}$，单笔交易量为 $q_t$，则先定义
 
 $$
-m_t=\min(q_t,q_{\max}), \qquad \alpha_t^{\text{eff}}=1-(1-\alpha)^{m_t},
+m_t=\min(q_t,q_{\max}), \qquad \alpha_t^{\mathrm{eff}}=1-(1-\alpha)^{m_t},
 $$
 
 再更新目标库存
 
 $$
-I_{t+1}^\star=\operatorname{round}\left(I_t^\star + \alpha_t^{\text{eff}}(S_{t+1}-I_t^\star)\right).
+I_{t+1}^\star=\mathrm{round}\left(I_t^\star + \alpha_t^{\mathrm{eff}}(S_{t+1}-I_t^\star)\right).
 $$
 
 仅更新 $I_t^\star$ 还不够。若目标库存改变而虚拟库存 $I_t$ 保持不动，价格会因为分母结构而产生非交易性跳变。为保持相对饱和度近似不变，EcoBrain 同时做比例缩放：
 
 $$
-I_{t+1}=\max\left(1,\operatorname{round}\left(I_t\frac{I_{t+1}^\star}{I_t^\star}\right)\right).
+I_{t+1}=\max\left(1,\mathrm{round}\left(I_t\frac{I_{t+1}^\star}{I_t^\star}\right)\right).
 $$
 
 这个细节看似小，实际上非常关键。它使“目标库存变化”被解释为世界结构的长期漂移，而不是一次瞬时市场冲击。
@@ -221,17 +221,17 @@ $$
 Java 插件与 Python 模拟器之间最重要的共同接口，是固定的 $18$ 维观测和 $2$ 维动作。若这一契约漂移，模型即使还能运行，其行为也不再可解释。
 
 ### 5.1 Observation Space
-观测张量类型为 `float32`，形状为 `[1,18]`，输入名为 `observation`。为简化表达，定义
+观测张量类型为 `float32`，形状为 `[1,18]`，输入名为 `observation`。为避免在公式中写过长的工程字段名，记动态客单价为 $A_t$，近窗口时间加权均价近似量为 $W_t$。则
 
 $$
-\mathrm{AOV}_t=\frac{\sum \text{global total\_price in window}}{\max(1,\text{global trade count in window})},
+A_t=\frac{V_t}{\max(1,N_t)},
 $$
 
 $$
-\mathrm{TWAP}_t=\frac{1}{|\mathcal{B}_t|}\sum_{b\in\mathcal{B}_t}\frac{\sum_{j\in b}\text{total\_price}_j}{\max(1,\sum_{j\in b}\text{quantity}_j)},
+W_t=\frac{1}{|\mathcal{B}_t|}\sum_{b\in\mathcal{B}_t} u_b,
 $$
 
-其中 $\mathcal{B}_t$ 为当前 TWAP 窗口内的非空时间桶集合。若窗口为空，则 $\mathrm{TWAP}_t$ 退化为 $P_t$，$\mathrm{AOV}_t$ 退化为 IPO 基础价的尺度常数。
+其中 $V_t$ 表示 AOV 窗口内全局成交总额，$N_t$ 表示该窗口内全局成交笔数，$\mathcal{B}_t$ 表示 TWAP 窗口内的非空时间桶集合，$u_b$ 表示单个时间桶的单位成交均价。若窗口为空，则 $W_t$ 退化为 $P_t$，$A_t$ 退化为 IPO 基础价尺度常数。
 
 #### 5.1.1 Inventory and Capacity Features
 
@@ -277,11 +277,11 @@ $$
 ONNX 输出固定为 `[1,2]`，两维分别对应底价倍率和 $k$ 增量。设网络原始输出为 $\hat a_t^{(1)}, \hat a_t^{(2)}$，则先裁剪到 `[-1, 1]`，再映射为
 
 $$
-m_t = 1 + \operatorname{clip}(\hat a_t^{(1)},-1,1)\,\delta_b,
+m_t = 1 + \mathrm{clip}(\hat a_t^{(1)},-1,1)\,\delta_b,
 $$
 
 $$
-\Delta k_t = \operatorname{clip}(\hat a_t^{(2)},-1,1)\,\delta_k.
+\Delta k_t = \mathrm{clip}(\hat a_t^{(2)},-1,1)\,\delta_k.
 $$
 
 在默认配置下，$\delta_b=0.12$，$\delta_k=0.10$。若当前活动窗口内没有真实成交，则动作被进一步衰减为
@@ -293,9 +293,9 @@ $$
 其中 $\gamma=0.35$。最终写库时执行硬边界约束
 
 $$
-b_{t+1}=\operatorname{clip}(b_t m_t', b_{\min}, b_{\max}),
+b_{t+1}=\mathrm{clip}(b_t m_t', b_{\min}, b_{\max}),
 \qquad
-k_{t+1}=\operatorname{clip}(k_t+\Delta k_t', k_{\min}, k_{\max}).
+k_{t+1}=\mathrm{clip}(k_t+\Delta k_t', k_{\min}, k_{\max}).
 $$
 
 为什么不是“无交易就完全不动”？因为冷启动和长尾物品需要缓慢回归，而不是永久冻结。为什么又不能“无交易也满强度调价”？因为那会让模型在没有市场证据时胡乱试探。于是 EcoBrain 选了折中路线：允许小幅动作，但不允许高强度动作。
@@ -391,16 +391,16 @@ $$
 ### 7.3 Dataset Replay
 若提供由插件导出的 CSV，训练将进入半回放模式。原始字段为 `item_hash`, `trade_type`, `quantity`, `total_price`, `created_at`。环境会先按调控周期把时间对齐到离散桶，再构建两类索引：单品时间桶序列和全局时间桶序列。
 
-对每个 `item_hash`，定义平均单位成交价
+对每个 `item_hash`，定义平均单位成交价。若该物品累计成交总额为 $V_i$、累计成交数量为 $Q_i$，则
 
 $$
-\bar p_i=\frac{\text{value\_sum}_i}{\max(1,\text{qty\_sum}_i)}.
+p_i=\frac{V_i}{\max(1,Q_i)}.
 $$
 
-这个量只用于决定该物品更接近哪一类潜在价值世界，以及为 mixed 训练提供更均衡的样本抽样。候选物品的采样概率按事件数加权：
+这个量只用于决定该物品更接近哪一类潜在价值世界，以及为 mixed 训练提供更均衡的样本抽样。若某物品事件数记为 $n_i$，则候选物品的采样概率按事件数加权：
 
 $$
-\Pr(i)=\frac{\text{event\_count}_i}{\sum_j \text{event\_count}_j}.
+\Pr(i)=\frac{n_i}{\sum_j n_j}.
 $$
 
 被选中的物品再从其活跃区间随机抽取起始时间偏移，使训练不总从同一时间切片开始。
@@ -412,12 +412,12 @@ $$
 
 $$
 r_t=
-w_{\text{trade}}R_t^{\text{trade}}
--w_{\text{infl}}R_t^{\text{infl}}
--w_{\text{inv}}R_t^{\text{imbalance}}
-+R_t^{\text{band}}
--w_{\text{act}}\lVert a_t\rVert_1
--R_t^{\text{stockout}}.
+w_{\mathrm{trade}}R_t^{\mathrm{trade}}
+-w_{\mathrm{infl}}R_t^{\mathrm{infl}}
+-w_{\mathrm{inv}}R_t^{\mathrm{imbalance}}
++R_t^{\mathrm{band}}
+-w_{\mathrm{act}}\|a_t\|_1
+-R_t^{\mathrm{stockout}}.
 $$
 
 其中各项含义如下。
@@ -426,7 +426,7 @@ $$
 - $R_t^{\text{infl}}$ 惩罚净印钞率。这样可以阻止策略通过简单抬价来“洗高成交额”。
 - $R_t^{\text{imbalance}}$ 惩罚库存偏离目标过大，推动系统回到合理饱和度附近。
 - $R_t^{\text{band}}$ 约束价格长期停留在各自世界的可接受区间。
-- $\lVert a_t\rVert_1$ 惩罚过于激进的控制动作，防止底价和 $k$ 被策略快速推向边界。
+- $|a_t|_1$ 惩罚过于激进的控制动作，防止底价和 $k$ 被策略快速推向边界。
 - $R_t^{\text{stockout}}$ 在高价值世界额外惩罚被买空，反映“稀缺物品不能长期断供”的需求。
 
 这个奖励结构透露出 EcoBrain 的立场：一个“成交很多但持续印钱、库存失衡、价格脱锚”的经济系统不是好系统。换句话说，交易活跃性只是目标之一，而不是唯一目标。
@@ -474,11 +474,7 @@ Python 侧当前通过的测试支持以下命题。
 因此，一个更保守、也更可信的结论是：仓库当前更像一个“被严格约束的研究型系统”，但其中仍存在需要人工维护的测试契约，而不是一个已经完全封闭、无漂移风险的黑箱插件。
 
 ### 8.2 Evaluation Protocol
-训练端定义了一套轻量级后评估协议，输出 `eval_summary.json` 与 `eval_summary.md`。核心指标包括
-
-$$
-\text{return\_mean}, \quad \text{hard\_hit\_rate}, \quad \text{band\_hit\_rate}, \quad \text{price}_{p50}, \text{price}_{mean}, \text{price}_{p95}.
-$$
+训练端定义了一套轻量级后评估协议，输出 `eval_summary.json` 与 `eval_summary.md`。核心指标包括：平均回报、硬区间命中率、奖励带命中率、以及价格的中位数、均值和 $95\%$ 分位数。
 
 若模型处于 mixed 训练，则还会分别统计 `low`、`mid`、`high` 三个潜在世界中的带内命中率与价格分位数。这些指标的意义不在于给出一个绝对分数，而在于回答两个更实际的问题：模型是否能把价格维持在可接受区间内，以及 mixed 单模型是否在整合训练后忘记了某一类世界。
 
