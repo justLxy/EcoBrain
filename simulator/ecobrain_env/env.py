@@ -49,6 +49,8 @@ from .config import (
     SIMULATED_PLAYER_ARCHETYPES,
 )
 
+VERBOSE_DATASET_REPLAY = os.environ.get("ECOBRAIN_VERBOSE_DATASET_REPLAY", "").strip() == "1"
+
 class EcoBrainEnv(gym.Env):
     """
     Custom Environment for EcoBrain 2.0 PPO Training
@@ -373,11 +375,13 @@ class EcoBrainEnv(gym.Env):
         self._dataset_global_cycles = dict(cache.get("global_cycles", {}))
 
         avg_unit_price = float(selected_meta.get("avg_unit_price", 0.0))
-        print(
-            f"[{self.value_type}] Loaded dataset replay: "
-            f"item={selected_hash[:8]} tier={selected_meta.get('tier')} "
-            f"avg_unit_price={avg_unit_price:.2f} start_cycle={self._dataset_cycle_offset}"
-        )
+        # Keep vectorized training stdout readable; worker prints interleave with SB3 tables.
+        if VERBOSE_DATASET_REPLAY:
+            print(
+                f"[{self.value_type}] Loaded dataset replay: "
+                f"item={selected_hash[:8]} tier={selected_meta.get('tier')} "
+                f"avg_unit_price={avg_unit_price:.2f} start_cycle={self._dataset_cycle_offset}"
+            )
         return True
             
     def _get_obs(self):
