@@ -4,6 +4,13 @@ EcoBrain 是一个面向 Minecraft 服务器的自适应系统市场插件。玩
 
 这个插件的核心目标，是让管理员不再需要为每一种物品手工设置价格、价格区间和调价规则。EcoBrain 会持续记录玩家真实买卖日志，并利用离线训练、线上推理的机器学习流程，为所有进入系统的物品自动调节价格参数。在线上，逐笔交易价格由库存曲线和滑点机制即时决定；在离线，策略模型根据历史买卖行为学习怎样更合理地调整底价和曲线敏感度。因此，系统定价不再主要依赖人工经验，而是依赖玩家交易本身提供的市场证据。
 
+<img width="714" height="224" alt="b8b8522f5effebc7c7f70a088c056133" src="https://github.com/user-attachments/assets/7e944b91-41dd-4501-b0db-ea7da5a92f8c" />
+
+<img width="632" height="300" alt="e8ea775d1b398777cc44a258c22b82df" src="https://github.com/user-attachments/assets/4f302103-676c-4659-8d78-2bca07c7c7bb" />
+
+<img width="585" height="555" alt="5e264cd1403fa10df1e86a187d06d5c8" src="https://github.com/user-attachments/assets/f31b6411-4330-424a-a43a-8e891a7b589b" />
+
+
 从形式上看，EcoBrain 仍然可以被写成一个受约束的控制问题。系统在线上只做推理，在离线只做训练；线上交易由虚拟自动做市商决定瞬时价格，离线策略只负责较慢尺度上的参数调节。若系统状态记为
 
 $$
