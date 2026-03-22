@@ -4,6 +4,13 @@ EcoBrain 是一个面向 Minecraft 服务器的自适应系统市场插件。玩
 
 EcoBrain 的定价机制由两层组成。第一层是动态 AMM：每个物品都沿着库存曲线定价，买入与卖出都会引起滑点，且 SELL 侧带有波动税与防倾销税。第二层是基于 PPO 的连续动作强化学习：策略网络不直接逐笔报价，而是在较慢时间尺度上调节每个物品的 `base_price` 与曲线敏感度 `k`。因此，瞬时价格由 AMM 负责，长期价格中枢与弹性由 PPO 负责。
 
+<img width="714" height="224" alt="b8b8522f5effebc7c7f70a088c056133" src="https://github.com/user-attachments/assets/7e944b91-41dd-4501-b0db-ea7da5a92f8c" />
+
+<img width="632" height="300" alt="e8ea775d1b398777cc44a258c22b82df" src="https://github.com/user-attachments/assets/4f302103-676c-4659-8d78-2bca07c7c7bb" />
+
+<img width="585" height="555" alt="5e264cd1403fa10df1e86a187d06d5c8" src="https://github.com/user-attachments/assets/f31b6411-4330-424a-a43a-8e891a7b589b" />
+
+
 从形式上看，EcoBrain 仍然可以被写成一个受约束的控制问题。系统在线上只做推理，在离线只做训练；线上交易由动态 AMM 决定瞬时价格，离线策略只负责较慢尺度上的参数调节。若系统状态记为
 
 $$
