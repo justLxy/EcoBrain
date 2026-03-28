@@ -39,7 +39,7 @@ trade:
   # 按 Q（丢弃键）时，第一次会自动打开“批量出售”GUI 来防误丢垃圾。
   # 如果玩家在短时间内再次按 Q，则认为是刻意丢弃：本次及持续快速按 Q 将放行丢弃，不再反复打开 GUI。
   # 推荐 500 ~ 1200（毫秒）。
-  qdrop-open-bulk-sell-window-ms: 10000
+  qdrop-open-bulk-sell-window-ms: 60000
 
 circuit-breaker:
   # 涨跌停板机制。物品一天内的价格相对开盘价波动超过这个百分比，就会被冻结交易。
@@ -50,7 +50,7 @@ circuit-breaker:
 
 ai:
   # 是否在后台狂刷 AI 的调参细节（状态/动作/原因等）。平时关掉就行，查问题再开。
-  debug-log: true
+  debug-log: false
 
   # 每隔多久（分钟）让 AI 巡视一次市场并调价。
   # 时间短反应快但可能频繁跳价，时间长物价更平稳。

@@ -26,9 +26,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.ecobrain.plugin.persistence.ItemMarketRepository.centsToMoney;
 import static com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents;
 
 /**
@@ -37,6 +39,7 @@ import static com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents;
  * - buy <amount>
  * - bulk
  * - market [page]
+ * - money <amount>
  * - admin ...
  */
 public class EcoBrainCommand implements CommandExecutor, TabCompleter {
@@ -78,7 +81,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
                              @NotNull String[] args) {
         if (args.length == 0) {
             if (!(sender instanceof Player player)) {
-                sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain <sell|buy|market|reload|admin>");
+                sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain <sell|buy|market|money|reload|admin>");
                 return true;
             }
             return handleMarket(player, new String[] {"market", "1"});
@@ -88,6 +91,9 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         }
         if ("admin".equalsIgnoreCase(args[0])) {
             return adminCommand.handle(sender, args);
+        }
+        if ("money".equalsIgnoreCase(args[0])) {
+            return handleTreasuryMoney(sender, args);
         }
         if (!(sender instanceof Player player)) {
             sender.sendMessage("Only players can use this command.");
@@ -445,11 +451,52 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean handleTreasuryMoney(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("ecobrain.admin")) {
+            sender.sendMessage(ChatColor.RED + "你没有权限执行该命令。");
+            return true;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain money <金额>");
+            return true;
+        }
+
+        double amount = parsePositiveMoney(args[1]);
+        long amountCents = moneyToCents(amount);
+        if (amountCents <= 0L) {
+            sender.sendMessage(ChatColor.RED + "金额必须是大于 0 的数字。");
+            return true;
+        }
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                repository.creditTreasuryCents(amountCents);
+                double injectedMoney = centsToMoney(amountCents);
+                double treasuryMoney = centsToMoney(repository.getTreasuryBalanceCents());
+                sendMessageSync(sender, ChatColor.GREEN + "已向系统金库注入 "
+                    + formatMoney(injectedMoney) + " 金币，当前余额 "
+                    + formatMoney(treasuryMoney) + " 金币。");
+            } catch (Exception e) {
+                sendMessageSync(sender, ChatColor.RED + "注入金库失败: " + e.getMessage());
+            }
+        });
+        return true;
+    }
+
     private int parsePositiveInt(String text) {
         try {
             return Integer.parseInt(text);
         } catch (NumberFormatException e) {
             return -1;
+        }
+    }
+
+    private double parsePositiveMoney(String text) {
+        try {
+            double value = Double.parseDouble(text);
+            return Double.isFinite(value) && value > 0.0D ? value : -1.0D;
+        } catch (NumberFormatException e) {
+            return -1.0D;
         }
     }
 
@@ -555,14 +602,28 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(message));
     }
 
+    private void sendMessageSync(CommandSender sender, String message) {
+        if (sender == null || message == null) {
+            return;
+        }
+        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(message));
+    }
+
+    private String formatMoney(double amount) {
+        return String.format(Locale.US, "%,.2f", amount);
+    }
+
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                                 @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("sell", "buy", "market", "rewards", "reload", "admin");
+            return List.of("sell", "buy", "market", "money", "rewards", "reload", "admin");
         }
         if (args.length == 2 && "sell".equalsIgnoreCase(args[0])) {
             return List.of("all", "1", "16", "64");
+        }
+        if (args.length == 2 && "money".equalsIgnoreCase(args[0])) {
+            return List.of("1000", "10000", "100000");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
             return List.of("clear", "freeze", "unfreeze", "clearleaderboard", "settarget", "exportdata", "reclaimmoney");
