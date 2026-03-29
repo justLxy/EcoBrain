@@ -2,7 +2,6 @@ package com.ecobrain.plugin.rewards;
 
 import com.ecobrain.plugin.model.TradeType;
 import com.ecobrain.plugin.gui.MarketViewGUI;
-import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -13,7 +12,6 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.plugin.Plugin;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -67,8 +65,8 @@ public final class RewardsListener implements Listener {
         if (rawSlot == cfg.gui().backSlot()) {
             // 返回市场大盘
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                List<ItemMarketRecord> records = marketRepository.findAll();
-                List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+                var records = marketRepository.findAll();
+                var filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
                 double treasury = ItemMarketRepository.centsToMoney(marketRepository.getTreasuryBalanceCents());
                 Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, 1, treasury));
             });
@@ -143,4 +141,3 @@ public final class RewardsListener implements Listener {
         }
     }
 }
-

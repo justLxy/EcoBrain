@@ -1,10 +1,11 @@
 package com.ecobrain.plugin.listener;
 
 import com.ecobrain.plugin.model.ItemMarketRecord;
+import com.ecobrain.plugin.model.MarketSnapshot;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.safety.CircuitBreaker;
-import com.ecobrain.plugin.service.AMMCalculator;
+import com.ecobrain.plugin.service.StatisticalPriceDiscoveryService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -36,7 +37,7 @@ public final class MarketHandHintListener implements Listener {
     private final Plugin plugin;
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
-    private final AMMCalculator ammCalculator;
+    private final StatisticalPriceDiscoveryService priceDiscoveryService;
     private final CircuitBreaker circuitBreaker;
 
     private final ConcurrentHashMap<UUID, BukkitTask> debounceTasks = new ConcurrentHashMap<>();
@@ -45,12 +46,12 @@ public final class MarketHandHintListener implements Listener {
     public MarketHandHintListener(Plugin plugin,
                                   ItemMarketRepository repository,
                                   ItemSerializer itemSerializer,
-                                  AMMCalculator ammCalculator,
+                                  StatisticalPriceDiscoveryService priceDiscoveryService,
                                   CircuitBreaker circuitBreaker) {
         this.plugin = plugin;
         this.repository = repository;
         this.itemSerializer = itemSerializer;
-        this.ammCalculator = ammCalculator;
+        this.priceDiscoveryService = priceDiscoveryService;
         this.circuitBreaker = circuitBreaker;
     }
 
@@ -182,8 +183,8 @@ public final class MarketHandHintListener implements Listener {
                     }
                 }
 
-                double price = ammCalculator.calculateCurrentPrice(record);
-                String priceText = String.format(Locale.ROOT, "%.2f", Math.max(0.0D, price));
+                MarketSnapshot marketSnapshot = priceDiscoveryService.snapshot(record);
+                String priceText = String.format(Locale.ROOT, "%.2f", Math.max(0.0D, marketSnapshot.askPrice()));
                 String itemName = displayNameFor(snapshot);
 
                 String subtitle = colorize(subtitleTemplate)
@@ -246,4 +247,3 @@ public final class MarketHandHintListener implements Listener {
         return ChatColor.translateAlternateColorCodes('&', text);
     }
 }
-

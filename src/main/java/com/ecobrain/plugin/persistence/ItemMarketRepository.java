@@ -1,5 +1,7 @@
 package com.ecobrain.plugin.persistence;
 
+import com.ecobrain.plugin.model.DiscoveryStage;
+import com.ecobrain.plugin.model.DiscoveryState;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.model.SystemMoneyOutstanding;
 import com.ecobrain.plugin.model.TradeType;
@@ -178,6 +180,221 @@ public class ItemMarketRepository {
         }
     }
 
+    public DiscoveryState getOrCreateDiscoveryState(String itemHash) {
+        try (Connection connection = databaseManager.getConnection()) {
+            initializeDiscoveryStateIfMissing(connection, itemHash);
+            String sql = """
+                SELECT item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
+                       trusted_buy_qty_7d, trusted_sell_qty_7d,
+                       distinct_buyers_7d, distinct_sellers_7d,
+                       top2_flow_share_24h, reversal_rate_24h,
+                       trusted_float, liquidity_depth, updated_at
+                FROM ecobrain_discovery_state
+                WHERE item_hash = ?
+                """;
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, itemHash);
+                try (ResultSet rs = statement.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new IllegalStateException("Discovery state missing after initialization: " + itemHash);
+                    }
+                    return mapDiscoveryState(rs);
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to load discovery state", e);
+        }
+    }
+
+    public void saveDiscoveryState(DiscoveryState state) {
+        String sql = """
+            INSERT INTO ecobrain_discovery_state(
+                item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
+                trusted_buy_qty_7d, trusted_sell_qty_7d,
+                distinct_buyers_7d, distinct_sellers_7d,
+                top2_flow_share_24h, reversal_rate_24h,
+                trusted_float, liquidity_depth, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_hash) DO UPDATE SET
+                mu_log_price = excluded.mu_log_price,
+                sigma_log_price = excluded.sigma_log_price,
+                stage = excluded.stage,
+                manipulation_score = excluded.manipulation_score,
+                trusted_buy_qty_7d = excluded.trusted_buy_qty_7d,
+                trusted_sell_qty_7d = excluded.trusted_sell_qty_7d,
+                distinct_buyers_7d = excluded.distinct_buyers_7d,
+                distinct_sellers_7d = excluded.distinct_sellers_7d,
+                top2_flow_share_24h = excluded.top2_flow_share_24h,
+                reversal_rate_24h = excluded.reversal_rate_24h,
+                trusted_float = excluded.trusted_float,
+                liquidity_depth = excluded.liquidity_depth,
+                updated_at = excluded.updated_at
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, state.itemHash());
+            statement.setDouble(2, state.muLogPrice());
+            statement.setDouble(3, state.sigmaLogPrice());
+            statement.setString(4, state.stage().name());
+            statement.setDouble(5, state.manipulationScore());
+            statement.setDouble(6, state.trustedBuyQty7d());
+            statement.setDouble(7, state.trustedSellQty7d());
+            statement.setInt(8, state.distinctBuyers7d());
+            statement.setInt(9, state.distinctSellers7d());
+            statement.setDouble(10, state.top2FlowShare24h());
+            statement.setDouble(11, state.reversalRate24h());
+            statement.setDouble(12, state.trustedFloat());
+            statement.setDouble(13, state.liquidityDepth());
+            statement.setLong(14, state.updatedAtMillis());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to save discovery state", e);
+        }
+    }
+
+    public DiscoveryWindowStats queryDiscoveryWindowStats(String itemHash, long buySellSinceMillis,
+                                                          long flowSinceMillis, long reversalSinceMillis,
+                                                          long reversalWindowMillis) {
+        String buySellSql = """
+            SELECT
+                COALESCE(SUM(CASE WHEN trade_type = 'BUY' THEN quantity ELSE 0 END), 0) AS buy_qty,
+                COALESCE(SUM(CASE WHEN trade_type = 'SELL' THEN quantity ELSE 0 END), 0) AS sell_qty,
+                COALESCE(COUNT(DISTINCT CASE WHEN trade_type = 'BUY' THEN player_uuid END), 0) AS distinct_buyers,
+                COALESCE(COUNT(DISTINCT CASE WHEN trade_type = 'SELL' THEN player_uuid END), 0) AS distinct_sellers
+            FROM ecobrain_player_transactions
+            WHERE item_hash = ? AND created_at >= ?
+            """;
+        String top2Sql = """
+            WITH player_flow AS (
+                SELECT player_uuid, COALESCE(SUM(quantity), 0) AS flow_qty
+                FROM ecobrain_player_transactions
+                WHERE item_hash = ? AND created_at >= ?
+                GROUP BY player_uuid
+            ),
+            totals AS (
+                SELECT COALESCE(SUM(flow_qty), 0) AS total_flow FROM player_flow
+            ),
+            top2 AS (
+                SELECT COALESCE(SUM(flow_qty), 0) AS top2_flow
+                FROM (
+                    SELECT flow_qty FROM player_flow ORDER BY flow_qty DESC LIMIT 2
+                )
+            )
+            SELECT CASE
+                WHEN (SELECT total_flow FROM totals) <= 0 THEN 0
+                ELSE (SELECT top2_flow FROM top2) * 1.0 / (SELECT total_flow FROM totals)
+            END AS share
+            """;
+        String reversalSql = """
+            SELECT COALESCE(SUM(CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM ecobrain_player_transactions other
+                    WHERE other.item_hash = tx.item_hash
+                      AND other.player_uuid = tx.player_uuid
+                      AND other.trade_type <> tx.trade_type
+                      AND other.created_at >= tx.created_at - ?
+                      AND other.created_at < tx.created_at
+                ) THEN tx.quantity
+                ELSE 0
+            END) * 1.0 / NULLIF(SUM(tx.quantity), 0), 0) AS reversal_rate
+            FROM ecobrain_player_transactions tx
+            WHERE tx.item_hash = ? AND tx.created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection()) {
+            double buyQty = 0.0D;
+            double sellQty = 0.0D;
+            int distinctBuyers = 0;
+            int distinctSellers = 0;
+            try (PreparedStatement statement = connection.prepareStatement(buySellSql)) {
+                statement.setString(1, itemHash);
+                statement.setLong(2, buySellSinceMillis);
+                try (ResultSet rs = statement.executeQuery()) {
+                    if (rs.next()) {
+                        buyQty = rs.getDouble("buy_qty");
+                        sellQty = rs.getDouble("sell_qty");
+                        distinctBuyers = rs.getInt("distinct_buyers");
+                        distinctSellers = rs.getInt("distinct_sellers");
+                    }
+                }
+            }
+
+            double top2Share = 0.0D;
+            try (PreparedStatement statement = connection.prepareStatement(top2Sql)) {
+                statement.setString(1, itemHash);
+                statement.setLong(2, flowSinceMillis);
+                try (ResultSet rs = statement.executeQuery()) {
+                    if (rs.next()) {
+                        top2Share = rs.getDouble("share");
+                    }
+                }
+            }
+
+            double reversalRate = 0.0D;
+            try (PreparedStatement statement = connection.prepareStatement(reversalSql)) {
+                statement.setLong(1, Math.max(1L, reversalWindowMillis));
+                statement.setString(2, itemHash);
+                statement.setLong(3, reversalSinceMillis);
+                try (ResultSet rs = statement.executeQuery()) {
+                    if (rs.next()) {
+                        reversalRate = rs.getDouble("reversal_rate");
+                    }
+                }
+            }
+
+            return new DiscoveryWindowStats(buyQty, sellQty, distinctBuyers, distinctSellers, top2Share, reversalRate);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query discovery window stats", e);
+        }
+    }
+
+    public boolean hasOppositePlayerTradeSince(UUID playerUuid, String itemHash, TradeType tradeType, long sinceMillis) {
+        String sql = """
+            SELECT 1
+            FROM ecobrain_player_transactions
+            WHERE player_uuid = ?
+              AND item_hash = ?
+              AND trade_type = ?
+              AND created_at >= ?
+            LIMIT 1
+            """;
+        String opposite = tradeType == TradeType.BUY ? TradeType.SELL.name() : TradeType.BUY.name();
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, itemHash);
+            statement.setString(3, opposite);
+            statement.setLong(4, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query opposite player trade", e);
+        }
+    }
+
+    public int queryPlayerActiveDaysForItem(UUID playerUuid, String itemHash, long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(COUNT(DISTINCT DATE(created_at / 1000, 'unixepoch')), 0) AS active_days
+            FROM ecobrain_player_transactions
+            WHERE player_uuid = ?
+              AND item_hash = ?
+              AND created_at >= ?
+            """;
+        try (Connection connection = databaseManager.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, playerUuid.toString());
+            statement.setString(2, itemHash);
+            statement.setLong(3, sinceMillis);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? rs.getInt("active_days") : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query player active days", e);
+        }
+    }
+
     /**
      * IPO 冷启动写入。若已存在则保持原记录不变。
      */
@@ -200,6 +417,7 @@ public class ItemMarketRepository {
             statement.setLong(8, System.currentTimeMillis());
             int rows = statement.executeUpdate();
             initializeRiskIfMissing(itemHash, basePrice, connection);
+            initializeDiscoveryStateIfMissing(connection, itemHash);
             return rows > 0;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to insert IPO record", e);
@@ -350,20 +568,87 @@ public class ItemMarketRepository {
     public void deleteByHash(String itemHash) {
         String deleteStatsSql = "DELETE FROM ecobrain_trade_stats WHERE item_hash = ?";
         String deleteRiskSql = "DELETE FROM ecobrain_risk WHERE item_hash = ?";
+        String deleteDiscoverySql = "DELETE FROM ecobrain_discovery_state WHERE item_hash = ?";
         String deleteItemSql = "DELETE FROM ecobrain_items WHERE item_hash = ?";
         try (Connection connection = databaseManager.getConnection()) {
             try (PreparedStatement stats = connection.prepareStatement(deleteStatsSql);
                  PreparedStatement risk = connection.prepareStatement(deleteRiskSql);
+                 PreparedStatement discovery = connection.prepareStatement(deleteDiscoverySql);
                  PreparedStatement item = connection.prepareStatement(deleteItemSql)) {
                 stats.setString(1, itemHash);
                 risk.setString(1, itemHash);
+                discovery.setString(1, itemHash);
                 item.setString(1, itemHash);
                 stats.executeUpdate();
                 risk.executeUpdate();
+                discovery.executeUpdate();
                 item.executeUpdate();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to delete hash", e);
+        }
+    }
+
+    public int deleteAllByPhysicalStock(int physicalStock) {
+        String selectSql = "SELECT item_hash FROM ecobrain_items WHERE physical_stock = ?";
+        String deleteStatsSql = "DELETE FROM ecobrain_trade_stats WHERE item_hash = ?";
+        String deleteRiskSql = "DELETE FROM ecobrain_risk WHERE item_hash = ?";
+        String deleteDiscoverySql = "DELETE FROM ecobrain_discovery_state WHERE item_hash = ?";
+        String deleteItemSql = "DELETE FROM ecobrain_items WHERE item_hash = ?";
+        try (Connection connection = databaseManager.getConnection()) {
+            boolean prevAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                List<String> hashes = new ArrayList<>();
+                try (PreparedStatement select = connection.prepareStatement(selectSql)) {
+                    select.setInt(1, physicalStock);
+                    try (ResultSet rs = select.executeQuery()) {
+                        while (rs.next()) {
+                            hashes.add(rs.getString("item_hash"));
+                        }
+                    }
+                }
+                if (hashes.isEmpty()) {
+                    connection.commit();
+                    return 0;
+                }
+
+                try (PreparedStatement stats = connection.prepareStatement(deleteStatsSql);
+                     PreparedStatement risk = connection.prepareStatement(deleteRiskSql);
+                     PreparedStatement discovery = connection.prepareStatement(deleteDiscoverySql);
+                     PreparedStatement item = connection.prepareStatement(deleteItemSql)) {
+                    for (String hash : hashes) {
+                        stats.setString(1, hash);
+                        stats.addBatch();
+                        risk.setString(1, hash);
+                        risk.addBatch();
+                        discovery.setString(1, hash);
+                        discovery.addBatch();
+                        item.setString(1, hash);
+                        item.addBatch();
+                    }
+                    stats.executeBatch();
+                    risk.executeBatch();
+                    discovery.executeBatch();
+                    item.executeBatch();
+                }
+
+                connection.commit();
+                return hashes.size();
+            } catch (SQLException e) {
+                try {
+                    connection.rollback();
+                } catch (SQLException ignored) {
+                }
+                throw e;
+            } finally {
+                try {
+                    connection.setAutoCommit(prevAutoCommit);
+                } catch (SQLException ignored) {
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete items by physical stock", e);
         }
     }
 
@@ -980,6 +1265,63 @@ public class ItemMarketRepository {
         }
     }
 
+    private void initializeDiscoveryStateIfMissing(Connection connection, String itemHash) throws SQLException {
+        DiscoveryState initial = DiscoveryState.initial(itemHash);
+        String sql = """
+            INSERT INTO ecobrain_discovery_state(
+                item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
+                trusted_buy_qty_7d, trusted_sell_qty_7d,
+                distinct_buyers_7d, distinct_sellers_7d,
+                top2_flow_share_24h, reversal_rate_24h,
+                trusted_float, liquidity_depth, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_hash) DO NOTHING
+            """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, initial.itemHash());
+            statement.setDouble(2, initial.muLogPrice());
+            statement.setDouble(3, initial.sigmaLogPrice());
+            statement.setString(4, initial.stage().name());
+            statement.setDouble(5, initial.manipulationScore());
+            statement.setDouble(6, initial.trustedBuyQty7d());
+            statement.setDouble(7, initial.trustedSellQty7d());
+            statement.setInt(8, initial.distinctBuyers7d());
+            statement.setInt(9, initial.distinctSellers7d());
+            statement.setDouble(10, initial.top2FlowShare24h());
+            statement.setDouble(11, initial.reversalRate24h());
+            statement.setDouble(12, initial.trustedFloat());
+            statement.setDouble(13, initial.liquidityDepth());
+            statement.setLong(14, initial.updatedAtMillis());
+            statement.executeUpdate();
+        }
+    }
+
+    private DiscoveryState mapDiscoveryState(ResultSet rs) throws SQLException {
+        DiscoveryStage stage;
+        try {
+            stage = DiscoveryStage.valueOf(rs.getString("stage"));
+        } catch (Exception ignored) {
+            stage = DiscoveryStage.UNKNOWN;
+        }
+        return new DiscoveryState(
+            rs.getString("item_hash"),
+            rs.getDouble("mu_log_price"),
+            rs.getDouble("sigma_log_price"),
+            stage,
+            rs.getDouble("manipulation_score"),
+            rs.getDouble("trusted_buy_qty_7d"),
+            rs.getDouble("trusted_sell_qty_7d"),
+            rs.getInt("distinct_buyers_7d"),
+            rs.getInt("distinct_sellers_7d"),
+            rs.getDouble("top2_flow_share_24h"),
+            rs.getDouble("reversal_rate_24h"),
+            rs.getDouble("trusted_float"),
+            rs.getDouble("liquidity_depth"),
+            rs.getLong("updated_at")
+        );
+    }
+
     private ItemMarketRecord mapRecord(ResultSet rs) throws SQLException {
         return new ItemMarketRecord(
             rs.getString("item_hash"),
@@ -1029,5 +1371,13 @@ public class ItemMarketRepository {
         } catch (Exception e) {
             throw new IllegalStateException("导出训练数据失败", e);
         }
+    }
+
+    public record DiscoveryWindowStats(double buyQty7d,
+                                       double sellQty7d,
+                                       int distinctBuyers7d,
+                                       int distinctSellers7d,
+                                       double top2FlowShare24h,
+                                       double reversalRate24h) {
     }
 }

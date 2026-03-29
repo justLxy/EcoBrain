@@ -56,5 +56,24 @@ class ItemMarketRepositoryTargetScalingTest {
         // 100 * 193 / 192 = 100.5208.. -> round => 101
         Assertions.assertEquals(101, after.getCurrentInventory());
     }
-}
 
+    @Test
+    void shouldDeleteOnlyItemsWithExactPhysicalStockOne() throws Exception {
+        JavaPlugin plugin = Mockito.mock(JavaPlugin.class);
+        var tempDir = Files.createTempDirectory("ecobrain-test-db-");
+        Mockito.when(plugin.getDataFolder()).thenReturn(tempDir.toFile());
+
+        DatabaseManager db = new DatabaseManager(plugin);
+        db.initializeSchema();
+        ItemMarketRepository repo = new ItemMarketRepository(db);
+
+        repo.upsertIpo("hash-keep", "base64", 100.0D, 1.0D, 64, 64, 2);
+        repo.upsertIpo("hash-delete", "base64", 100.0D, 1.0D, 64, 64, 1);
+
+        int deleted = repo.deleteAllByPhysicalStock(1);
+
+        Assertions.assertEquals(1, deleted);
+        Assertions.assertTrue(repo.findByHash("hash-keep").isPresent());
+        Assertions.assertTrue(repo.findByHash("hash-delete").isEmpty());
+    }
+}

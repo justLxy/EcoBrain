@@ -87,6 +87,16 @@ public class AIScheduler {
         if (items.isEmpty()) {
             return;
         }
+        boolean shadowMode = true;
+        // 主价格链路已迁移到 StatisticalPriceDiscoveryService。
+        // 这里保留 AI/ONNX 的加载与旁路能力，但不再在线写 base_price/k 调参结果，
+        // 以免兼容字段与真实成交价脱钩后继续误导市场与运维。
+        if (shadowMode) {
+            if (settings.debugLog()) {
+                plugin.getLogger().info("[EcoBrain-AI] Shadow mode active. PPO/ONNX is loaded but online tuning writes are disabled.");
+            }
+            return;
+        }
 
         long now = System.currentTimeMillis();
         long windowMs = Math.max(1, settings.scheduleMinutes()) * 60L * 1000L;

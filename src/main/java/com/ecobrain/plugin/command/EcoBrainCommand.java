@@ -441,7 +441,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 List<ItemMarketRecord> records = repository.findAll();
-                List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+                List<MarketViewGUI.DisplayEntry> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
                 double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
                 Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page, treasury));
             } finally {
@@ -626,7 +626,7 @@ public class EcoBrainCommand implements CommandExecutor, TabCompleter {
             return List.of("1000", "10000", "100000");
         }
         if (args.length == 2 && "admin".equalsIgnoreCase(args[0])) {
-            return List.of("clear", "freeze", "unfreeze", "clearleaderboard", "settarget", "exportdata", "reclaimmoney");
+            return List.of("clear", "freeze", "unfreeze", "inspect", "clearstock1", "clearleaderboard", "settarget", "exportdata", "reclaimmoney");
         }
         if (args.length == 3 && "admin".equalsIgnoreCase(args[0]) && "unfreeze".equalsIgnoreCase(args[1])) {
             return List.of("all");

@@ -1,8 +1,11 @@
 package com.ecobrain.plugin.command;
 
+import com.ecobrain.plugin.model.DiscoveryState;
+import com.ecobrain.plugin.model.MarketSnapshot;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
 import com.ecobrain.plugin.service.EconomyService;
+import com.ecobrain.plugin.service.StatisticalPriceDiscoveryService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
@@ -25,12 +28,15 @@ public class AdminCommand {
     private final ItemMarketRepository repository;
     private final ItemSerializer itemSerializer;
     private final EconomyService economyService;
+    private final StatisticalPriceDiscoveryService priceDiscoveryService;
 
-    public AdminCommand(JavaPlugin plugin, ItemMarketRepository repository, ItemSerializer itemSerializer, EconomyService economyService) {
+    public AdminCommand(JavaPlugin plugin, ItemMarketRepository repository, ItemSerializer itemSerializer,
+                        EconomyService economyService, StatisticalPriceDiscoveryService priceDiscoveryService) {
         this.plugin = plugin;
         this.repository = repository;
         this.itemSerializer = itemSerializer;
         this.economyService = economyService;
+        this.priceDiscoveryService = priceDiscoveryService;
     }
 
     public boolean handle(CommandSender sender, String[] args) {
@@ -46,6 +52,9 @@ public class AdminCommand {
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze            (解冻主手物品)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze <hash>");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin unfreeze all        (解冻所有物品)");
+            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin inspect             (查看主手物品发现价状态)");
+            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin inspect <hash>");
+            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearstock1         (清除所有真实库存=1的物品档案)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin settarget <数量>      (修改主手物品的目标库存)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearleaderboard");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin exportdata          (导出供 AI 训练的离线数据)");
@@ -72,6 +81,23 @@ public class AdminCommand {
                 try {
                     int rows = repository.clearLeaderboard();
                     sendMessageSync(sender, ChatColor.GREEN + "已清空交易排行榜数据。" + (rows > 0 ? (" 删除行数=" + rows) : ""));
+                } catch (Exception e) {
+                    sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
+                }
+            });
+            return true;
+        }
+
+        if ("clearstock1".equalsIgnoreCase(action) || "clearsingletons".equalsIgnoreCase(action)
+            || "clearone".equalsIgnoreCase(action)) {
+            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                try {
+                    int rows = repository.deleteAllByPhysicalStock(1);
+                    if (rows <= 0) {
+                        sendMessageSync(sender, ChatColor.YELLOW + "没有找到真实库存等于 1 的物品档案。");
+                        return;
+                    }
+                    sendMessageSync(sender, ChatColor.GREEN + "已清除真实库存=1的物品档案，共 " + rows + " 个。");
                 } catch (Exception e) {
                     sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
                 }
@@ -213,6 +239,33 @@ public class AdminCommand {
         }
 
         switch (action) {
+            case "inspect" -> {
+                if (args.length >= 3) {
+                    String hash = args[2];
+                    inspectByHashAsync(sender, hash);
+                    return true;
+                }
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage(ChatColor.YELLOW + "控制台用法: /ecobrain admin inspect <hash>");
+                    return true;
+                }
+                ItemStack hand = player.getInventory().getItemInMainHand();
+                if (hand == null || hand.getType().isAir()) {
+                    player.sendMessage(ChatColor.RED + "请先手持需要查看的物品。");
+                    return true;
+                }
+                ItemStack snapshot = hand.clone().asOne();
+                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+                    try {
+                        String base64 = itemSerializer.serializeToBase64(snapshot);
+                        String hash = itemSerializer.sha256(base64);
+                        inspectByHash(player, hash);
+                    } catch (Exception e) {
+                        sendMessageSync(player, ChatColor.RED + "执行失败: " + e.getMessage());
+                    }
+                });
+                return true;
+            }
             case "settarget" -> {
                 if (!(sender instanceof Player player)) {
                     sender.sendMessage(ChatColor.YELLOW + "该命令只能由玩家在游戏内执行（需手持物品）。");
@@ -356,6 +409,49 @@ public class AdminCommand {
         }
     }
 
+    private void inspectByHashAsync(CommandSender sender, String hash) {
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> inspectByHash(sender, hash));
+    }
+
+    private void inspectByHash(CommandSender sender, String hash) {
+        try {
+            var recordOpt = repository.findByHash(hash);
+            if (recordOpt.isEmpty()) {
+                sendMessageSync(sender, ChatColor.RED + "未找到该物品: " + hash);
+                return;
+            }
+            var record = recordOpt.get();
+            DiscoveryState state = priceDiscoveryService.currentState(record);
+            MarketSnapshot snapshot = priceDiscoveryService.snapshot(record);
+
+            sendMessageSync(sender, ChatColor.GOLD + "=== EcoBrain 发现价诊断 ===");
+            sendMessageSync(sender, ChatColor.YELLOW + "Hash: " + ChatColor.WHITE + hash);
+            sendMessageSync(sender, ChatColor.YELLOW + "Stage: " + ChatColor.WHITE + snapshot.stage().name()
+                + ChatColor.GRAY + " | mid=" + formatMoney(snapshot.midPrice())
+                + ChatColor.GRAY + " ask=" + formatMoney(snapshot.askPrice())
+                + ChatColor.GRAY + " bid=" + formatMoney(snapshot.bidPrice()));
+            sendMessageSync(sender, ChatColor.YELLOW + "Sigma: " + ChatColor.WHITE + formatRatio(state.sigmaLogPrice())
+                + ChatColor.GRAY + " | spread=" + formatRatio(snapshot.halfSpread())
+                + ChatColor.GRAY + " | manipulation=" + formatPercent(snapshot.manipulationScore()));
+            sendMessageSync(sender, ChatColor.YELLOW + "7d Buyers/Sellers: " + ChatColor.WHITE
+                + snapshot.distinctBuyers7d() + "/" + snapshot.distinctSellers7d()
+                + ChatColor.GRAY + " | trusted buy=" + formatRatio(snapshot.trustedBuyQty7d())
+                + ChatColor.GRAY + " | trusted sell=" + formatRatio(snapshot.trustedSellQty7d()));
+            sendMessageSync(sender, ChatColor.YELLOW + "24h Top2 Share: " + ChatColor.WHITE + formatPercent(snapshot.top2FlowShare24h())
+                + ChatColor.GRAY + " | reversal=" + formatPercent(snapshot.reversalRate24h()));
+            sendMessageSync(sender, ChatColor.YELLOW + "Physical/TrustedFloat/Depth: " + ChatColor.WHITE
+                + record.getPhysicalStock() + " / "
+                + formatRatio(snapshot.trustedFloat()) + " / " + formatRatio(snapshot.liquidityDepth()));
+            sendMessageSync(sender, ChatColor.YELLOW + "Legacy fields: " + ChatColor.WHITE
+                + "base=" + formatMoney(record.getBasePrice())
+                + ChatColor.GRAY + " k=" + formatRatio(record.getKFactor())
+                + ChatColor.GRAY + " current=" + record.getCurrentInventory()
+                + ChatColor.GRAY + " target=" + record.getTargetInventory());
+        } catch (Exception e) {
+            sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
+        }
+    }
+
     private void sendMessageSync(CommandSender sender, String message) {
         if (sender == null || message == null) {
             return;
@@ -382,6 +478,16 @@ public class AdminCommand {
         DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
         DecimalFormat df = new DecimalFormat("0.00", symbols);
         return df.format(amount);
+    }
+
+    private String formatRatio(double value) {
+        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
+        DecimalFormat df = new DecimalFormat("0.###", symbols);
+        return df.format(value);
+    }
+
+    private String formatPercent(double value) {
+        return formatRatio(value * 100.0D) + "%";
     }
 
     private static String color(String text) {

@@ -268,7 +268,7 @@ public class MarketViewListener implements Listener {
     private void openPageAsync(Player player, int page) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             List<ItemMarketRecord> records = repository.findAll();
-            List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+            List<MarketViewGUI.DisplayEntry> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
             double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
             Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, page, treasury));
         });
@@ -468,6 +468,7 @@ public class MarketViewListener implements Listener {
                             // - 若购买来自聊天输入（GUI 已关闭）：照常重开页面（此时玩家不会在旧位置连点）
                             if (clickedSlot >= 0) {
                                 Optional<ItemMarketRecord> updatedOpt = repository.findByHash(itemHash);
+                                var updatedSnapshot = updatedOpt.map(marketService::snapshot).orElse(null);
                                 Bukkit.getScheduler().runTask(plugin, () -> {
                                     if (!marketViewGUI.isMarketTitle(player.getOpenInventory().getTitle())) {
                                         return;
@@ -481,12 +482,12 @@ public class MarketViewListener implements Listener {
                                         session.clearSlot(clickedSlot);
                                         return;
                                     }
-                                    ItemStack display = marketViewGUI.toMarketDisplayItem(updatedOpt.get());
+                                    ItemStack display = marketViewGUI.toMarketDisplayItem(updatedOpt.get(), updatedSnapshot);
                                     player.getOpenInventory().getTopInventory().setItem(clickedSlot, display);
                                 });
                             } else {
                                 List<ItemMarketRecord> refreshed = repository.findAll();
-                                List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(refreshed, player.getUniqueId());
+                                List<MarketViewGUI.DisplayEntry> filtered = marketViewGUI.filterAndSort(refreshed, player.getUniqueId());
                                 double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());
                                 Bukkit.getScheduler().runTask(plugin, () -> marketViewGUI.open(player, filtered, reopenPage, treasury));
                             }

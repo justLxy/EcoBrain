@@ -1,9 +1,11 @@
 package com.ecobrain.plugin.gui;
 
 import com.ecobrain.plugin.config.PluginSettings;
+import com.ecobrain.plugin.model.DiscoveryStage;
 import com.ecobrain.plugin.model.ItemMarketRecord;
+import com.ecobrain.plugin.model.MarketSnapshot;
 import com.ecobrain.plugin.serialization.ItemSerializer;
-import com.ecobrain.plugin.service.AMMCalculator;
+import com.ecobrain.plugin.service.StatisticalPriceDiscoveryService;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -35,7 +37,7 @@ public class MarketViewGUI {
     public static final int NEXT_PAGE_SLOT = 53;
     private static final int PAGE_SIZE = 28;
 
-    private final AMMCalculator ammCalculator;
+    private final StatisticalPriceDiscoveryService priceDiscoveryService;
     private final ItemSerializer itemSerializer;
     private final ConcurrentHashMap<UUID, Session> sessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, FilterState> playerFilters = new ConcurrentHashMap<>();
@@ -110,23 +112,26 @@ public class MarketViewGUI {
         return playerFilters.computeIfAbsent(playerId, k -> new FilterState());
     }
 
-    public MarketViewGUI(AMMCalculator ammCalculator, ItemSerializer itemSerializer, PluginSettings.Gui gui, PluginSettings.AI ai) {
-        this.ammCalculator = ammCalculator;
+    public MarketViewGUI(StatisticalPriceDiscoveryService priceDiscoveryService, ItemSerializer itemSerializer, PluginSettings.Gui gui) {
+        this.priceDiscoveryService = priceDiscoveryService;
         this.itemSerializer = itemSerializer;
-        applySettings(gui, ai);
+        applySettings(gui);
     }
 
     /**
      * 热更新市场展示配置。
      */
-    public final void applySettings(PluginSettings.Gui gui, PluginSettings.AI ai) {
+    public final void applySettings(PluginSettings.Gui gui) {
         List<String> configured = gui.marketItemLoreTemplate();
         if (configured == null || configured.isEmpty()) {
             this.loreTemplate = List.of(
                 "&7Hash: &f{hash_short}",
-                "&7实时价格: &e{price}",
-                "&7系统物理库存: &b{physical_stock}",
-                "&8(内部虚拟池: {virtual_inventory})",
+                "&7系统售价: &e{price}",
+                "&7系统收购价: &6{bid}",
+                "&7市场评价: {tier}",
+                "&7价格状态: {confidence}",
+                "&7库存数量: &b{physical_stock}",
+                "&8{stage_desc}",
                 "&a左键: 购买 1 个",
                 "&aShift+左键: 购买 1 组",
                 "&aShift+右键: 购买 10 组",
@@ -138,11 +143,8 @@ public class MarketViewGUI {
         this.loreTemplate = new ArrayList<>(configured);
     }
 
-    private String tierLabelFor(ItemMarketRecord item) {
-        // EcoBrain 3.0 single-brain:
-        // There is no tier routing anymore, but GUI can still show an informational "value grade"
-        // derived from the observable current price (same bands as the simulator eval).
-        double price = ammCalculator.calculateCurrentPrice(item);
+    private String tierLabelFor(MarketSnapshot snapshot) {
+        double price = snapshot.midPrice();
         if (!Double.isFinite(price) || price <= 0.0D) {
             return "&7暂时未知";
         }
@@ -159,7 +161,7 @@ public class MarketViewGUI {
      * 打开市场主菜单。
      * 菜单支持：左键购买 1 个，Shift+左键购买 1 组，Shift+右键购买 10 组，右键(管理员)删除该物品档案。
      */
-    public void open(Player player, List<ItemMarketRecord> allRecords, int page, double treasuryBalance) {
+    public void open(Player player, List<DisplayEntry> allRecords, int page, double treasuryBalance) {
         int maxPage = Math.max(1, (int) Math.ceil(allRecords.size() / (double) PAGE_SIZE));
         int safePage = Math.max(1, Math.min(page, maxPage));
         Inventory inventory = Bukkit.createInventory(player, 54, TITLE_PREFIX + safePage + "页");
@@ -170,7 +172,8 @@ public class MarketViewGUI {
         int start = (safePage - 1) * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, allRecords.size());
         for (int i = start; i < end; i++) {
-            ItemMarketRecord record = allRecords.get(i);
+            DisplayEntry entry = allRecords.get(i);
+            ItemMarketRecord record = entry.record();
             int slot = contentSlots.get(i - start);
             slotToHash.put(slot, record.getItemHash());
             ItemStack item = new ItemStack(org.bukkit.Material.PAPER);
@@ -180,7 +183,7 @@ public class MarketViewGUI {
             }
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
-                List<String> lore = renderLore(record, meta);
+                List<String> lore = renderLore(record, entry.snapshot(), meta);
                 meta.setLore(lore);
                 item.setItemMeta(meta);
             }
@@ -209,10 +212,10 @@ public class MarketViewGUI {
      * 根据玩家的筛选和排序状态处理记录。
      * 此方法应在异步线程调用以避免反序列化造成的卡顿。
      */
-    public List<ItemMarketRecord> filterAndSort(List<ItemMarketRecord> records, UUID playerId) {
+    public List<DisplayEntry> filterAndSort(List<ItemMarketRecord> records, UUID playerId) {
         FilterState state = getFilterState(playerId);
         
-        List<ItemMarketRecord> result = new ArrayList<>();
+        List<DisplayEntry> result = new ArrayList<>();
         for (ItemMarketRecord record : records) {
             // 不在 GUI 中展示库存小于等于 0 的物品（它们已经断货）
             if (record.getPhysicalStock() <= 0) {
@@ -231,20 +234,20 @@ public class MarketViewGUI {
                 }
             }
             if (keep) {
-                result.add(record);
+                result.add(new DisplayEntry(record, priceDiscoveryService.snapshot(record)));
             }
         }
 
         if (state.sortMode == SortMode.PRICE_DESC || state.sortMode == SortMode.PRICE_ASC) {
             result.sort((a, b) -> {
-                double priceA = ammCalculator.calculateCurrentPrice(a);
-                double priceB = ammCalculator.calculateCurrentPrice(b);
+                double priceA = a.snapshot().askPrice();
+                double priceB = b.snapshot().askPrice();
                 int cmp = Double.compare(priceA, priceB);
                 return state.sortMode == SortMode.PRICE_ASC ? cmp : -cmp;
             });
         } else {
             result.sort((a, b) -> {
-                int cmp = Integer.compare(a.getPhysicalStock(), b.getPhysicalStock());
+                int cmp = Integer.compare(a.record().getPhysicalStock(), b.record().getPhysicalStock());
                 // DEFAULT 和 STOCK_DESC 都是降序（由多到少）
                 return state.sortMode == SortMode.STOCK_ASC ? cmp : -cmp;
             });
@@ -357,7 +360,7 @@ public class MarketViewGUI {
         return row == 0 || row == 5 || col == 0 || col == 8;
     }
 
-    private List<String> renderLore(ItemMarketRecord record, ItemMeta originalMeta) {
+    private List<String> renderLore(ItemMarketRecord record, MarketSnapshot snapshot, ItemMeta originalMeta) {
         List<String> lore = new ArrayList<>();
         
         // Preserve original item's lore if it exists
@@ -366,28 +369,73 @@ public class MarketViewGUI {
             lore.add(""); // Empty line to separate original lore from market info
         }
         
-        String price = String.format("%.2f", ammCalculator.calculateCurrentPrice(record));
+        String ask = String.format("%.2f", snapshot.askPrice());
+        String bid = String.format("%.2f", snapshot.bidPrice());
+        String mid = String.format("%.2f", snapshot.midPrice());
+        String spreadPct = String.format("%.1f%%", snapshot.halfSpread() * 100.0D);
         String hashShort = record.getItemHash().substring(0, Math.min(12, record.getItemHash().length())) + "...";
-        String tier = tierLabelFor(record);
+        String tier = tierLabelFor(snapshot);
+        String stage = stageLabel(snapshot.stage());
+        String confidence = confidenceLabel(snapshot.sigmaLogPrice(), snapshot.stage());
+        String stageDesc = stageDescription(snapshot.stage(), snapshot.sigmaLogPrice());
         for (String line : loreTemplate) {
             String rendered = line
                 .replace("{hash}", record.getItemHash())
                 .replace("{hash_short}", hashShort)
-                .replace("{price}", price)
+                .replace("{price}", ask)
+                .replace("{ask}", ask)
+                .replace("{bid}", bid)
+                .replace("{mid}", mid)
                 .replace("{tier}", tier)
+                .replace("{stage}", stage)
+                .replace("{confidence}", confidence)
+                .replace("{stage_desc}", stageDesc)
+                .replace("{sigma}", String.format("%.3f", snapshot.sigmaLogPrice()))
+                .replace("{spread}", spreadPct)
+                .replace("{manipulation_score}", String.format("%.0f%%", snapshot.manipulationScore() * 100.0D))
                 .replace("{physical_stock}", String.valueOf(record.getPhysicalStock()))
-                .replace("{target_inventory}", String.valueOf(record.getTargetInventory()))
+                .replace("{target_inventory}", String.format("%.0f", snapshot.trustedFloat()))
+                .replace("{trusted_float}", String.format("%.0f", snapshot.trustedFloat()))
+                .replace("{liquidity_depth}", String.format("%.0f", snapshot.liquidityDepth()))
                 .replace("{virtual_inventory}", String.valueOf(record.getCurrentInventory()));
             lore.add(ChatColor.translateAlternateColorCodes('&', rendered));
         }
         return lore;
     }
 
+    private String stageLabel(DiscoveryStage stage) {
+        return switch (stage) {
+            case UNKNOWN -> "&7新上架";
+            case DISCOVERY -> "&b交易中";
+            case MATURE -> "&a交易稳定";
+        };
+    }
+
+    private String confidenceLabel(double sigmaLogPrice, DiscoveryStage stage) {
+        if (stage == DiscoveryStage.UNKNOWN || sigmaLogPrice >= 1.2D) {
+            return "&c波动很大";
+        }
+        if (sigmaLogPrice >= 0.45D) {
+            return "&e还在变化";
+        }
+        return "&a比较稳定";
+    }
+
+    private String stageDescription(DiscoveryStage stage, double sigmaLogPrice) {
+        return switch (stage) {
+            case UNKNOWN -> "&8这是新上架物品，价格还在慢慢摸索。";
+            case DISCOVERY -> "&8最近有玩家在交易，价格会继续跟着市场调整。";
+            case MATURE -> sigmaLogPrice <= 0.25D
+                ? "&8近期成交比较稳定，这个价格更接近真实市价。"
+                : "&8交易已经比较稳定，但价格还是会跟着供需变化。";
+        };
+    }
+
     /**
      * 将数据库记录渲染为市场展示用的 ItemStack（包含 lore 和数量显示）。
      * 用于“原地刷新”某个槽位，避免因重新排序导致玩家误点。
      */
-    public ItemStack toMarketDisplayItem(ItemMarketRecord record) {
+    public ItemStack toMarketDisplayItem(ItemMarketRecord record, MarketSnapshot snapshot) {
         ItemStack item = new ItemStack(org.bukkit.Material.PAPER);
         try {
             item = itemSerializer.deserializeFromBase64(record.getItemBase64());
@@ -395,13 +443,16 @@ public class MarketViewGUI {
         }
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            List<String> lore = renderLore(record, meta);
+            List<String> lore = renderLore(record, snapshot, meta);
             meta.setLore(lore);
             item.setItemMeta(meta);
         }
         int visibleAmount = Math.max(1, Math.min(item.getMaxStackSize(), Math.max(0, record.getPhysicalStock())));
         item.setAmount(visibleAmount);
         return item;
+    }
+
+    public record DisplayEntry(ItemMarketRecord record, MarketSnapshot snapshot) {
     }
 
     public static class Session {

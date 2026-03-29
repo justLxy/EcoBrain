@@ -20,6 +20,7 @@ import com.ecobrain.plugin.service.AMMCalculator;
 import com.ecobrain.plugin.service.EconomyService;
 import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
+import com.ecobrain.plugin.service.StatisticalPriceDiscoveryService;
 import com.ecobrain.plugin.safety.CircuitBreaker;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -38,6 +39,7 @@ public class EcoBrainPlugin extends JavaPlugin {
     private com.ecobrain.plugin.rewards.RewardsGUI rewardsGUI;
     private EconomyService economyService;
     private AMMCalculator ammCalculator;
+    private StatisticalPriceDiscoveryService priceDiscoveryService;
     private CircuitBreaker circuitBreaker;
     private MarketService marketService;
     private BulkSellGUI bulkSellGUI;
@@ -66,23 +68,24 @@ public class EcoBrainPlugin extends JavaPlugin {
 
         ItemOperationCoordinator itemOperationCoordinator = new ItemOperationCoordinator();
         this.ammCalculator = new AMMCalculator();
-        this.circuitBreaker = new CircuitBreaker(repository, ammCalculator, settings.circuitBreaker());
+        this.priceDiscoveryService = new StatisticalPriceDiscoveryService(repository, settings);
+        this.circuitBreaker = new CircuitBreaker(repository, priceDiscoveryService, settings.circuitBreaker());
         this.marketService = new MarketService(
             this,
             repository,
-            ammCalculator,
+            priceDiscoveryService,
             circuitBreaker,
             settings.economy(),
             itemOperationCoordinator
         );
         this.bulkSellGUI = new BulkSellGUI(settings.gui());
-        this.marketViewGUI = new MarketViewGUI(ammCalculator, itemSerializer, settings.gui(), settings.ai());
+        this.marketViewGUI = new MarketViewGUI(priceDiscoveryService, itemSerializer, settings.gui());
         this.leaderboardGUI = new LeaderboardGUI();
         this.rewardsManager = new com.ecobrain.plugin.rewards.RewardsManager(this);
         com.ecobrain.plugin.rewards.RewardClaimRepository rewardClaimRepository = new com.ecobrain.plugin.rewards.RewardClaimRepository(databaseManager);
         this.rewardsGUI = new com.ecobrain.plugin.rewards.RewardsGUI(this, rewardsManager, repository, rewardClaimRepository);
         com.ecobrain.plugin.rewards.RewardCommandRunner rewardCommandRunner = new com.ecobrain.plugin.rewards.RewardCommandRunner(this);
-        AdminCommand adminCommand = new AdminCommand(this, repository, itemSerializer, economyService);
+        AdminCommand adminCommand = new AdminCommand(this, repository, itemSerializer, economyService, priceDiscoveryService);
 
         this.ecoBrainCommand = new EcoBrainCommand(
             this,
@@ -107,7 +110,7 @@ public class EcoBrainPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.listener.LeaderboardListener(this, leaderboardGUI, marketViewGUI, repository), this);
         Bukkit.getPluginManager().registerEvents(
-            new MarketHandHintListener(this, repository, itemSerializer, ammCalculator, circuitBreaker), this);
+            new MarketHandHintListener(this, repository, itemSerializer, priceDiscoveryService, circuitBreaker), this);
         Bukkit.getPluginManager().registerEvents(
             new com.ecobrain.plugin.rewards.RewardsListener(this, rewardsGUI, rewardsManager, marketViewGUI, repository, rewardClaimRepository, rewardCommandRunner), this);
         Bukkit.getPluginManager().registerEvents(
@@ -170,9 +173,10 @@ public class EcoBrainPlugin extends JavaPlugin {
         PluginSettings settings = PluginSettings.load(this);
 
         marketService.updateEconomySettings(settings.economy());
+        priceDiscoveryService.updateSettings(settings);
         circuitBreaker.updateSettings(settings.circuitBreaker());
         bulkSellGUI.applySettings(settings.gui());
-        marketViewGUI.applySettings(settings.gui(), settings.ai());
+        marketViewGUI.applySettings(settings.gui());
         ecoBrainCommand.updateCooldown(settings.trade().cooldownMs());
         if (rewardsManager != null) {
             rewardsManager.reload();

@@ -2,8 +2,9 @@ package com.ecobrain.plugin.safety;
 
 import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.model.ItemMarketRecord;
+import com.ecobrain.plugin.model.MarketSnapshot;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
-import com.ecobrain.plugin.service.AMMCalculator;
+import com.ecobrain.plugin.service.StatisticalPriceDiscoveryService;
 
 import java.time.LocalDate;
 
@@ -21,14 +22,14 @@ public class CircuitBreaker {
     }
 
     private final ItemMarketRepository repository;
-    private final AMMCalculator ammCalculator;
+    private final StatisticalPriceDiscoveryService priceDiscoveryService;
     private volatile double dailyLimit;
     private volatile int criticalInventory;
 
-    public CircuitBreaker(ItemMarketRepository repository, AMMCalculator ammCalculator,
+    public CircuitBreaker(ItemMarketRepository repository, StatisticalPriceDiscoveryService priceDiscoveryService,
                           PluginSettings.CircuitBreaker settings) {
         this.repository = repository;
-        this.ammCalculator = ammCalculator;
+        this.priceDiscoveryService = priceDiscoveryService;
         this.dailyLimit = settings.dailyLimitPercent();
         this.criticalInventory = settings.criticalInventory();
     }
@@ -60,11 +61,11 @@ public class CircuitBreaker {
         if (isFrozenAfterDailyRefresh(record)) {
             return BuyCheckResult.FROZEN_BY_RISK;
         }
-        if (record.getCurrentInventory() <= criticalInventory) {
+        MarketSnapshot snapshot = priceDiscoveryService.snapshot(record);
+        if (!Double.isFinite(snapshot.askPrice()) || snapshot.askPrice() <= 0.0D || snapshot.liquidityDepth() <= 0.0D) {
             return BuyCheckResult.LOW_VIRTUAL_INVENTORY;
         }
         // 预检查：若本次买入会导致真实库存跌破熔断线，则拒绝交易。
-        // （允许精准停靠在熔断线上；价格上行应由 AI 自己学习与执行）
         int postPhysicalStock = record.getPhysicalStock() - amount;
         if (postPhysicalStock < criticalInventory) {
             return BuyCheckResult.POST_BUY_STOCK_PROTECTED;
@@ -85,7 +86,7 @@ public class CircuitBreaker {
      * 避免出现“库存已经恢复但一直买不了”的永久冻结现象。
      */
     private boolean isFrozenAfterDailyRefresh(ItemMarketRecord record) {
-        double currentPrice = ammCalculator.calculateCurrentPrice(record);
+        double currentPrice = priceDiscoveryService.snapshot(record).midPrice();
         String dayKey = LocalDate.now().toString();
         repository.upsertAndGetDayOpenPrice(record.getItemHash(), currentPrice, dayKey);
         return repository.isFrozen(record.getItemHash());
@@ -95,7 +96,7 @@ public class CircuitBreaker {
      * 价格熔断检查：单日涨跌超过阈值时写冻结标记。
      */
     private boolean checkDailyPriceLimit(ItemMarketRecord record) {
-        double currentPrice = ammCalculator.calculateCurrentPrice(record);
+        double currentPrice = priceDiscoveryService.snapshot(record).midPrice();
         String dayKey = LocalDate.now().toString();
         double dayOpenPrice = repository.upsertAndGetDayOpenPrice(record.getItemHash(), currentPrice, dayKey);
         if (dayOpenPrice <= 0.0D) {

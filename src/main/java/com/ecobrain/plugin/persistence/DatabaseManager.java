@@ -17,7 +17,7 @@ public class DatabaseManager {
     private final JavaPlugin plugin;
     private final String jdbcUrl;
     private final File dbFile;
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
 
     public DatabaseManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -125,15 +125,36 @@ public class DatabaseManager {
                 created_at INTEGER NOT NULL
             )
             """;
+        String createDiscoveryStateSql = """
+            CREATE TABLE IF NOT EXISTS ecobrain_discovery_state (
+                item_hash TEXT PRIMARY KEY,
+                mu_log_price REAL NOT NULL,
+                sigma_log_price REAL NOT NULL,
+                stage TEXT NOT NULL,
+                manipulation_score REAL NOT NULL DEFAULT 0,
+                trusted_buy_qty_7d REAL NOT NULL DEFAULT 0,
+                trusted_sell_qty_7d REAL NOT NULL DEFAULT 0,
+                distinct_buyers_7d INTEGER NOT NULL DEFAULT 0,
+                distinct_sellers_7d INTEGER NOT NULL DEFAULT 0,
+                top2_flow_share_24h REAL NOT NULL DEFAULT 0,
+                reversal_rate_24h REAL NOT NULL DEFAULT 0,
+                trusted_float REAL NOT NULL DEFAULT 1,
+                liquidity_depth REAL NOT NULL DEFAULT 16,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (item_hash) REFERENCES ecobrain_items(item_hash)
+            )
+            """;
         String indexInventorySql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_inventory ON ecobrain_items(current_inventory)";
         String indexPhysicalSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_items_physical ON ecobrain_items(physical_stock)";
         String indexTradeTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_time ON ecobrain_trade_stats(created_at)";
         String indexTradeItemTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_trade_item_time ON ecobrain_trade_stats(item_hash, created_at)";
         String indexPlayerTxSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_player_tx ON ecobrain_player_transactions(player_uuid, created_at)";
+        String indexPlayerTxItemTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_player_tx_item_time ON ecobrain_player_transactions(item_hash, created_at)";
         String indexAiTuningTimeSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_time ON ecobrain_ai_tuning_events(created_at)";
         String indexAiTuningItemSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_ai_tuning_item ON ecobrain_ai_tuning_events(item_hash, created_at)";
         String indexRewardClaimsSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_reward_claims_uuid ON ecobrain_reward_claims(player_uuid, claimed_at)";
         String indexSystemMoneyReclaimsSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_system_money_reclaims_uuid ON ecobrain_system_money_reclaims(player_uuid, created_at)";
+        String indexDiscoveryUpdatedSql = "CREATE INDEX IF NOT EXISTS idx_ecobrain_discovery_updated ON ecobrain_discovery_state(updated_at)";
 
         try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
             statement.execute(createMetaSql);
@@ -145,15 +166,18 @@ public class DatabaseManager {
             statement.execute(createAiTuningEventSql);
             statement.execute(createRewardClaimsSql);
             statement.execute(createSystemMoneyReclaimsSql);
+            statement.execute(createDiscoveryStateSql);
             statement.execute(indexInventorySql);
             statement.execute(indexPhysicalSql);
             statement.execute(indexTradeTimeSql);
             statement.execute(indexTradeItemTimeSql);
             statement.execute(indexPlayerTxSql);
+            statement.execute(indexPlayerTxItemTimeSql);
             statement.execute(indexAiTuningTimeSql);
             statement.execute(indexAiTuningItemSql);
             statement.execute(indexRewardClaimsSql);
             statement.execute(indexSystemMoneyReclaimsSql);
+            statement.execute(indexDiscoveryUpdatedSql);
 
             // Write schema version and ensure treasury row exists
             statement.executeUpdate("INSERT INTO ecobrain_meta(k, v) VALUES('schema_version', '" + SCHEMA_VERSION + "') ON CONFLICT(k) DO UPDATE SET v=excluded.v");
@@ -165,20 +189,21 @@ public class DatabaseManager {
     }
 
     /**
-     * EcoBrain 3.0 is not compatible with older schemas.
-     * If the existing db is not schema_version=3, we delete it and rebuild from scratch.
+     * EcoBrain 3.x is not compatible with older schemas.
+     * If the existing db is not the current schema version, we delete it and rebuild from scratch.
      */
     private void ensureSchemaVersion() {
         if (!dbFile.exists()) {
             return;
         }
         boolean ok = false;
+        String existingVersion = null;
         try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
             // If meta table doesn't exist, this will throw and we will reset.
             try (ResultSet rs = statement.executeQuery("SELECT v FROM ecobrain_meta WHERE k='schema_version' LIMIT 1")) {
                 if (rs.next()) {
-                    String v = rs.getString(1);
-                    ok = String.valueOf(SCHEMA_VERSION).equals(v);
+                    existingVersion = rs.getString(1);
+                    ok = String.valueOf(SCHEMA_VERSION).equals(existingVersion);
                 }
             }
         } catch (Exception ignored) {
@@ -187,8 +212,12 @@ public class DatabaseManager {
         if (ok) {
             return;
         }
+        if ("3".equals(existingVersion)) {
+            migrateSchema3To4();
+            return;
+        }
 
-        plugin.getLogger().warning("[EcoBrain] Detected incompatible database schema. Resetting ecobrain.db for EcoBrain 3.0.");
+        plugin.getLogger().warning("[EcoBrain] Detected incompatible database schema. Resetting ecobrain.db for EcoBrain 4.0.");
         try {
             if (!dbFile.delete()) {
                 // On Windows / locked file scenarios delete may fail; try rename as a fallback.
@@ -203,6 +232,15 @@ public class DatabaseManager {
             }
         } catch (SecurityException se) {
             throw new IllegalStateException("Failed to reset incompatible database file", se);
+        }
+    }
+
+    private void migrateSchema3To4() {
+        try (Connection connection = getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("UPDATE ecobrain_meta SET v='4' WHERE k='schema_version'");
+            plugin.getLogger().info("[EcoBrain] Migrated database schema from v3 to v4 in place.");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to migrate schema from v3 to v4", e);
         }
     }
 }

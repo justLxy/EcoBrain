@@ -1,5 +1,5 @@
 # ==========================================================
-# EcoBrain 3.0 主配置文件
+# EcoBrain 4.0 主配置文件
 # ==========================================================
 # 修改后执行 /ecobrain reload 热更新生效
 #
@@ -12,16 +12,15 @@
 
 economy:
   ipo:
-    # 核心：是否开启“零信任”起步机制。
-    # 强烈建议开启！开启后，任何新录入的物品统统强制从 100.0 金币起步。
-    # 它的真实价值完全由玩家随后的买单决定。这是防首发套利的绝对神器。
+    # 是否启用“零信任”起步。
+    # 新物品仍从 100 开始，但 100 只是统计发现价的中性锚点，不再等于系统真实收购价。
     zero-trust: true
 
-    # 只有在上面设为 false 时才生效的备用起步价。不推荐依赖这个。
+    # 仅在 zero-trust=false 时使用的兼容起步价。
+    # 注意：base-price/k-factor 仍会写库，但不再主导线上主成交价。
     base-price: 100
 
-    # 价格弹性 k。数值越大，库存变动时价格跳得越狠。
-    # 太大容易抖动，太小像死水。推荐 0.6 ~ 1.5。
+    # 兼容保留的旧 AMM k 参数。
     k-factor: 1.0
 
   # 全局金库：系统不是无限发钱，而是收入=支出。
@@ -49,11 +48,10 @@ circuit-breaker:
   critical-inventory: 1
 
 ai:
-  # 是否在后台狂刷 AI 的调参细节（状态/动作/原因等）。平时关掉就行，查问题再开。
+  # 旧 PPO/ONNX 旁路仍可加载和记录日志，但它不再主导主价格路径。
   debug-log: false
 
-  # 每隔多久（分钟）让 AI 巡视一次市场并调价。
-  # 时间短反应快但可能频繁跳价，时间长物价更平稳。
+  # 每隔多久（分钟）让旁路 AI 巡视一次市场并写兼容调参日志。
   schedule-minutes: 15
 
   # AI 用来计算全服“平均客单价”的时间窗口。
@@ -63,39 +61,104 @@ ai:
   # 滞销垃圾清理。如果一个物品库存极低且连续这么几天都没人碰，系统会当它是玩家恶搞的垃圾数据，直接删掉。
   garbage-collection-days: 3
 
-  # 自适应目标库存：AI 根据真实的物理库存，动态调整物品的“目标库存”。
+  # 自适应 target 仍为兼容字段保留，但不再主导线上主报价。
   adaptive-target:
     enabled: true
-    # 平滑系数 (0.01 ~ 1.0)。值越大，目标库存向真实物理库存靠拢的速度越快。
-    # 0.20 意味着【每一次玩家买卖交易发生时】，目标库存就会向真实库存靠拢 20%。
-    # 若一次交易数量很大（批量买入/批量卖出），系统会使用“数量感知 EMA”加速靠拢：
-    #   alpha_eff = 1 - (1 - alpha) ^ m
-    # 其中 m = min(交易数量, quantity-cap)，仍只写库一次但对大单更灵敏。
-    # 实时更新的设计让玩家无法通过“短时间内狂刷”来卡 AI 判定的延迟 BUG。
     smoothing-factor: 0.01
-    # 数量感知 EMA 的上限（防止超大单把 target 一步拉爆）
     quantity-cap: 10
 
   tuning:
-    # 价格天花板。如果到了这个价，AI 怎么调都不会再涨了。防刷钱最后的底线。
-    # EcoBrain 3.0 单模型：全服统一上限（并让模拟器 MAX_BASE_PRICE 对齐）。
+    # 兼容保留的旧 PPO 调参约束。
     max-base-price: 100000.0
-
-    # ONNX 动作第 1 维映射到 base_price 的每周期最大涨跌幅。
-    # 必须和训练端 ACTION_BASE_PRICE_MAX_PERCENT 保持一致。
     base-price-max-percent: 0.12
-
-    # 冷启动/无成交时，仍允许 AI 以缩小后的力度微调，而不是直接完全 HOLD。
-    # 设为 0 = 保持旧逻辑；设为 1 = 与正常活跃周期同强度。
     inactivity-action-decay: 0.35
-
-    # 允许 AI 每次微调 k 系数的最大幅度。
-    # 单模型 mixed 若步长过大，容易把 k 一路推到极端区间，造成离群价格爆炸。
     k-delta: 0.10
-
-    # k 系数的硬性上下限。
     k-min: 0.2
     k-max: 6.0
+
+# ==========================================================
+# 纯统计学习价值发现
+# ==========================================================
+discovery:
+  # 新物品的中性发现锚点。它是后验初始中心，不是系统承诺收购价。
+  anchor-price: 100.0
+
+  # 后验对数价格的初始不确定性。越大表示越不确定，UNKNOWN 阶段价差越宽。
+  initial-sigma: 2.3
+
+  # 进入成熟期所需的 sigma 上限。
+  discovery-sigma-threshold: 0.35
+
+  unknown-to-discovery:
+    min-distinct-buyers-7d: 3
+    min-trusted-buy-qty-7d: 16
+
+  discovery-to-mature:
+    min-distinct-buyers-7d: 10
+    min-trusted-buy-qty-7d: 64
+
+evidence:
+  # 买家/卖家与可信买量的统计窗口。
+  buyers-window-days: 7
+
+  # 集中度与回转率的观测窗口。
+  flow-window-hours: 24
+  reversal-window-hours: 2
+
+  # 玩家历史参与天数不足时，单笔证据会自动降权。
+  player-history-window-days: 30
+  player-history-min-days: 3
+  new-player-weight: 0.5
+
+  # 各阶段对 BUY/SELL 证据的默认权重。
+  unknown-buy-weight: 1.0
+  unknown-sell-weight: 0.35
+  discovery-buy-weight: 1.0
+  discovery-sell-weight: 0.8
+  mature-buy-weight: 1.0
+  mature-sell-weight: 1.0
+
+anti-manipulation:
+  # 24h 内前两名玩家流量占比超过此值时，证据权重会被封顶。
+  concentration-cap-share: 0.60
+  concentration-capped-weight: 0.25
+
+  # 操盘分过高时，禁止晋级；更高时冻结上行更新并自动放宽 spread。
+  promotion-block-score: 0.70
+  freeze-upside-score: 0.85
+
+  # UNKNOWN -> DISCOVERY 时允许的最高操盘分。
+  discovery-entry-max-score: 0.50
+
+  # MATURE 阶段允许的最高 top2 share。
+  mature-max-top2-share: 0.45
+
+market-maker:
+  # 库存压力对 reservation price 的影响强度。
+  inventory-pressure: 0.15
+
+  # half-spread = max(stage_floor, sigma_mult * sigma + manip_mult * manipulation_score)
+  sigma-spread-multiplier: 0.60
+  manipulation-spread-multiplier: 0.40
+
+  # 三阶段最小 half-spread。
+  unknown-half-spread-floor: 1.40
+  discovery-half-spread-floor: 0.50
+  mature-half-spread-floor: 0.08
+
+  # 深度滑点强度。值越大，大单买卖的边际价变化越明显。
+  slippage-per-depth: 0.20
+
+  # trusted_float = min(physical_stock, baseline + trusted_buy_qty + trusted_sell_qty)
+  trusted-float-baseline: 16.0
+  min-depth: 16.0
+  max-depth: 2048.0
+
+  # SELL 路径的兜底税，不再承担主发现价职责，只用于抑制大额倾销。
+  sell-backstop-base: 0.05
+  sell-backstop-trigger-ratio: 0.10
+  sell-backstop-slope: 0.60
+  sell-backstop-max-extra: 0.50
 
 gui:
   bulk-sell:
@@ -121,9 +184,12 @@ gui:
       - ""
       - '&7&m+------------------------------+'
       - ''
-      - '        &b价格: &f{price}￥'
-      - '        &b库存: &f{physical_stock} / &8理想库存: {target_inventory}'
-      - '        &b品质: {tier}'
+      - '        &b系统售价: &f{price}￥'
+      - '        &b系统收购价: &f{bid}￥'
+      - '        &b市场评价: {tier}'
+      - '        &b价格状态: {confidence}'
+      - '        &b库存数量: &f{physical_stock} 个'
+      - '        &8{stage_desc}'
       - '        &f&l单击 &7购买 1 个'
       - '        &f&lShift+单击 &7购买 1 组'
       - '        &f&lShift+右键 &7购买 10 组'
@@ -149,7 +215,7 @@ market-hint:
   # 是否要求“至少能买 1 个”才提示（避免提示后却买不了：冻结/库存保护/虚拟库存过低）
   require-buyable: true
 
-  # 文案模板：支持 {item} / {price} / {cmd}
+  # 文案模板：支持 {item} / {price}(ask) / {cmd}
   title: "&7你感受到一笔&f交易机会"
   subtitle: "&f{item} &7在市场有货：&e{price}&7｜&b{cmd}"
 

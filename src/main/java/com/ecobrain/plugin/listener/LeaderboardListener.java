@@ -2,7 +2,6 @@ package com.ecobrain.plugin.listener;
 
 import com.ecobrain.plugin.gui.LeaderboardGUI;
 import com.ecobrain.plugin.gui.MarketViewGUI;
-import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -11,8 +10,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.plugin.Plugin;
-
-import java.util.List;
 
 public class LeaderboardListener implements Listener {
     private final Plugin plugin;
@@ -41,8 +38,8 @@ public class LeaderboardListener implements Listener {
         if (rawSlot == LeaderboardGUI.BACK_BUTTON_SLOT) {
             // 返回市场大盘
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                List<ItemMarketRecord> records = repository.findAll();
-                List<ItemMarketRecord> filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
+                var records = repository.findAll();
+                var filtered = marketViewGUI.filterAndSort(records, player.getUniqueId());
                 MarketViewGUI.Session session = marketViewGUI.getSession(player.getUniqueId());
                 int page = session != null ? session.page() : 1;
                 double treasury = ItemMarketRepository.centsToMoney(repository.getTreasuryBalanceCents());

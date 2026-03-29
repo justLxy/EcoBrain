@@ -2,6 +2,7 @@ package com.ecobrain.plugin.service;
 
 import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.model.ItemMarketRecord;
+import com.ecobrain.plugin.model.MarketSnapshot;
 import com.ecobrain.plugin.model.TradeResult;
 import com.ecobrain.plugin.model.TradeType;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
@@ -20,17 +21,17 @@ import java.util.concurrent.CompletableFuture;
 public class MarketService {
     private final JavaPlugin plugin;
     private final ItemMarketRepository repository;
-    private final AMMCalculator ammCalculator;
+    private final StatisticalPriceDiscoveryService priceDiscoveryService;
     private final CircuitBreaker circuitBreaker;
     private final ItemOperationCoordinator itemOperationCoordinator;
     private volatile PluginSettings.Economy economySettings;
 
-    public MarketService(JavaPlugin plugin, ItemMarketRepository repository, AMMCalculator ammCalculator,
+    public MarketService(JavaPlugin plugin, ItemMarketRepository repository, StatisticalPriceDiscoveryService priceDiscoveryService,
                          CircuitBreaker circuitBreaker, PluginSettings.Economy economySettings,
                          ItemOperationCoordinator itemOperationCoordinator) {
         this.plugin = plugin;
         this.repository = repository;
-        this.ammCalculator = ammCalculator;
+        this.priceDiscoveryService = priceDiscoveryService;
         this.circuitBreaker = circuitBreaker;
         this.economySettings = economySettings;
         this.itemOperationCoordinator = itemOperationCoordinator;
@@ -77,19 +78,13 @@ public class MarketService {
         if (!circuitBreaker.allowSell(record)) {
             throw new IllegalStateException("This item is frozen by circuit breaker");
         }
-        // 科学 TWAP：从交易统计近似 time-weighted 平均价，用于 volatilitySpread
-        long now = System.currentTimeMillis();
-        int twapWindowHours = Math.max(1, plugin.getConfig().getInt("ai.aov-window-hours", 24));
-        int bucketMinutes = Math.max(1, plugin.getConfig().getInt("ai.schedule-minutes", 15));
-        long since = now - (long) twapWindowHours * 60L * 60L * 1000L;
-        long bucketMs = (long) bucketMinutes * 60L * 1000L;
-        double twap = repository.queryItemTwapSince(record.getItemHash(), since, bucketMs);
-        if (twap <= 0.0D) {
-            twap = ammCalculator.calculateCurrentPrice(record);
-        }
-
-        TradeResult result = ammCalculator.calculateSellTotal(record, amount, twap);
-        return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.SELL);
+        StatisticalPriceDiscoveryService.QuoteComputation computation = priceDiscoveryService.quoteSell(record, amount);
+        return new TradeQuote(
+            computation.totalPrice(),
+            computation.compatibilityInventory(),
+            TradeType.SELL,
+            computation.snapshot()
+        );
     }
 
     public TradeQuote quoteBuy(ItemMarketRecord record, int amount) {
@@ -100,14 +95,19 @@ public class MarketService {
         if (check != CircuitBreaker.BuyCheckResult.ALLOW) {
             String message = switch (check) {
                 case FROZEN_BY_RISK -> "该物品当前处于风控冻结状态，暂不可买入。";
-                case LOW_VIRTUAL_INVENTORY -> "该物品虚拟库存过低，暂不可买入。";
+                case LOW_VIRTUAL_INVENTORY -> "该物品当前市场深度异常，暂不可买入。";
                 case POST_BUY_STOCK_PROTECTED -> "该数量会触发库存保护，暂不可买入。";
                 case ALLOW -> "系统繁忙，请稍后重试。";
             };
             throw new IllegalStateException(message);
         }
-        TradeResult result = ammCalculator.calculateBuyTotal(record, amount);
-        return new TradeQuote(result.getTotalPrice(), result.getPostInventory(), TradeType.BUY);
+        StatisticalPriceDiscoveryService.QuoteComputation computation = priceDiscoveryService.quoteBuy(record, amount);
+        return new TradeQuote(
+            computation.totalPrice(),
+            computation.compatibilityInventory(),
+            TradeType.BUY,
+            computation.snapshot()
+        );
     }
 
     public ItemOperationCoordinator.Permit acquireItemPermit(String itemHash) {
@@ -140,38 +140,7 @@ public class MarketService {
      * 预留成功后的买入结算：只更新虚拟库存池 + 记录成交，不再扣 physical_stock。
      */
     public void settleBuyAfterReservation(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
-        // 实时触发自适应目标库存（注意：预留模式下，真实库存已经在外层扣除，这里只需要基于新的状态更新 target）
-        int newPhysical = record.getPhysicalStock() - amount;
-        int oldTarget = record.getTargetInventory();
-        int newTarget = oldTarget;
-        try {
-            PluginSettings settings = PluginSettings.load(plugin);
-            if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
-                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
-                int m = Math.min(Math.max(1, amount), cap);
-                // Quantity-aware EMA: alpha_eff = 1 - (1 - alpha)^m
-                // This reacts faster to large batch trades while still doing only one DB write.
-                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
-                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
-                newTarget = (int) Math.round(ema);
-                if (newTarget == oldTarget && newPhysical != oldTarget) {
-                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
-                }
-                newTarget = Math.max(1, newTarget);
-                if (newTarget != oldTarget) {
-                    repository.updateTargetInventoryWithProportionalCurrentScaling(
-                        itemHash, oldTarget, quote.postInventory(), newTarget
-                    );
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Failed to calculate real-time adaptive target for buy(reserve): " + e.getMessage());
-        }
-
-        if (newTarget == oldTarget) {
-            repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
-        }
+        repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
         
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
@@ -183,6 +152,15 @@ public class MarketService {
         if (quote.type() == TradeType.BUY) {
             repository.creditTreasuryCents(com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents(quote.totalPrice()));
         }
+        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), Math.max(0, record.getPhysicalStock() - amount)));
+        priceDiscoveryService.ingestTradeEvidence(
+            refreshed,
+            quote.type(),
+            amount,
+            quote.totalPrice(),
+            player == null ? null : player.getUniqueId(),
+            now
+        );
     }
 
     private int fullSettingsCriticalInventorySafe() {
@@ -199,46 +177,22 @@ public class MarketService {
      */
     public void settleSell(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
         int newPhysical = ipoCreatedNow ? record.getPhysicalStock() : record.getPhysicalStock() + amount;
-        
-        // 实时触发自适应目标库存
-        int oldTarget = record.getTargetInventory();
-        int newTarget = oldTarget;
-        try {
-            PluginSettings settings = PluginSettings.load(plugin);
-            if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
-                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
-                int m = Math.min(Math.max(1, amount), cap);
-                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
-                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
-                newTarget = (int) Math.round(ema);
-                if (newTarget == oldTarget && newPhysical != oldTarget) {
-                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
-                }
-                newTarget = Math.max(1, newTarget);
-                if (newTarget != oldTarget) {
-                    repository.updateTargetInventoryWithProportionalCurrentScaling(
-                        itemHash, oldTarget, quote.postInventory(), newTarget
-                    );
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Failed to calculate real-time adaptive target for sell: " + e.getMessage());
-        }
-        
-        // 如果 target 被实时缩放了，就不再用旧的 postInventory 覆盖
-        if (newTarget == oldTarget) {
-            repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        } else {
-            // 只更新真实库存（虚拟库存已经在上面的 updateTargetInventoryWithProportionalCurrentScaling 里按比例更新了）
-            repository.updatePhysicalStockOnly(itemHash, newPhysical);
-        }
+        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
         
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
             repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
         }
+        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), newPhysical));
+        priceDiscoveryService.ingestTradeEvidence(
+            refreshed,
+            quote.type(),
+            amount,
+            quote.totalPrice(),
+            player == null ? null : player.getUniqueId(),
+            now
+        );
     }
 
     /**
@@ -246,54 +200,28 @@ public class MarketService {
      */
     public void settleBuy(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
         int newPhysical = record.getPhysicalStock() - amount;
-        
-        // 实时触发自适应目标库存
-        int oldTarget = record.getTargetInventory();
-        int newTarget = oldTarget;
-        try {
-            PluginSettings settings = PluginSettings.load(plugin);
-            if (settings.ai().adaptiveTarget().enabled()) {
-                double smoothing = clamp01(settings.ai().adaptiveTarget().smoothingFactor());
-                int cap = Math.max(1, settings.ai().adaptiveTarget().quantityCap());
-                int m = Math.min(Math.max(1, amount), cap);
-                double alphaEff = smoothing >= 1.0 ? 1.0 : (smoothing <= 0.0 ? 0.0 : (1.0 - Math.pow(1.0 - smoothing, m)));
-                double ema = oldTarget + (newPhysical - oldTarget) * alphaEff;
-                newTarget = (int) Math.round(ema);
-                if (newTarget == oldTarget && newPhysical != oldTarget) {
-                    newTarget += (newPhysical > oldTarget) ? 1 : -1;
-                }
-                newTarget = Math.max(1, newTarget);
-                if (newTarget != oldTarget) {
-                    repository.updateTargetInventoryWithProportionalCurrentScaling(
-                        itemHash, oldTarget, quote.postInventory(), newTarget
-                    );
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Failed to calculate real-time adaptive target for buy: " + e.getMessage());
-        }
-
-        // 如果 target 被实时缩放了，就不再用旧的 postInventory 覆盖
-        if (newTarget == oldTarget) {
-            repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        } else {
-            repository.updatePhysicalStockOnly(itemHash, newPhysical);
-        }
+        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
         
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
             repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
         }
+        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), newPhysical));
+        priceDiscoveryService.ingestTradeEvidence(
+            refreshed,
+            quote.type(),
+            amount,
+            quote.totalPrice(),
+            player == null ? null : player.getUniqueId(),
+            now
+        );
     }
 
-    public record TradeQuote(double totalPrice, int postInventory, TradeType type) {}
+    public MarketSnapshot snapshot(ItemMarketRecord record) {
+        return priceDiscoveryService.snapshot(record);
+    }
+
+    public record TradeQuote(double totalPrice, int postInventory, TradeType type, MarketSnapshot snapshot) {}
     public record IpoState(ItemMarketRecord record, boolean createdNow) {}
-
-    private static double clamp01(double v) {
-        if (Double.isNaN(v)) return 0.0;
-        if (v < 0.0) return 0.0;
-        if (v > 1.0) return 1.0;
-        return v;
-    }
 }
