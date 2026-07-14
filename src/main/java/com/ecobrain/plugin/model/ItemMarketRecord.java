@@ -1,31 +1,24 @@
 package com.ecobrain.plugin.model;
 
 /**
- * 市场物品聚合模型，代表数据库中某个 item_hash 的完整经济状态。
+ * 市场物品聚合模型，代表数据库中某个 item_hash 的身份与真实库存。
+ *
+ * <p>v5 起，定价完全由 {@link DiscoveryState} 的卡尔曼状态驱动，遗留 vAMM 字段
+ * (base_price/k_factor/target_inventory/current_inventory) 已移除。</p>
  */
 public class ItemMarketRecord {
     private final String itemHash;
     private final String itemBase64;
-    private final double basePrice;
-    private final double kFactor;
-    private final int targetInventory;
-    private final int currentInventory;
     private final int physicalStock;
     private final long createdAtMillis;
 
-    public ItemMarketRecord(String itemHash, String itemBase64, double basePrice, double kFactor,
-                            int targetInventory, int currentInventory, int physicalStock) {
-        this(itemHash, itemBase64, basePrice, kFactor, targetInventory, currentInventory, physicalStock, System.currentTimeMillis());
+    public ItemMarketRecord(String itemHash, String itemBase64, int physicalStock) {
+        this(itemHash, itemBase64, physicalStock, System.currentTimeMillis());
     }
 
-    public ItemMarketRecord(String itemHash, String itemBase64, double basePrice, double kFactor,
-                            int targetInventory, int currentInventory, int physicalStock, long createdAtMillis) {
+    public ItemMarketRecord(String itemHash, String itemBase64, int physicalStock, long createdAtMillis) {
         this.itemHash = itemHash;
         this.itemBase64 = itemBase64;
-        this.basePrice = basePrice;
-        this.kFactor = kFactor;
-        this.targetInventory = targetInventory;
-        this.currentInventory = currentInventory;
         this.physicalStock = physicalStock;
         this.createdAtMillis = createdAtMillis;
     }
@@ -38,22 +31,6 @@ public class ItemMarketRecord {
         return itemBase64;
     }
 
-    public double getBasePrice() {
-        return basePrice;
-    }
-
-    public double getKFactor() {
-        return kFactor;
-    }
-
-    public int getTargetInventory() {
-        return targetInventory;
-    }
-
-    public int getCurrentInventory() {
-        return currentInventory;
-    }
-
     public int getPhysicalStock() {
         return physicalStock;
     }
@@ -62,13 +39,7 @@ public class ItemMarketRecord {
         return createdAtMillis;
     }
 
-    public ItemMarketRecord withInventories(int newVirtualInventory, int newPhysicalStock) {
-        return new ItemMarketRecord(itemHash, itemBase64, basePrice, kFactor, targetInventory,
-            newVirtualInventory, newPhysicalStock, createdAtMillis);
-    }
-
-    public ItemMarketRecord withTuning(double newBasePrice, double newKFactor) {
-        return new ItemMarketRecord(itemHash, itemBase64, newBasePrice, newKFactor, targetInventory,
-            currentInventory, physicalStock, createdAtMillis);
+    public ItemMarketRecord withPhysicalStock(int newPhysicalStock) {
+        return new ItemMarketRecord(itemHash, itemBase64, newPhysicalStock, createdAtMillis);
     }
 }

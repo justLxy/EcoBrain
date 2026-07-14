@@ -1,7 +1,6 @@
 package com.ecobrain.plugin.service;
 
 import com.ecobrain.plugin.config.PluginSettings;
-import com.ecobrain.plugin.model.DiscoveryStage;
 import com.ecobrain.plugin.model.DiscoveryState;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.model.TradeType;
@@ -17,103 +16,99 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * v5 定价引擎（卡尔曼滤波 + 鲁棒似然 + Avellaneda-Stoikov）契约测试。
+ */
 class StatisticalPriceDiscoveryServiceTest {
 
     @Test
-    void unknownItemsShouldStartWithLowBidAndWideAsk() throws Exception {
+    void coldStartMidPriceShouldSitAtAnchor() throws Exception {
         ItemMarketRepository repository = newRepository();
-        repository.upsertIpo("unknown", "base64", 100.0D, 1.0D, 64, 64, 64);
+        repository.upsertIpo("fresh", "base64", 64);
         StatisticalPriceDiscoveryService service = new StatisticalPriceDiscoveryService(repository, defaultSettings());
 
-        ItemMarketRecord record = repository.findByHash("unknown").orElseThrow();
+        ItemMarketRecord record = repository.findByHash("fresh").orElseThrow();
         var snapshot = service.snapshot(record);
-        var sellQuote = service.quoteSell(record, 16);
 
-        Assertions.assertTrue(snapshot.bidPrice() < 40.0D, "unknown item bid should be far below 100 anchor");
-        Assertions.assertTrue(snapshot.askPrice() > 200.0D, "unknown item ask should stay wide");
-        Assertions.assertTrue((sellQuote.totalPrice() / 16.0D) < 35.0D, "unknown item average sell payout should stay low");
+        // 冷启动锚点 100，中性中价应贴近锚点。
+        Assertions.assertEquals(100.0D, snapshot.midPrice(), 5.0D, "cold-start mid should sit at anchor");
+        // 初始不确定性大 → 价差宽 → ask 明显高于 bid。
+        Assertions.assertTrue(snapshot.askPrice() > snapshot.bidPrice(), "ask must exceed bid");
+        Assertions.assertTrue(snapshot.halfSpread() > 0.0D, "half-spread must be positive");
     }
 
     @Test
-    void distributedBuysShouldPromoteItemToDiscovery() throws Exception {
+    void repeatedConsistentBuysShouldPullFairValueTowardObservedPrice() throws Exception {
         ItemMarketRepository repository = newRepository();
-        repository.upsertIpo("mat", "base64", 100.0D, 1.0D, 256, 256, 256);
+        repository.upsertIpo("conv", "base64", 512);
         StatisticalPriceDiscoveryService service = new StatisticalPriceDiscoveryService(repository, defaultSettings());
 
         long now = System.currentTimeMillis();
-        int remainingPhysical = 256;
-        for (int i = 0; i < 5; i++) {
-            UUID buyer = UUID.randomUUID();
-            int quantity = 8;
-            double totalPrice = 2400.0D;
-            remainingPhysical -= quantity;
-            repository.updateStocks("mat", Math.max(1, 256 - ((i + 1) * quantity)), remainingPhysical);
-            repository.recordTrade("mat", TradeType.BUY, quantity, totalPrice, now + i);
-            repository.recordPlayerTransaction(buyer, "buyer-" + i, TradeType.BUY, "mat", quantity, totalPrice, now + i);
-            ItemMarketRecord record = repository.findByHash("mat").orElseThrow();
-            service.ingestTradeEvidence(record, TradeType.BUY, quantity, totalPrice, buyer, now + i);
+        double observedUnit = 800.0D;
+        for (int i = 0; i < 12; i++) {
+            UUID buyer = UUID.randomUUID(); // 多样化交易者，避免多样性惩罚
+            int qty = 8;
+            double total = observedUnit * qty;
+            repository.recordTrade("conv", TradeType.BUY, qty, total, now + i * 1000L);
+            repository.recordPlayerTransaction(buyer, "b" + i, TradeType.BUY, "conv", qty, total, now + i * 1000L);
+            ItemMarketRecord rec = repository.findByHash("conv").orElseThrow();
+            service.ingestTradeEvidence(rec, TradeType.BUY, qty, total, buyer, now + i * 1000L);
         }
 
-        ItemMarketRecord latest = repository.findByHash("mat").orElseThrow();
-        DiscoveryState state = service.currentState(latest);
-        Assertions.assertEquals(DiscoveryStage.DISCOVERY, state.stage());
-        Assertions.assertTrue(state.distinctBuyers7d() >= 5);
-        Assertions.assertTrue(state.trustedBuyQty7d() >= 16.0D);
+        DiscoveryState state = service.currentState(repository.findByHash("conv").orElseThrow());
+        double mid = Math.exp(state.xLogValue());
+        // 后验应从锚点 100 明显朝 800 收敛（不必到达，但要越过中点）。
+        Assertions.assertTrue(mid > 300.0D, "fair value should move substantially toward observed 800, got " + mid);
+        // 一致成交后不确定性应下降到低于冷启动初值。
+        Assertions.assertTrue(state.pVar() < 5.0D, "variance should shrink after consistent evidence, got " + state.pVar());
     }
 
     @Test
-    void reversalTradeFromSamePlayerShouldNotMovePosteriorTwice() throws Exception {
+    void outlierWashTradeShouldBeDownWeighted() throws Exception {
         ItemMarketRepository repository = newRepository();
-        repository.upsertIpo("wash", "base64", 100.0D, 1.0D, 128, 128, 128);
+        repository.upsertIpo("wash", "base64", 512);
         StatisticalPriceDiscoveryService service = new StatisticalPriceDiscoveryService(repository, defaultSettings());
 
-        UUID player = UUID.randomUUID();
         long now = System.currentTimeMillis();
+        // 先用一致成交把公允价稳定在 ~200 附近。
+        for (int i = 0; i < 10; i++) {
+            UUID buyer = UUID.randomUUID();
+            double total = 200.0D * 8;
+            repository.recordTrade("wash", TradeType.BUY, 8, total, now + i * 1000L);
+            repository.recordPlayerTransaction(buyer, "b" + i, TradeType.BUY, "wash", 8, total, now + i * 1000L);
+            service.ingestTradeEvidence(repository.findByHash("wash").orElseThrow(), TradeType.BUY, 8, total, buyer, now + i * 1000L);
+        }
+        double midBefore = Math.exp(service.currentState(repository.findByHash("wash").orElseThrow()).xLogValue());
 
-        repository.recordTrade("wash", TradeType.BUY, 1, 1000.0D, now);
-        repository.recordPlayerTransaction(player, "wash-player", TradeType.BUY, "wash", 1, 1000.0D, now);
-        ItemMarketRecord afterBuyRecord = repository.findByHash("wash").orElseThrow();
-        service.ingestTradeEvidence(afterBuyRecord, TradeType.BUY, 1, 1000.0D, player, now);
-        double muAfterBuy = service.currentState(afterBuyRecord).muLogPrice();
+        // 注入一笔极端离群成交（单价 100000），鲁棒似然应几乎不理它。
+        UUID manipulator = UUID.randomUUID();
+        long t = now + 20_000L;
+        double crazyTotal = 100000.0D * 1;
+        repository.recordTrade("wash", TradeType.BUY, 1, crazyTotal, t);
+        repository.recordPlayerTransaction(manipulator, "m", TradeType.BUY, "wash", 1, crazyTotal, t);
+        service.ingestTradeEvidence(repository.findByHash("wash").orElseThrow(), TradeType.BUY, 1, crazyTotal, manipulator, t);
 
-        repository.recordTrade("wash", TradeType.SELL, 1, 10.0D, now + 1_000L);
-        repository.recordPlayerTransaction(player, "wash-player", TradeType.SELL, "wash", 1, 10.0D, now + 1_000L);
-        ItemMarketRecord afterSellRecord = repository.findByHash("wash").orElseThrow();
-        service.ingestTradeEvidence(afterSellRecord, TradeType.SELL, 1, 10.0D, player, now + 1_000L);
-        double muAfterSell = service.currentState(afterSellRecord).muLogPrice();
-
-        Assertions.assertEquals(muAfterBuy, muAfterSell, 1.0e-9, "reversal trade should be weight-zero");
+        double midAfter = Math.exp(service.currentState(repository.findByHash("wash").orElseThrow()).xLogValue());
+        double relativeJump = Math.abs(midAfter - midBefore) / midBefore;
+        Assertions.assertTrue(relativeJump < 0.5D,
+            "single extreme outlier must not move fair value much (jump=" + relativeJump + ", before=" + midBefore + ", after=" + midAfter + ")");
     }
 
     @Test
-    void matureQuotesShouldRespondToInventoryPressure() throws Exception {
+    void askShouldRiseWhenPhysicalStockFalls() throws Exception {
         ItemMarketRepository repository = newRepository();
-        repository.upsertIpo("rare", "base64", 100.0D, 1.0D, 100, 100, 100);
-        repository.saveDiscoveryState(new DiscoveryState(
-            "rare",
-            Math.log(5000.0D),
-            0.20D,
-            DiscoveryStage.MATURE,
-            0.05D,
-            120.0D,
-            80.0D,
-            16,
-            12,
-            0.20D,
-            0.02D,
-            100.0D,
-            40.0D,
-            System.currentTimeMillis()
-        ));
+        repository.upsertIpo("rare", "base64", 100);
         StatisticalPriceDiscoveryService service = new StatisticalPriceDiscoveryService(repository, defaultSettings());
 
-        ItemMarketRecord highStock = new ItemMarketRecord("rare", "base64", 100.0D, 1.0D, 100, 100, 100);
-        ItemMarketRecord lowStock = new ItemMarketRecord("rare", "base64", 100.0D, 1.0D, 100, 100, 10);
+        ItemMarketRecord highStock = new ItemMarketRecord("rare", "base64", 100);
+        ItemMarketRecord lowStock = new ItemMarketRecord("rare", "base64", 2);
 
-        double askHighStock = service.snapshot(highStock).askPrice();
-        double askLowStock = service.snapshot(lowStock).askPrice();
+        double askHigh = service.snapshot(highStock).askPrice();
+        service.invalidateSnapshot("rare"); // 库存不同，绕过 TTL 缓存
+        double askLow = service.snapshot(lowStock).askPrice();
 
-        Assertions.assertTrue(askLowStock > askHighStock, "ask should rise when physical stock falls");
+        Assertions.assertTrue(askLow > askHigh,
+            "ask should rise when physical stock falls (low=" + askLow + ", high=" + askHigh + ")");
     }
 
     private ItemMarketRepository newRepository() throws Exception {
@@ -123,7 +118,10 @@ class StatisticalPriceDiscoveryServiceTest {
 
         DatabaseManager databaseManager = new DatabaseManager(plugin);
         databaseManager.initializeSchema();
-        return new ItemMarketRepository(databaseManager);
+        // 金库给足，避免 treasury shortfall 干扰定价断言。
+        ItemMarketRepository repo = new ItemMarketRepository(databaseManager);
+        repo.creditTreasuryCents(ItemMarketRepository.moneyToCents(100_000_000.0D));
+        return repo;
     }
 
     private PluginSettings defaultSettings() {
@@ -131,12 +129,23 @@ class StatisticalPriceDiscoveryServiceTest {
             new PluginSettings.Economy(100.0D, 1.0D, true, 500_000.0D),
             new PluginSettings.Trade(1_500L),
             new PluginSettings.CircuitBreaker(1.0D, 1),
-            new PluginSettings.AI(false, 15, 24, 3, 0.12D, 0.35D, 0.10D, 0.2D, 6.0D, 100_000.0D,
-                new PluginSettings.AdaptiveTarget(true, 0.01D, 10)),
-            new PluginSettings.Discovery(100.0D, 2.3D, 0.35D, 3, 16.0D, 10, 64.0D),
-            new PluginSettings.Evidence(7, 24, 2, 30, 3, 0.5D, 1.0D, 0.35D, 1.0D, 0.8D, 1.0D, 1.0D),
-            new PluginSettings.AntiManipulation(0.60D, 0.25D, 0.70D, 0.85D, 0.50D, 0.45D),
-            new PluginSettings.MarketMaker(0.15D, 0.60D, 0.40D, 1.40D, 0.50D, 0.08D, 0.20D, 16.0D, 16.0D, 2048.0D, 0.05D, 0.10D, 0.60D, 0.50D),
+            new PluginSettings.Pricing(
+                0.15D,   // gamma
+                0.02D,   // process-noise-per-hour
+                1.0D,    // observation-noise-base
+                4.0D,    // student-t-dof
+                12.0D,   // volatility-half-life-hours
+                0.05D,   // base-fee
+                1.0D,    // inventory-risk-weight
+                1.0D,    // treasury-risk-weight
+                16.0D,   // trusted-float-baseline
+                16.0D,   // min-depth
+                2048.0D, // max-depth
+                100.0D,  // anchor-price
+                5.0D,    // initial-variance
+                24,      // diversity-window-hours
+                7        // garbage-collection-days
+            ),
             new PluginSettings.Gui(
                 "bulk",
                 Material.LIME_STAINED_GLASS_PANE, "sell", List.of(),

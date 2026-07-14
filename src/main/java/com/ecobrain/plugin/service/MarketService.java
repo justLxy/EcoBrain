@@ -3,7 +3,6 @@ package com.ecobrain.plugin.service;
 import com.ecobrain.plugin.config.PluginSettings;
 import com.ecobrain.plugin.model.ItemMarketRecord;
 import com.ecobrain.plugin.model.MarketSnapshot;
-import com.ecobrain.plugin.model.TradeResult;
 import com.ecobrain.plugin.model.TradeType;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.safety.CircuitBreaker;
@@ -56,18 +55,8 @@ public class MarketService {
             if (existing.isPresent()) {
                 return new IpoState(existing.get(), false);
             }
-            // 自适应时，为了安全，将初始目标库存卡在物理库存的一个固定边界内。
-            // 比如 16 或者当前真实卖出量的 2 倍，取其大者，防止一些奇怪的超大卖单直接把 target 拉满
-            int dynamicTarget = Math.max(16, firstSellQuantity * 2);
-
-            double initialBasePrice = economySettings.zeroTrustIpo() ? 100.0D : economySettings.ipoBasePrice();
-            
-            // 修复：IPO 时，virtualInitialInventory 应该等于 dynamicTarget，否则会导致开局饱和度异常
-            // 比如卖 1000 个，dynamicTarget=2000，如果 virtualInitialInventory 还是 64，开局价格就会暴涨
-            boolean insertedNow = repository.upsertIpo(hash, base64, initialBasePrice, economySettings.ipoKFactor(),
-                dynamicTarget,
-                dynamicTarget, // 这里原本是 virtualInitialInventory，现在改为 dynamicTarget，让初始饱和度为 100%
-                Math.max(0, firstSellQuantity));
+            // v5: 物品建档只记录身份与真实库存；定价从卡尔曼冷启动锚点开始，由玩家买单发现价值。
+            boolean insertedNow = repository.upsertIpo(hash, base64, Math.max(0, firstSellQuantity));
             ItemMarketRecord insertedRecord = repository.findByHash(hash)
                 .orElseThrow(() -> new IllegalStateException("IPO insert failed"));
             return new IpoState(insertedRecord, insertedNow);
@@ -137,11 +126,9 @@ public class MarketService {
     }
 
     /**
-     * 预留成功后的买入结算：只更新虚拟库存池 + 记录成交，不再扣 physical_stock。
+     * 预留成功后的买入结算：physical_stock 已在预留阶段原子扣减，这里只记录成交并喂给滤波。
      */
     public void settleBuyAfterReservation(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
-        repository.updateVirtualInventoryOnly(itemHash, quote.postInventory());
-        
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
@@ -152,7 +139,8 @@ public class MarketService {
         if (quote.type() == TradeType.BUY) {
             repository.creditTreasuryCents(com.ecobrain.plugin.persistence.ItemMarketRepository.moneyToCents(quote.totalPrice()));
         }
-        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), Math.max(0, record.getPhysicalStock() - amount)));
+        // 物理库存已在预留阶段扣减，直接构造成交后状态喂给滤波。
+        ItemMarketRecord refreshed = record.withPhysicalStock(Math.max(0, record.getPhysicalStock() - amount));
         priceDiscoveryService.ingestTradeEvidence(
             refreshed,
             quote.type(),
@@ -171,20 +159,18 @@ public class MarketService {
     }
 
     /**
-     * 卖出结算：
-     * - 虚拟库存始终按 AMM 结算后库存写入
-     * - 真实库存仅在非 IPO 建档首单时再追加数量（首单数量已在建档时入 physical_stock）
+     * 卖出结算：真实库存增加（IPO 建档首单的数量已在建档时入库，避免重复计入）。
      */
     public void settleSell(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount, boolean ipoCreatedNow) {
         int newPhysical = ipoCreatedNow ? record.getPhysicalStock() : record.getPhysicalStock() + amount;
-        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        
+        repository.updatePhysicalStockOnly(itemHash, newPhysical);
+
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
             repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
         }
-        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), newPhysical));
+        ItemMarketRecord refreshed = record.withPhysicalStock(newPhysical);
         priceDiscoveryService.ingestTradeEvidence(
             refreshed,
             quote.type(),
@@ -196,18 +182,18 @@ public class MarketService {
     }
 
     /**
-     * 买入结算：虚拟库存与真实库存同步扣减。
+     * 买入结算（非预留路径）：真实库存扣减。
      */
     public void settleBuy(org.bukkit.entity.Player player, String itemHash, ItemMarketRecord record, TradeQuote quote, int amount) {
         int newPhysical = record.getPhysicalStock() - amount;
-        repository.updateStocks(itemHash, quote.postInventory(), newPhysical);
-        
+        repository.updatePhysicalStockOnly(itemHash, newPhysical);
+
         long now = System.currentTimeMillis();
         repository.recordTrade(itemHash, quote.type(), amount, quote.totalPrice(), now);
         if (player != null) {
             repository.recordPlayerTransaction(player.getUniqueId(), player.getName(), quote.type(), itemHash, amount, quote.totalPrice(), now);
         }
-        ItemMarketRecord refreshed = repository.findByHash(itemHash).orElse(record.withInventories(quote.postInventory(), newPhysical));
+        ItemMarketRecord refreshed = record.withPhysicalStock(newPhysical);
         priceDiscoveryService.ingestTradeEvidence(
             refreshed,
             quote.type(),

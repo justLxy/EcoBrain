@@ -69,15 +69,20 @@ public class ItemSerializer {
      * @param base64 ItemStack 的 Base64 序列化文本
      * @return 64 位十六进制哈希字符串
      */
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+
     public String sha256(String base64) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(base64.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (byte hashByte : hashBytes) {
-                builder.append(String.format("%02x", hashByte));
+            // 直接查表拼十六进制，避免 String.format("%02x") 的逐字节格式化开销（热路径高频调用）。
+            char[] out = new char[hashBytes.length * 2];
+            for (int i = 0; i < hashBytes.length; i++) {
+                int v = hashBytes[i] & 0xFF;
+                out[i * 2] = HEX[v >>> 4];
+                out[i * 2 + 1] = HEX[v & 0x0F];
             }
-            return builder.toString();
+            return new String(out);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }

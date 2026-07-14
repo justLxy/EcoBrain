@@ -397,7 +397,8 @@ public class MarketViewGUI {
                 .replace("{target_inventory}", String.format("%.0f", snapshot.trustedFloat()))
                 .replace("{trusted_float}", String.format("%.0f", snapshot.trustedFloat()))
                 .replace("{liquidity_depth}", String.format("%.0f", snapshot.liquidityDepth()))
-                .replace("{virtual_inventory}", String.valueOf(record.getCurrentInventory()));
+                // v5: 已无虚拟库存池；保留占位符兼容旧模板，映射到真实库存。
+                .replace("{virtual_inventory}", String.valueOf(record.getPhysicalStock()));
             lore.add(ChatColor.translateAlternateColorCodes('&', rendered));
         }
         return lore;

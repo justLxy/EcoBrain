@@ -14,25 +14,15 @@ public class PluginSettings {
     private final Economy economy;
     private final Trade trade;
     private final CircuitBreaker circuitBreaker;
-    private final AI ai;
-    private final Discovery discovery;
-    private final Evidence evidence;
-    private final AntiManipulation antiManipulation;
-    private final MarketMaker marketMaker;
+    private final Pricing pricing;
     private final Gui gui;
 
-    public PluginSettings(Economy economy, Trade trade, CircuitBreaker circuitBreaker, AI ai,
-                          Discovery discovery, Evidence evidence,
-                          AntiManipulation antiManipulation, MarketMaker marketMaker,
-                          Gui gui) {
+    public PluginSettings(Economy economy, Trade trade, CircuitBreaker circuitBreaker,
+                          Pricing pricing, Gui gui) {
         this.economy = economy;
         this.trade = trade;
         this.circuitBreaker = circuitBreaker;
-        this.ai = ai;
-        this.discovery = discovery;
-        this.evidence = evidence;
-        this.antiManipulation = antiManipulation;
-        this.marketMaker = marketMaker;
+        this.pricing = pricing;
         this.gui = gui;
     }
 
@@ -48,24 +38,8 @@ public class PluginSettings {
         return circuitBreaker;
     }
 
-    public AI ai() {
-        return ai;
-    }
-
-    public Discovery discovery() {
-        return discovery;
-    }
-
-    public Evidence evidence() {
-        return evidence;
-    }
-
-    public AntiManipulation antiManipulation() {
-        return antiManipulation;
-    }
-
-    public MarketMaker marketMaker() {
-        return marketMaker;
+    public Pricing pricing() {
+        return pricing;
     }
 
     public Gui gui() {
@@ -91,73 +65,22 @@ public class PluginSettings {
             c.getInt("circuit-breaker.critical-inventory", 2)
         );
 
-        AI ai = new AI(
-            c.getBoolean("ai.debug-log", true),
-            c.getInt("ai.schedule-minutes", 120),
-            c.getInt("ai.aov-window-hours", 24),
-            c.getInt("ai.garbage-collection-days", 7),
-            c.getDouble("ai.tuning.base-price-max-percent", 0.12D),
-            c.getDouble("ai.tuning.inactivity-action-decay", 0.35D),
-            c.getDouble("ai.tuning.k-delta", 0.03D),
-            c.getDouble("ai.tuning.k-min", 0.2D),
-            c.getDouble("ai.tuning.k-max", 3.0D),
-            c.getDouble("ai.tuning.max-base-price", 5000000.0D),
-            new AdaptiveTarget(
-                c.getBoolean("ai.adaptive-target.enabled", true),
-                c.getDouble("ai.adaptive-target.smoothing-factor", 0.20D),
-                c.getInt("ai.adaptive-target.quantity-cap", 64)
-            )
-        );
-
-        Discovery discovery = new Discovery(
-            c.getDouble("discovery.anchor-price", 100.0D),
-            c.getDouble("discovery.initial-sigma", 2.3D),
-            c.getDouble("discovery.discovery-sigma-threshold", 0.35D),
-            c.getInt("discovery.unknown-to-discovery.min-distinct-buyers-7d", 3),
-            c.getDouble("discovery.unknown-to-discovery.min-trusted-buy-qty-7d", 16.0D),
-            c.getInt("discovery.discovery-to-mature.min-distinct-buyers-7d", 10),
-            c.getDouble("discovery.discovery-to-mature.min-trusted-buy-qty-7d", 64.0D)
-        );
-
-        Evidence evidence = new Evidence(
-            c.getInt("evidence.buyers-window-days", 7),
-            c.getInt("evidence.flow-window-hours", 24),
-            c.getInt("evidence.reversal-window-hours", 2),
-            c.getInt("evidence.player-history-window-days", 30),
-            c.getInt("evidence.player-history-min-days", 3),
-            c.getDouble("evidence.new-player-weight", 0.5D),
-            c.getDouble("evidence.unknown-buy-weight", 1.0D),
-            c.getDouble("evidence.unknown-sell-weight", 0.35D),
-            c.getDouble("evidence.discovery-buy-weight", 1.0D),
-            c.getDouble("evidence.discovery-sell-weight", 0.8D),
-            c.getDouble("evidence.mature-buy-weight", 1.0D),
-            c.getDouble("evidence.mature-sell-weight", 1.0D)
-        );
-
-        AntiManipulation antiManipulation = new AntiManipulation(
-            c.getDouble("anti-manipulation.concentration-cap-share", 0.60D),
-            c.getDouble("anti-manipulation.concentration-capped-weight", 0.25D),
-            c.getDouble("anti-manipulation.promotion-block-score", 0.70D),
-            c.getDouble("anti-manipulation.freeze-upside-score", 0.85D),
-            c.getDouble("anti-manipulation.discovery-entry-max-score", 0.50D),
-            c.getDouble("anti-manipulation.mature-max-top2-share", 0.45D)
-        );
-
-        MarketMaker marketMaker = new MarketMaker(
-            c.getDouble("market-maker.inventory-pressure", 0.15D),
-            c.getDouble("market-maker.sigma-spread-multiplier", 0.60D),
-            c.getDouble("market-maker.manipulation-spread-multiplier", 0.40D),
-            c.getDouble("market-maker.unknown-half-spread-floor", 1.40D),
-            c.getDouble("market-maker.discovery-half-spread-floor", 0.50D),
-            c.getDouble("market-maker.mature-half-spread-floor", 0.08D),
-            c.getDouble("market-maker.slippage-per-depth", 0.20D),
-            c.getDouble("market-maker.trusted-float-baseline", 16.0D),
-            c.getDouble("market-maker.min-depth", 16.0D),
-            c.getDouble("market-maker.max-depth", 2048.0D),
-            c.getDouble("market-maker.sell-backstop-base", 0.05D),
-            c.getDouble("market-maker.sell-backstop-trigger-ratio", 0.10D),
-            c.getDouble("market-maker.sell-backstop-slope", 0.60D),
-            c.getDouble("market-maker.sell-backstop-max-extra", 0.50D)
+        Pricing pricing = new Pricing(
+            c.getDouble("pricing.gamma", 0.15D),
+            c.getDouble("pricing.process-noise-per-hour", 0.02D),
+            c.getDouble("pricing.observation-noise-base", 1.0D),
+            c.getDouble("pricing.student-t-dof", 4.0D),
+            c.getDouble("pricing.volatility-half-life-hours", 12.0D),
+            c.getDouble("pricing.base-fee", 0.05D),
+            c.getDouble("pricing.inventory-risk-weight", 1.0D),
+            c.getDouble("pricing.treasury-risk-weight", 1.0D),
+            c.getDouble("pricing.trusted-float-baseline", 16.0D),
+            c.getDouble("pricing.min-depth", 16.0D),
+            c.getDouble("pricing.max-depth", 2048.0D),
+            c.getDouble("pricing.anchor-price", 100.0D),
+            c.getDouble("pricing.initial-variance", 5.0D),
+            c.getInt("pricing.diversity-window-hours", 24),
+            c.getInt("pricing.garbage-collection-days", 7)
         );
 
         Gui gui = new Gui(
@@ -172,7 +95,7 @@ public class PluginSettings {
             c.getStringList("gui.market.item-lore")
         );
 
-        return new PluginSettings(economy, trade, circuitBreaker, ai, discovery, evidence, antiManipulation, marketMaker, gui);
+        return new PluginSettings(economy, trade, circuitBreaker, pricing, gui);
     }
 
     private static Material parseMaterial(String raw, Material fallback) {
@@ -186,59 +109,39 @@ public class PluginSettings {
     public record Economy(double ipoBasePrice, double ipoKFactor, boolean zeroTrustIpo, double treasuryInitialBalance) {}
     public record Trade(long cooldownMs) {}
     public record CircuitBreaker(double dailyLimitPercent, int criticalInventory) {}
-    public record AI(boolean debugLog, int scheduleMinutes,
-                     int aovWindowHours,
-                     int garbageCollectionDays,
-                     double basePriceMaxPercent,
-                     double inactivityActionDecay,
-                     double kDelta, double kMin, double kMax,
-                     double maxBasePrice,
-                     AdaptiveTarget adaptiveTarget) {}
 
-    public record AdaptiveTarget(boolean enabled, double smoothingFactor, int quantityCap) {}
-
-    public record Discovery(double anchorPrice,
-                            double initialSigma,
-                            double discoverySigmaThreshold,
-                            int unknownToDiscoveryMinDistinctBuyers7d,
-                            double unknownToDiscoveryMinTrustedBuyQty7d,
-                            int discoveryToMatureMinDistinctBuyers7d,
-                            double discoveryToMatureMinTrustedBuyQty7d) {}
-
-    public record Evidence(int buyersWindowDays,
-                           int flowWindowHours,
-                           int reversalWindowHours,
-                           int playerHistoryWindowDays,
-                           int playerHistoryMinDays,
-                           double newPlayerWeight,
-                           double unknownBuyWeight,
-                           double unknownSellWeight,
-                           double discoveryBuyWeight,
-                           double discoverySellWeight,
-                           double matureBuyWeight,
-                           double matureSellWeight) {}
-
-    public record AntiManipulation(double concentrationCapShare,
-                                   double concentrationCappedWeight,
-                                   double promotionBlockScore,
-                                   double freezeUpsideScore,
-                                   double discoveryEntryMaxScore,
-                                   double matureMaxTop2Share) {}
-
-    public record MarketMaker(double inventoryPressure,
-                              double sigmaSpreadMultiplier,
-                              double manipulationSpreadMultiplier,
-                              double unknownHalfSpreadFloor,
-                              double discoveryHalfSpreadFloor,
-                              double matureHalfSpreadFloor,
-                              double slippagePerDepth,
-                              double trustedFloatBaseline,
-                              double minDepth,
-                              double maxDepth,
-                              double sellBackstopBase,
-                              double sellBackstopTriggerRatio,
-                              double sellBackstopSlope,
-                              double sellBackstopMaxExtra) {}
+    /**
+     * v5 定价引擎参数（卡尔曼滤波 + Avellaneda-Stoikov 做市）。
+     *
+     * <ul>
+     *   <li>{@code gamma} —— A-S 风险厌恶系数，控制库存/金库偏移与价差强度。</li>
+     *   <li>{@code processNoisePerHour} —— 卡尔曼过程噪声 q，公允价值单位时间随机游走强度。</li>
+     *   <li>{@code observationNoiseBase} —— 单笔成交观测噪声基准 r0（按成交量缩小）。</li>
+     *   <li>{@code studentTDof} —— 鲁棒似然自由度，越小越抗异常成交（洗价自动降权）。</li>
+     *   <li>{@code volatilityHalfLifeHours} —— 已实现波动 EWMA 半衰期。</li>
+     *   <li>{@code baseFee} —— 最小 half-spread（做市手续费下限）。</li>
+     *   <li>{@code inventoryRiskWeight}/{@code treasuryRiskWeight} —— 库存/金库风险进 reservation price 的权重。</li>
+     *   <li>{@code trustedFloatBaseline}/{@code minDepth}/{@code maxDepth} —— 流动性深度参数。</li>
+     *   <li>{@code anchorPrice}/{@code initialVariance} —— 新物品冷启动中性锚与初始不确定性。</li>
+     *   <li>{@code diversityWindowHours} —— 交易者多样性统计窗口。</li>
+     *   <li>{@code garbageCollectionDays} —— 滞销物品自动清理天数。</li>
+     * </ul>
+     */
+    public record Pricing(double gamma,
+                          double processNoisePerHour,
+                          double observationNoiseBase,
+                          double studentTDof,
+                          double volatilityHalfLifeHours,
+                          double baseFee,
+                          double inventoryRiskWeight,
+                          double treasuryRiskWeight,
+                          double trustedFloatBaseline,
+                          double minDepth,
+                          double maxDepth,
+                          double anchorPrice,
+                          double initialVariance,
+                          int diversityWindowHours,
+                          int garbageCollectionDays) {}
 
     public record Gui(String bulkSellTitle,
                       Material sellButtonMaterial, String sellButtonName, List<String> sellButtonLore,

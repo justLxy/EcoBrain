@@ -1,166 +1,124 @@
-# ==========================================================
-# EcoBrain 4.0 主配置文件
-# ==========================================================
-# 修改后执行 /ecobrain reload 热更新生效
-#
-# 配置说明：
-# 1) 所有小数必须用英文句号，如 0.30，千万别写成 0,30
-# 2) 百分比填小数：如 30% 就是 0.30
-# 3) 材质名填错会回退默认材质，不用担心崩服
-# 4) 建议每次只改个别参数，观察市场反应后再继续调
-# 5) 拿不准的参数直接用推荐值就行
+## ============================================================
+##  EcoBrain 7.0  ·  主配置文件
+## ============================================================
+##  修改后执行  /ecobrain reload  即可热更新生效。
+##
+##  填写须知：
+##    1. 小数用英文句号，例如 0.30（不要写成 0,30）
+##    2. 百分比一律填小数，例如 30% -> 0.30
+##    3. 材质名填错会自动回退默认材质，不会崩服
+##    4. 建议每次只调个别参数，观察市场反应后再继续
+##    5. 拿不准的直接用推荐值
+## ============================================================
 
+
+## ------------------------------------------------------------
+##  经济 · 金库
+## ------------------------------------------------------------
+##  全局金库遵循「收入 = 支出」，系统不会无限发钱：
+##    · 玩家 BUY  ->  金币进入金库
+##    · 玩家 SELL ->  金币从金库支出（余额不足时拒绝收购）
 economy:
-  ipo:
-    # 是否启用“零信任”起步。
-    # 新物品仍从 100 开始，但 100 只是统计发现价的中性锚点，不再等于系统真实收购价。
-    zero-trust: true
-
-    # 仅在 zero-trust=false 时使用的兼容起步价。
-    # 注意：base-price/k-factor 仍会写库，但不再主导线上主成交价。
-    base-price: 100
-
-    # 兼容保留的旧 AMM k 参数。
-    k-factor: 1.0
-
-  # 全局金库：系统不是无限发钱，而是收入=支出。
-  # - 玩家 BUY：钱进入金库
-  # - 玩家 SELL：从金库支出（不足则拒绝收购）
   treasury:
-    # 冷启动金库余额（金币）。建议给一个能支撑早期回收的数字，例如 200000。
+    # 冷启动金库余额（金币）。给一个能支撑早期回收的数值，例如 200000 ~ 500000。
     initial-balance: 500000
 
+
+## ------------------------------------------------------------
+##  交易 · 防刷
+## ------------------------------------------------------------
 trade:
-  # 交易防连点冷却（毫秒）。1000 = 1秒。
-  # 主要是防止脚本或者连点器高速刷单。推荐 800 ~ 2500。
+  # 交易防连点冷却（毫秒，1000 = 1 秒）。防脚本/连点器刷单。推荐 800 ~ 2500。
   cooldown-ms: 500
-  
-  # 按 Q（丢弃键）时，第一次会自动打开“批量出售”GUI 来防误丢垃圾。
-  # 如果玩家在短时间内再次按 Q，则认为是刻意丢弃：本次及持续快速按 Q 将放行丢弃，不再反复打开 GUI。
-  # 推荐 500 ~ 1200（毫秒）。
+
+  # 按 Q（丢弃键）时，首次会自动打开「批量出售」GUI 以防误丢。
+  # 若在该窗口（毫秒）内再次快速按 Q，则视为刻意丢弃并放行，不再反复弹窗。推荐 500 ~ 1200。
   qdrop-open-bulk-sell-window-ms: 60000
 
+
+## ------------------------------------------------------------
+##  风控 · 熔断
+## ------------------------------------------------------------
 circuit-breaker:
-  # 涨跌停板机制。物品一天内的价格相对开盘价波动超过这个百分比，就会被冻结交易。
+  # 涨跌停板：物品单日价格相对开盘价波动超过该百分比即冻结交易。
   daily-limit-percent: 100
 
-  # 库存熔断线。当系统手里的真实库存小于等于这个数时，直接禁止玩家再买，防止被抽干。
+  # 库存熔断线：系统真实库存 <= 该值时禁止玩家继续买入，防止被抽干。
   critical-inventory: 1
 
-ai:
-  # 旧 PPO/ONNX 旁路仍可加载和记录日志，但它不再主导主价格路径。
-  debug-log: false
 
-  # 每隔多久（分钟）让旁路 AI 巡视一次市场并写兼容调参日志。
-  schedule-minutes: 15
+## ============================================================
+##  定价引擎  ·  卡尔曼滤波 + Avellaneda-Stoikov 做市
+## ============================================================
+##  设计取向：少特征工程、多原理。
+##  价格 = 对数公允价值后验(x) 经做市偏移后得到的 bid / ask。
+##
+##  【诚实边界 · 务必理解】
+##  本服系统是唯一对手方，价格的唯一数据源就是系统自己的报价——这个
+##  「循环论证」是 P2S 市场的结构性特征，任何算法都无法根除。下方的
+##  process-noise 会借「交易者多样性」抑制单人反复刷价的正反馈，但这
+##  是缓解而非根治。它真正能做的是：在有限且可能被操纵的证据下，给出
+##  一个不确定性诚实、对异常成交鲁棒、且做市商自身风险可控的报价。
+## ============================================================
+pricing:
 
-  # AI 用来计算全服“平均客单价”的时间窗口。
-  # 肝帝服（刷得快）设 12-24，养老服（节奏慢）设 48-72。
-  aov-window-hours: 24
+  ## —— 核心风险与滤波 ——
+  # A-S 风险厌恶系数 γ。越大：库存/金库失衡对报价的偏移越强、价差越宽。推荐 0.05 ~ 0.30。
+  gamma: 0.15
 
-  # 滞销垃圾清理。如果一个物品库存极低且连续这么几天都没人碰，系统会当它是玩家恶搞的垃圾数据，直接删掉。
-  garbage-collection-days: 3
+  # 卡尔曼过程噪声 q（每小时）。公允价值随机游走强度：
+  #   越大 -> 越「善变」、越快跟随近期成交；越小 -> 越「稳重」、越依赖历史。
+  #   无人交易时不确定性按 q·Δt 自然上升（价差变宽）。推荐 0.01 ~ 0.05。
+  process-noise-per-hour: 0.02
 
-  # 自适应 target 仍为兼容字段保留，但不再主导线上主报价。
-  adaptive-target:
-    enabled: true
-    smoothing-factor: 0.01
-    quantity-cap: 10
+  # 单笔成交观测噪声基准 r0。实际噪声 = r0 / 成交量，即大单更可信、对公允价拉动更大。
+  observation-noise-base: 1.0
 
-  tuning:
-    # 兼容保留的旧 PPO 调参约束。
-    max-base-price: 100000.0
-    base-price-max-percent: 0.12
-    inactivity-action-decay: 0.35
-    k-delta: 0.10
-    k-min: 0.2
-    k-max: 6.0
+  # 鲁棒似然自由度 dof（Student-t）。越小越抗异常：洗价/对倒等离群成交会被自动
+  #   降权到接近 0，从而无需任何一条「反操纵规则」。推荐 3 ~ 8；设很大会退化为
+  #   普通高斯（不再抗操纵）。
+  student-t-dof: 4
 
-# ==========================================================
-# 纯统计学习价值发现
-# ==========================================================
-discovery:
-  # 新物品的中性发现锚点。它是后验初始中心，不是系统承诺收购价。
-  anchor-price: 100.0
+  ## —— 价差与波动 ——
+  # 已实现波动率 EWMA 半衰期（小时）。越短越敏感于近期波动，价差随之更快张缩。
+  volatility-half-life-hours: 12
 
-  # 后验对数价格的初始不确定性。越大表示越不确定，UNKNOWN 阶段价差越宽。
-  initial-sigma: 2.3
+  # 最小 half-spread（做市手续费下限）。总价差 = base-fee + 0.5·γ·σ²。推荐 0.03 ~ 0.10。
+  base-fee: 0.05
 
-  # 进入成熟期所需的 sigma 上限。
-  discovery-sigma-threshold: 0.35
+  ## —— 库存 / 金库风险偏移 ——
+  # 进入 reservation price 的权重：
+  #   · inventory：库存越低于目标浮动，ask/bid 越上移（鼓励回补）
+  #   · treasury ：金库越紧张，bid 越下压（做市商用价格自我保护，而非硬拒收）
+  inventory-risk-weight: 1.0
+  treasury-risk-weight: 1.0
 
-  unknown-to-discovery:
-    min-distinct-buyers-7d: 3
-    min-trusted-buy-qty-7d: 16
-
-  discovery-to-mature:
-    min-distinct-buyers-7d: 10
-    min-trusted-buy-qty-7d: 64
-
-evidence:
-  # 买家/卖家与可信买量的统计窗口。
-  buyers-window-days: 7
-
-  # 集中度与回转率的观测窗口。
-  flow-window-hours: 24
-  reversal-window-hours: 2
-
-  # 玩家历史参与天数不足时，单笔证据会自动降权。
-  player-history-window-days: 30
-  player-history-min-days: 3
-  new-player-weight: 0.5
-
-  # 各阶段对 BUY/SELL 证据的默认权重。
-  unknown-buy-weight: 1.0
-  unknown-sell-weight: 0.35
-  discovery-buy-weight: 1.0
-  discovery-sell-weight: 0.8
-  mature-buy-weight: 1.0
-  mature-sell-weight: 1.0
-
-anti-manipulation:
-  # 24h 内前两名玩家流量占比超过此值时，证据权重会被封顶。
-  concentration-cap-share: 0.60
-  concentration-capped-weight: 0.25
-
-  # 操盘分过高时，禁止晋级；更高时冻结上行更新并自动放宽 spread。
-  promotion-block-score: 0.70
-  freeze-upside-score: 0.85
-
-  # UNKNOWN -> DISCOVERY 时允许的最高操盘分。
-  discovery-entry-max-score: 0.50
-
-  # MATURE 阶段允许的最高 top2 share。
-  mature-max-top2-share: 0.45
-
-market-maker:
-  # 库存压力对 reservation price 的影响强度。
-  inventory-pressure: 0.15
-
-  # half-spread = max(stage_floor, sigma_mult * sigma + manip_mult * manipulation_score)
-  sigma-spread-multiplier: 0.60
-  manipulation-spread-multiplier: 0.40
-
-  # 三阶段最小 half-spread。
-  unknown-half-spread-floor: 1.40
-  discovery-half-spread-floor: 0.50
-  mature-half-spread-floor: 0.08
-
-  # 深度滑点强度。值越大，大单买卖的边际价变化越明显。
-  slippage-per-depth: 0.20
-
-  # trusted_float = min(physical_stock, baseline + trusted_buy_qty + trusted_sell_qty)
+  ## —— 流动性深度 ——
+  # 目标浮动量决定库存压力的归一化基准；depth 决定大单的边际滑点强度。
   trusted-float-baseline: 16.0
   min-depth: 16.0
   max-depth: 2048.0
 
-  # SELL 路径的兜底税，不再承担主发现价职责，只用于抑制大额倾销。
-  sell-backstop-base: 0.05
-  sell-backstop-trigger-ratio: 0.10
-  sell-backstop-slope: 0.60
-  sell-backstop-max-extra: 0.50
+  ## —— 新物品冷启动 ——
+  # 中性锚点价（后验初始中心，非承诺收购价）与初始不确定性方差。
+  #   初始方差越大，新物品开局价差越宽、越快被前几笔成交带动。
+  anchor-price: 100.0
+  initial-variance: 5.0
 
+  ## —— 抗操纵与清理 ——
+  # 交易者多样性统计窗口（小时）。窗口内独立交易者越少，过程噪声被放大得越多。
+  diversity-window-hours: 24
+
+  # 滞销物品自动清理天数（库存极低且长期无人问津的物品档案会被清除）。
+  garbage-collection-days: 7
+
+
+## ============================================================
+##  界面 · GUI
+## ============================================================
 gui:
+
+  ## —— 批量出售界面 ——
   bulk-sell:
     title: "&2EcoBrain 批量出售界面"
 
@@ -179,6 +137,11 @@ gui:
     filler:
       material: BLACK_STAINED_GLASS_PANE
 
+  ## —— 市场大盘物品 lore ——
+  ##  可用占位符：
+  ##    {price} 系统售价(ask)   {bid} 系统收购价   {mid} 中价
+  ##    {tier} 市场评价         {confidence} 价格状态   {stage_desc} 阶段说明
+  ##    {physical_stock} 库存   {spread} 价差(%)   {sigma} 不确定性
   market:
     item-lore:
       - ""
@@ -197,61 +160,55 @@ gui:
       - ''
       - '&7&m+------------------------------+'
 
-# ==========================================================
-# 主手提示：引导玩家发现系统市场（Title / 副Title）
-# ==========================================================
+
+## ============================================================
+##  主手提示  ·  引导玩家发现系统市场（Title / 副Title）
+## ============================================================
 market-hint:
-  # 是否启用“主手物品在市场有货时”提示
+  # 是否启用「主手物品在市场有货时」的提示
   enabled: true
 
-  # 防抖延迟（tick）。滚轮快速切换物品时，只在停止后提示最后一个
+  # 防抖延迟（tick）。滚轮快速切换物品时，只在停下后提示最后一个。
   debounce-ticks: 4
 
-  # 显示时长（tick）。默认约 2 秒：5 + 30 + 5 = 40 tick
+  # 显示时长（tick）。默认约 2 秒：fade-in 5 + stay 30 + fade-out 5 = 40 tick。
   fade-in-ticks: 5
   stay-ticks: 30
   fade-out-ticks: 5
 
-  # 是否要求“至少能买 1 个”才提示（避免提示后却买不了：冻结/库存保护/虚拟库存过低）
+  # 是否要求「至少能买 1 个」才提示（避免提示后却买不了：冻结 / 库存保护 / 流动性不足）。
   require-buyable: true
 
-  # 文案模板：支持 {item} / {price}(ask) / {cmd}
+  # 文案模板：{item} 物品名 · {price} 售价(ask) · {cmd} 指令
   title: "&7你感受到一笔&f交易机会"
   subtitle: "&f{item} &7在市场有货：&e{price}&7｜&b{cmd}"
 
   # 指令展示文案
   command: "/ecobrain buy <数量>"
 
-# ==========================================================
-# 管理命令扩展（QuickTax 集成）
-# ==========================================================
+
+## ============================================================
+##  管理命令扩展  ·  QuickTax 集成（系统资金回收）
+## ============================================================
 admin:
   reclaim:
-    # EcoBrain “系统资金回收”会按玩家统计：
-    # outstanding = SUM(SELL) - SUM(BUY) - SUM(已回收)
+    # 「系统资金回收」按玩家统计净支出：
+    #   outstanding = SUM(SELL) - SUM(BUY) - SUM(已回收)
+    # 随后用 QuickTax 命令逐个玩家扣款。
+    # 若需允许扣到负数，请在 QuickTax 的 config.yml 设置 debt-mode=2。
     #
-    # 然后使用 QuickTax 命令逐个玩家扣款。
-    # QuickTax 如需允许扣到负数，请在 QuickTax 的 config.yml 设置 debt-mode=2
-    #
-    # 可用占位符：
-    # - {player} 玩家名（优先在线/离线档案名，其次数据库记录名）
-    # - {uuid}   玩家 UUID
-    # - {amount} 金额（两位小数）
+    # 占位符：{player} 玩家名 · {uuid} UUID · {amount} 金额（两位小数）
     quicktax-command: "qt collectname {player} {amount}"
 
-    # 小于等于该金额的 outstanding 不处理（防浮点噪声）
+    # 小于等于该金额的 outstanding 不处理（防浮点噪声）。
     min-amount: 0.01
 
-    # 每 tick（50ms）最多派发多少条 QuickTax 命令，避免主线程卡顿
+    # 每 tick（50ms）最多派发多少条 QuickTax 命令，避免主线程卡顿。
     per-tick: 5
 
-    # 是否在“回收扣款后”私聊在线玩家一条提示（展示当前 Vault 余额，可为负数）
+    # 是否在扣款后私聊在线玩家一条提示（展示当前 Vault 余额，可为负数）。
     notify-player: true
 
-    # 私聊模板（仅在线玩家会收到）
-    # 可用占位符：
-    # - {player}  玩家名
-    # - {uuid}    玩家 UUID
-    # - {amount}  本次回收金额（两位小数）
-    # - {balance} 回收后余额（Vault 余额，两位小数；若经济插件支持则可为负）
+    # 私聊模板（仅在线玩家会收到）：
+    #   {player} 玩家名 · {uuid} UUID · {amount} 本次回收金额 · {balance} 回收后余额
     notify-message: "&e系统资金回收：已扣除 &f{amount}&e，当前余额 &f{balance}"

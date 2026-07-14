@@ -55,26 +55,12 @@ public class AdminCommand {
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin inspect             (查看主手物品发现价状态)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin inspect <hash>");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearstock1         (清除所有真实库存=1的物品档案)");
-            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin settarget <数量>      (修改主手物品的目标库存)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin clearleaderboard");
-            sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin exportdata          (导出供 AI 训练的离线数据)");
             sender.sendMessage(ChatColor.YELLOW + "/ecobrain admin reclaimmoney [preview] (回收所有“系统净支出”的金币，使用 QuickTax，可扣成负数)");
             return true;
         }
 
         String action = args[1].toLowerCase();
-        if ("exportdata".equals(action)) {
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-                try {
-                    String fileName = repository.exportTransactionDataForTraining(plugin.getDataFolder());
-                    sendMessageSync(sender, ChatColor.GREEN + "成功导出交易日志数据到: " + fileName);
-                } catch (Exception e) {
-                    sendMessageSync(sender, ChatColor.RED + "导出数据失败: " + e.getMessage());
-                }
-            });
-            return true;
-        }
-
         if ("clearleaderboard".equalsIgnoreCase(action) || "resetleaderboard".equalsIgnoreCase(action)
             || "clear-ranking".equalsIgnoreCase(action) || "clearranking".equalsIgnoreCase(action)) {
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -266,59 +252,6 @@ public class AdminCommand {
                 });
                 return true;
             }
-            case "settarget" -> {
-                if (!(sender instanceof Player player)) {
-                    sender.sendMessage(ChatColor.YELLOW + "该命令只能由玩家在游戏内执行（需手持物品）。");
-                    return true;
-                }
-                if (args.length < 3) {
-                    player.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin settarget <数量>");
-                    return true;
-                }
-                
-                int newTarget;
-                try {
-                    newTarget = Integer.parseInt(args[2]);
-                    if (newTarget <= 0) throw new NumberFormatException();
-                } catch (NumberFormatException e) {
-                    player.sendMessage(ChatColor.RED + "目标库存必须是大于 0 的整数。");
-                    return true;
-                }
-                
-                ItemStack hand = player.getInventory().getItemInMainHand();
-                if (hand == null || hand.getType().isAir()) {
-                    player.sendMessage(ChatColor.RED + "请先手持需要修改目标库存的物品。");
-                    return true;
-                }
-                
-                ItemStack snapshot = hand.clone().asOne();
-                plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-                    try {
-                        String base64 = itemSerializer.serializeToBase64(snapshot);
-                        String hash = itemSerializer.sha256(base64);
-                        
-                        var recordOpt = repository.findByHash(hash);
-                        if (recordOpt.isEmpty()) {
-                            sendMessageSync(player, ChatColor.RED + "该物品尚未在市场中被收录（未发生过交易），请先由玩家卖出一次触发 IPO。");
-                            return;
-                        }
-                        
-                        var record = recordOpt.get();
-                        repository.updateTargetInventoryWithProportionalCurrentScaling(
-                            hash, 
-                            record.getTargetInventory(), 
-                            record.getCurrentInventory(), 
-                            newTarget
-                        );
-                        
-                        sendMessageSync(player, ChatColor.GREEN + "成功！已将主手物品的目标库存修改为: " + newTarget);
-                        sendMessageSync(player, ChatColor.GREEN + "AI 会在下一个调控周期自动根据新的目标库存重新判定该物品的阶级(High/Mid/Low)。");
-                    } catch (Exception e) {
-                        sendMessageSync(player, ChatColor.RED + "执行失败: " + e.getMessage());
-                    }
-                });
-                return true;
-            }
             case "clear" -> {
                 if (args.length < 3) {
                     sender.sendMessage(ChatColor.YELLOW + "用法: /ecobrain admin clear <hash>");
@@ -424,29 +357,22 @@ public class AdminCommand {
             DiscoveryState state = priceDiscoveryService.currentState(record);
             MarketSnapshot snapshot = priceDiscoveryService.snapshot(record);
 
-            sendMessageSync(sender, ChatColor.GOLD + "=== EcoBrain 发现价诊断 ===");
+            sendMessageSync(sender, ChatColor.GOLD + "=== EcoBrain 卡尔曼定价诊断 ===");
             sendMessageSync(sender, ChatColor.YELLOW + "Hash: " + ChatColor.WHITE + hash);
             sendMessageSync(sender, ChatColor.YELLOW + "Stage: " + ChatColor.WHITE + snapshot.stage().name()
                 + ChatColor.GRAY + " | mid=" + formatMoney(snapshot.midPrice())
                 + ChatColor.GRAY + " ask=" + formatMoney(snapshot.askPrice())
                 + ChatColor.GRAY + " bid=" + formatMoney(snapshot.bidPrice()));
-            sendMessageSync(sender, ChatColor.YELLOW + "Sigma: " + ChatColor.WHITE + formatRatio(state.sigmaLogPrice())
-                + ChatColor.GRAY + " | spread=" + formatRatio(snapshot.halfSpread())
-                + ChatColor.GRAY + " | manipulation=" + formatPercent(snapshot.manipulationScore()));
-            sendMessageSync(sender, ChatColor.YELLOW + "7d Buyers/Sellers: " + ChatColor.WHITE
-                + snapshot.distinctBuyers7d() + "/" + snapshot.distinctSellers7d()
-                + ChatColor.GRAY + " | trusted buy=" + formatRatio(snapshot.trustedBuyQty7d())
-                + ChatColor.GRAY + " | trusted sell=" + formatRatio(snapshot.trustedSellQty7d()));
-            sendMessageSync(sender, ChatColor.YELLOW + "24h Top2 Share: " + ChatColor.WHITE + formatPercent(snapshot.top2FlowShare24h())
-                + ChatColor.GRAY + " | reversal=" + formatPercent(snapshot.reversalRate24h()));
+            sendMessageSync(sender, ChatColor.YELLOW + "Kalman x/P: " + ChatColor.WHITE
+                + formatRatio(state.xLogValue()) + " / " + formatRatio(state.pVar())
+                + ChatColor.GRAY + " | sigma=" + formatRatio(snapshot.sigmaLogPrice())
+                + ChatColor.GRAY + " | spread=" + formatRatio(snapshot.halfSpread()));
+            sendMessageSync(sender, ChatColor.YELLOW + "VolEWMA/Diversity: " + ChatColor.WHITE
+                + formatRatio(state.volEwma()) + " / " + formatRatio(state.diversityEwma())
+                + ChatColor.GRAY + " | anomaly=" + formatPercent(snapshot.manipulationScore()));
             sendMessageSync(sender, ChatColor.YELLOW + "Physical/TrustedFloat/Depth: " + ChatColor.WHITE
                 + record.getPhysicalStock() + " / "
                 + formatRatio(snapshot.trustedFloat()) + " / " + formatRatio(snapshot.liquidityDepth()));
-            sendMessageSync(sender, ChatColor.YELLOW + "Legacy fields: " + ChatColor.WHITE
-                + "base=" + formatMoney(record.getBasePrice())
-                + ChatColor.GRAY + " k=" + formatRatio(record.getKFactor())
-                + ChatColor.GRAY + " current=" + record.getCurrentInventory()
-                + ChatColor.GRAY + " target=" + record.getTargetInventory());
         } catch (Exception e) {
             sendMessageSync(sender, ChatColor.RED + "执行失败: " + e.getMessage());
         }

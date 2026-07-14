@@ -25,8 +25,18 @@ import java.math.RoundingMode;
 public class ItemMarketRepository {
     private final DatabaseManager databaseManager;
 
+    // 卡尔曼冷启动参数：新物品首次建档时的中性锚点与初始不确定性。
+    // 由定价服务在启动/热更新时通过 setColdStartParams 下发（默认值仅作兜底）。
+    private volatile double coldStartAnchorPrice = 100.0D;
+    private volatile double coldStartInitialVariance = 5.0D;
+
     public ItemMarketRepository(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
+    }
+
+    public void setColdStartParams(double anchorPrice, double initialVariance) {
+        this.coldStartAnchorPrice = Math.max(1.0e-6D, anchorPrice);
+        this.coldStartInitialVariance = Math.max(1.0e-6D, initialVariance);
     }
 
     public static long moneyToCents(double amount) {
@@ -144,7 +154,7 @@ public class ItemMarketRepository {
 
     public Optional<ItemMarketRecord> findByHash(String itemHash) {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at
+            SELECT item_hash, item_base64, physical_stock, created_at
             FROM ecobrain_items WHERE item_hash = ?
             """;
         try (Connection connection = databaseManager.getConnection();
@@ -163,7 +173,7 @@ public class ItemMarketRepository {
 
     public List<ItemMarketRecord> findAll() {
         String sql = """
-            SELECT item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at
+            SELECT item_hash, item_base64, physical_stock, created_at
             FROM ecobrain_items
             ORDER BY item_hash ASC
             """;
@@ -184,11 +194,7 @@ public class ItemMarketRepository {
         try (Connection connection = databaseManager.getConnection()) {
             initializeDiscoveryStateIfMissing(connection, itemHash);
             String sql = """
-                SELECT item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
-                       trusted_buy_qty_7d, trusted_sell_qty_7d,
-                       distinct_buyers_7d, distinct_sellers_7d,
-                       top2_flow_share_24h, reversal_rate_24h,
-                       trusted_float, liquidity_depth, updated_at
+                SELECT item_hash, x_log_value, p_var, vol_ewma, diversity_ewma, last_trade_at, updated_at
                 FROM ecobrain_discovery_state
                 WHERE item_hash = ?
                 """;
@@ -209,214 +215,77 @@ public class ItemMarketRepository {
     public void saveDiscoveryState(DiscoveryState state) {
         String sql = """
             INSERT INTO ecobrain_discovery_state(
-                item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
-                trusted_buy_qty_7d, trusted_sell_qty_7d,
-                distinct_buyers_7d, distinct_sellers_7d,
-                top2_flow_share_24h, reversal_rate_24h,
-                trusted_float, liquidity_depth, updated_at
+                item_hash, x_log_value, p_var, vol_ewma, diversity_ewma, last_trade_at, updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_hash) DO UPDATE SET
-                mu_log_price = excluded.mu_log_price,
-                sigma_log_price = excluded.sigma_log_price,
-                stage = excluded.stage,
-                manipulation_score = excluded.manipulation_score,
-                trusted_buy_qty_7d = excluded.trusted_buy_qty_7d,
-                trusted_sell_qty_7d = excluded.trusted_sell_qty_7d,
-                distinct_buyers_7d = excluded.distinct_buyers_7d,
-                distinct_sellers_7d = excluded.distinct_sellers_7d,
-                top2_flow_share_24h = excluded.top2_flow_share_24h,
-                reversal_rate_24h = excluded.reversal_rate_24h,
-                trusted_float = excluded.trusted_float,
-                liquidity_depth = excluded.liquidity_depth,
+                x_log_value = excluded.x_log_value,
+                p_var = excluded.p_var,
+                vol_ewma = excluded.vol_ewma,
+                diversity_ewma = excluded.diversity_ewma,
+                last_trade_at = excluded.last_trade_at,
                 updated_at = excluded.updated_at
             """;
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, state.itemHash());
-            statement.setDouble(2, state.muLogPrice());
-            statement.setDouble(3, state.sigmaLogPrice());
-            statement.setString(4, state.stage().name());
-            statement.setDouble(5, state.manipulationScore());
-            statement.setDouble(6, state.trustedBuyQty7d());
-            statement.setDouble(7, state.trustedSellQty7d());
-            statement.setInt(8, state.distinctBuyers7d());
-            statement.setInt(9, state.distinctSellers7d());
-            statement.setDouble(10, state.top2FlowShare24h());
-            statement.setDouble(11, state.reversalRate24h());
-            statement.setDouble(12, state.trustedFloat());
-            statement.setDouble(13, state.liquidityDepth());
-            statement.setLong(14, state.updatedAtMillis());
+            statement.setDouble(2, state.xLogValue());
+            statement.setDouble(3, state.pVar());
+            statement.setDouble(4, state.volEwma());
+            statement.setDouble(5, state.diversityEwma());
+            statement.setLong(6, state.lastTradeAtMillis());
+            statement.setLong(7, state.updatedAtMillis());
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to save discovery state", e);
         }
     }
 
-    public DiscoveryWindowStats queryDiscoveryWindowStats(String itemHash, long buySellSinceMillis,
-                                                          long flowSinceMillis, long reversalSinceMillis,
-                                                          long reversalWindowMillis) {
-        String buySellSql = """
-            SELECT
-                COALESCE(SUM(CASE WHEN trade_type = 'BUY' THEN quantity ELSE 0 END), 0) AS buy_qty,
-                COALESCE(SUM(CASE WHEN trade_type = 'SELL' THEN quantity ELSE 0 END), 0) AS sell_qty,
-                COALESCE(COUNT(DISTINCT CASE WHEN trade_type = 'BUY' THEN player_uuid END), 0) AS distinct_buyers,
-                COALESCE(COUNT(DISTINCT CASE WHEN trade_type = 'SELL' THEN player_uuid END), 0) AS distinct_sellers
+    /**
+     * 时间窗口内该物品的独立交易者数量。
+     *
+     * <p>用于卡尔曼滤波的“交易者多样性”过程噪声调节：流量越集中在少数人，
+     * 越可能是自买自卖刷价，滤波越不敢收敛。取代了旧的 top2-share / reversal-rate /
+     * distinct-buyers 一族昂贵的相关子查询与反操纵规则。</p>
+     */
+    public int queryRecentDistinctTraders(String itemHash, long sinceMillis) {
+        String sql = """
+            SELECT COALESCE(COUNT(DISTINCT player_uuid), 0) AS traders
             FROM ecobrain_player_transactions
             WHERE item_hash = ? AND created_at >= ?
             """;
-        String top2Sql = """
-            WITH player_flow AS (
-                SELECT player_uuid, COALESCE(SUM(quantity), 0) AS flow_qty
-                FROM ecobrain_player_transactions
-                WHERE item_hash = ? AND created_at >= ?
-                GROUP BY player_uuid
-            ),
-            totals AS (
-                SELECT COALESCE(SUM(flow_qty), 0) AS total_flow FROM player_flow
-            ),
-            top2 AS (
-                SELECT COALESCE(SUM(flow_qty), 0) AS top2_flow
-                FROM (
-                    SELECT flow_qty FROM player_flow ORDER BY flow_qty DESC LIMIT 2
-                )
-            )
-            SELECT CASE
-                WHEN (SELECT total_flow FROM totals) <= 0 THEN 0
-                ELSE (SELECT top2_flow FROM top2) * 1.0 / (SELECT total_flow FROM totals)
-            END AS share
-            """;
-        String reversalSql = """
-            SELECT COALESCE(SUM(CASE
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM ecobrain_player_transactions other
-                    WHERE other.item_hash = tx.item_hash
-                      AND other.player_uuid = tx.player_uuid
-                      AND other.trade_type <> tx.trade_type
-                      AND other.created_at >= tx.created_at - ?
-                      AND other.created_at < tx.created_at
-                ) THEN tx.quantity
-                ELSE 0
-            END) * 1.0 / NULLIF(SUM(tx.quantity), 0), 0) AS reversal_rate
-            FROM ecobrain_player_transactions tx
-            WHERE tx.item_hash = ? AND tx.created_at >= ?
-            """;
-        try (Connection connection = databaseManager.getConnection()) {
-            double buyQty = 0.0D;
-            double sellQty = 0.0D;
-            int distinctBuyers = 0;
-            int distinctSellers = 0;
-            try (PreparedStatement statement = connection.prepareStatement(buySellSql)) {
-                statement.setString(1, itemHash);
-                statement.setLong(2, buySellSinceMillis);
-                try (ResultSet rs = statement.executeQuery()) {
-                    if (rs.next()) {
-                        buyQty = rs.getDouble("buy_qty");
-                        sellQty = rs.getDouble("sell_qty");
-                        distinctBuyers = rs.getInt("distinct_buyers");
-                        distinctSellers = rs.getInt("distinct_sellers");
-                    }
-                }
-            }
-
-            double top2Share = 0.0D;
-            try (PreparedStatement statement = connection.prepareStatement(top2Sql)) {
-                statement.setString(1, itemHash);
-                statement.setLong(2, flowSinceMillis);
-                try (ResultSet rs = statement.executeQuery()) {
-                    if (rs.next()) {
-                        top2Share = rs.getDouble("share");
-                    }
-                }
-            }
-
-            double reversalRate = 0.0D;
-            try (PreparedStatement statement = connection.prepareStatement(reversalSql)) {
-                statement.setLong(1, Math.max(1L, reversalWindowMillis));
-                statement.setString(2, itemHash);
-                statement.setLong(3, reversalSinceMillis);
-                try (ResultSet rs = statement.executeQuery()) {
-                    if (rs.next()) {
-                        reversalRate = rs.getDouble("reversal_rate");
-                    }
-                }
-            }
-
-            return new DiscoveryWindowStats(buyQty, sellQty, distinctBuyers, distinctSellers, top2Share, reversalRate);
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to query discovery window stats", e);
-        }
-    }
-
-    public boolean hasOppositePlayerTradeSince(UUID playerUuid, String itemHash, TradeType tradeType, long sinceMillis) {
-        String sql = """
-            SELECT 1
-            FROM ecobrain_player_transactions
-            WHERE player_uuid = ?
-              AND item_hash = ?
-              AND trade_type = ?
-              AND created_at >= ?
-            LIMIT 1
-            """;
-        String opposite = tradeType == TradeType.BUY ? TradeType.SELL.name() : TradeType.BUY.name();
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, playerUuid.toString());
-            statement.setString(2, itemHash);
-            statement.setString(3, opposite);
-            statement.setLong(4, sinceMillis);
+            statement.setString(1, itemHash);
+            statement.setLong(2, sinceMillis);
             try (ResultSet rs = statement.executeQuery()) {
-                return rs.next();
+                return rs.next() ? rs.getInt("traders") : 0;
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to query opposite player trade", e);
-        }
-    }
-
-    public int queryPlayerActiveDaysForItem(UUID playerUuid, String itemHash, long sinceMillis) {
-        String sql = """
-            SELECT COALESCE(COUNT(DISTINCT DATE(created_at / 1000, 'unixepoch')), 0) AS active_days
-            FROM ecobrain_player_transactions
-            WHERE player_uuid = ?
-              AND item_hash = ?
-              AND created_at >= ?
-            """;
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, playerUuid.toString());
-            statement.setString(2, itemHash);
-            statement.setLong(3, sinceMillis);
-            try (ResultSet rs = statement.executeQuery()) {
-                return rs.next() ? rs.getInt("active_days") : 0;
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to query player active days", e);
+            throw new IllegalStateException("Failed to query recent distinct traders", e);
         }
     }
 
     /**
      * IPO 冷启动写入。若已存在则保持原记录不变。
+     *
+     * <p>v5: 物品只记录身份与真实库存；定价慢状态由 discovery_state 卡尔曼滤波承载，
+     * 其冷启动锚点/初始方差由 {@link #setColdStartParams} 下发。</p>
      */
-    public boolean upsertIpo(String itemHash, String itemBase64, double basePrice, double kFactor,
-                             int targetInventory, int currentInventory, int physicalStock) {
+    public boolean upsertIpo(String itemHash, String itemBase64, int physicalStock) {
         String sql = """
-            INSERT INTO ecobrain_items(item_hash, item_base64, base_price, k_factor, target_inventory, current_inventory, physical_stock, created_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ecobrain_items(item_hash, item_base64, physical_stock, created_at)
+            VALUES(?, ?, ?, ?)
             ON CONFLICT(item_hash) DO NOTHING
             """;
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, itemHash);
             statement.setString(2, itemBase64);
-            statement.setDouble(3, basePrice);
-            statement.setDouble(4, kFactor);
-            statement.setInt(5, targetInventory);
-            statement.setInt(6, Math.max(1, currentInventory));
-            statement.setInt(7, Math.max(0, physicalStock));
-            statement.setLong(8, System.currentTimeMillis());
+            statement.setInt(3, Math.max(0, physicalStock));
+            statement.setLong(4, System.currentTimeMillis());
             int rows = statement.executeUpdate();
-            initializeRiskIfMissing(itemHash, basePrice, connection);
+            initializeRiskIfMissing(itemHash, coldStartAnchorPrice, connection);
             initializeDiscoveryStateIfMissing(connection, itemHash);
             return rows > 0;
         } catch (SQLException e) {
@@ -425,7 +294,7 @@ public class ItemMarketRepository {
     }
 
     /**
-     * 仅更新真实库存（用于在 updateTargetInventoryWithProportionalCurrentScaling 后同步物理库存）
+     * 更新真实库存。v5 起物品不再持有虚拟库存池，卖出/买入结算都只改 physical_stock。
      */
     public void updatePhysicalStockOnly(String itemHash, int newPhysicalStock) {
         String sql = "UPDATE ecobrain_items SET physical_stock = ? WHERE item_hash = ?";
@@ -436,19 +305,6 @@ public class ItemMarketRepository {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update physical stock", e);
-        }
-    }
-
-    public void updateStocks(String itemHash, int newVirtualInventory, int newPhysicalStock) {
-        String sql = "UPDATE ecobrain_items SET current_inventory = ?, physical_stock = ? WHERE item_hash = ?";
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setInt(1, Math.max(1, newVirtualInventory));
-            statement.setInt(2, Math.max(0, newPhysicalStock));
-            statement.setString(3, itemHash);
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to update stocks", e);
         }
     }
 
@@ -489,79 +345,6 @@ public class ItemMarketRepository {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to release reserved physical stock", e);
-        }
-    }
-
-    /**
-     * 预留成功后，仅更新虚拟库存池（current_inventory）。
-     * physical_stock 已在 reserve 阶段扣减，这里绝不能再扣一次。
-     */
-    public void updateVirtualInventoryOnly(String itemHash, int newVirtualInventory) {
-        String sql = "UPDATE ecobrain_items SET current_inventory = ? WHERE item_hash = ?";
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setInt(1, Math.max(1, newVirtualInventory));
-            statement.setString(2, itemHash);
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to update virtual inventory", e);
-        }
-    }
-
-    public void updateTuning(String itemHash, double basePrice, double kFactor) {
-        String sql = "UPDATE ecobrain_items SET base_price = ?, k_factor = ? WHERE item_hash = ?";
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setDouble(1, basePrice);
-            statement.setDouble(2, kFactor);
-            statement.setString(3, itemHash);
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to update tuning", e);
-        }
-    }
-
-    /**
-     * 动态调整 target_inventory 时，必须按比例缩放 current_inventory（虚拟库存池）以避免价格非交易性跳变。
-     * 仅调整 target_inventory 与 current_inventory，绝不修改 physical_stock。
-     *
-     * 说明：current/target 为整数，严格恒等在数学上不一定可行；这里使用四舍五入将误差压到最小。
-     */
-    public void updateTargetInventoryWithProportionalCurrentScaling(String itemHash,
-                                                                    int oldTargetInventory,
-                                                                    int oldCurrentInventory,
-                                                                    int newTargetInventory) {
-        int safeOldTarget = Math.max(1, oldTargetInventory);
-        int safeOldCurrent = Math.max(1, oldCurrentInventory);
-        int safeNewTarget = Math.max(1, newTargetInventory);
-
-        int newCurrent = Math.max(1,
-            (int) Math.round((double) safeOldCurrent * (double) safeNewTarget / (double) safeOldTarget));
-
-        String sql = "UPDATE ecobrain_items SET target_inventory = ?, current_inventory = ? WHERE item_hash = ?";
-        try (Connection connection = databaseManager.getConnection()) {
-            boolean prevAutoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
-            try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setInt(1, safeNewTarget);
-                statement.setInt(2, newCurrent);
-                statement.setString(3, itemHash);
-                statement.executeUpdate();
-                connection.commit();
-            } catch (SQLException e) {
-                try {
-                    connection.rollback();
-                } catch (SQLException ignored) {
-                }
-                throw e;
-            } finally {
-                try {
-                    connection.setAutoCommit(prevAutoCommit);
-                } catch (SQLException ignored) {
-                }
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to update target inventory with proportional current scaling", e);
         }
     }
 
@@ -703,39 +486,6 @@ public class ItemMarketRepository {
             return statement.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to clear leaderboard", e);
-        }
-    }
-
-    /**
-     * 记录 AI 每次对单个物品的调参事件，用于审计与回放分析。
-     */
-    public void recordAiTuningEvent(String itemHash, String action, String reason,
-                                    double oldBasePrice, double newBasePrice,
-                                    double oldKFactor, double newKFactor,
-                                    double reward, long createdAtMillis) {
-        String sql = """
-            INSERT INTO ecobrain_ai_tuning_events(
-                item_hash, action, reason,
-                old_base_price, new_base_price,
-                old_k_factor, new_k_factor,
-                reward, created_at
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """;
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, itemHash);
-            statement.setString(2, action);
-            statement.setString(3, reason == null ? "" : reason);
-            statement.setDouble(4, oldBasePrice);
-            statement.setDouble(5, newBasePrice);
-            statement.setDouble(6, oldKFactor);
-            statement.setDouble(7, newKFactor);
-            statement.setDouble(8, reward);
-            statement.setLong(9, createdAtMillis);
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to record AI tuning event", e);
         }
     }
 
@@ -1266,58 +1016,34 @@ public class ItemMarketRepository {
     }
 
     private void initializeDiscoveryStateIfMissing(Connection connection, String itemHash) throws SQLException {
-        DiscoveryState initial = DiscoveryState.initial(itemHash);
+        DiscoveryState initial = DiscoveryState.initial(itemHash, coldStartAnchorPrice, coldStartInitialVariance);
         String sql = """
             INSERT INTO ecobrain_discovery_state(
-                item_hash, mu_log_price, sigma_log_price, stage, manipulation_score,
-                trusted_buy_qty_7d, trusted_sell_qty_7d,
-                distinct_buyers_7d, distinct_sellers_7d,
-                top2_flow_share_24h, reversal_rate_24h,
-                trusted_float, liquidity_depth, updated_at
+                item_hash, x_log_value, p_var, vol_ewma, diversity_ewma, last_trade_at, updated_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_hash) DO NOTHING
             """;
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, initial.itemHash());
-            statement.setDouble(2, initial.muLogPrice());
-            statement.setDouble(3, initial.sigmaLogPrice());
-            statement.setString(4, initial.stage().name());
-            statement.setDouble(5, initial.manipulationScore());
-            statement.setDouble(6, initial.trustedBuyQty7d());
-            statement.setDouble(7, initial.trustedSellQty7d());
-            statement.setInt(8, initial.distinctBuyers7d());
-            statement.setInt(9, initial.distinctSellers7d());
-            statement.setDouble(10, initial.top2FlowShare24h());
-            statement.setDouble(11, initial.reversalRate24h());
-            statement.setDouble(12, initial.trustedFloat());
-            statement.setDouble(13, initial.liquidityDepth());
-            statement.setLong(14, initial.updatedAtMillis());
+            statement.setDouble(2, initial.xLogValue());
+            statement.setDouble(3, initial.pVar());
+            statement.setDouble(4, initial.volEwma());
+            statement.setDouble(5, initial.diversityEwma());
+            statement.setLong(6, initial.lastTradeAtMillis());
+            statement.setLong(7, initial.updatedAtMillis());
             statement.executeUpdate();
         }
     }
 
     private DiscoveryState mapDiscoveryState(ResultSet rs) throws SQLException {
-        DiscoveryStage stage;
-        try {
-            stage = DiscoveryStage.valueOf(rs.getString("stage"));
-        } catch (Exception ignored) {
-            stage = DiscoveryStage.UNKNOWN;
-        }
         return new DiscoveryState(
             rs.getString("item_hash"),
-            rs.getDouble("mu_log_price"),
-            rs.getDouble("sigma_log_price"),
-            stage,
-            rs.getDouble("manipulation_score"),
-            rs.getDouble("trusted_buy_qty_7d"),
-            rs.getDouble("trusted_sell_qty_7d"),
-            rs.getInt("distinct_buyers_7d"),
-            rs.getInt("distinct_sellers_7d"),
-            rs.getDouble("top2_flow_share_24h"),
-            rs.getDouble("reversal_rate_24h"),
-            rs.getDouble("trusted_float"),
-            rs.getDouble("liquidity_depth"),
+            rs.getDouble("x_log_value"),
+            rs.getDouble("p_var"),
+            rs.getDouble("vol_ewma"),
+            rs.getDouble("diversity_ewma"),
+            rs.getLong("last_trade_at"),
             rs.getLong("updated_at")
         );
     }
@@ -1326,58 +1052,9 @@ public class ItemMarketRepository {
         return new ItemMarketRecord(
             rs.getString("item_hash"),
             rs.getString("item_base64"),
-            rs.getDouble("base_price"),
-            rs.getDouble("k_factor"),
-            rs.getInt("target_inventory"),
-            rs.getInt("current_inventory"),
             rs.getInt("physical_stock"),
             rs.getLong("created_at")
         );
     }
 
-    /**
-     * 导出所有交易数据为 CSV 格式供 Python PPO 离线微调使用
-     */
-    public String exportTransactionDataForTraining(java.io.File dataFolder) {
-        String sql = """
-            SELECT item_hash, trade_type, quantity, total_price, created_at
-            FROM ecobrain_trade_stats
-            ORDER BY created_at ASC
-            """;
-        
-        java.io.File exportFile = new java.io.File(dataFolder, "ecobrain_training_data_" + System.currentTimeMillis() + ".csv");
-        
-        try (Connection connection = databaseManager.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql);
-             ResultSet rs = statement.executeQuery();
-             java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.FileWriter(exportFile))) {
-            
-            // CSV Header
-            writer.println("item_hash,trade_type,quantity,total_price,created_at");
-            
-            int count = 0;
-            while (rs.next()) {
-                writer.printf("%s,%s,%d,%.6f,%d%n",
-                    rs.getString("item_hash"),
-                    rs.getString("trade_type"),
-                    rs.getInt("quantity"),
-                    rs.getDouble("total_price"),
-                    rs.getLong("created_at")
-                );
-                count++;
-            }
-            
-            return exportFile.getAbsolutePath() + " (共导出 " + count + " 条记录)";
-        } catch (Exception e) {
-            throw new IllegalStateException("导出训练数据失败", e);
-        }
-    }
-
-    public record DiscoveryWindowStats(double buyQty7d,
-                                       double sellQty7d,
-                                       int distinctBuyers7d,
-                                       int distinctSellers7d,
-                                       double top2FlowShare24h,
-                                       double reversalRate24h) {
-    }
 }

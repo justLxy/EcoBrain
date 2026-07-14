@@ -1,6 +1,5 @@
 package com.ecobrain.plugin.persistence;
 
-import com.ecobrain.plugin.model.ItemMarketRecord;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -8,54 +7,10 @@ import org.mockito.Mockito;
 
 import java.nio.file.Files;
 
+/**
+ * v5: 目标库存按比例缩放的概念已随遗留 vAMM 移除；保留对物品档案生命周期（按库存清理）的回归。
+ */
 class ItemMarketRepositoryTargetScalingTest {
-
-    @Test
-    void shouldScaleCurrentInventoryProportionallyAndKeepPhysicalStock() throws Exception {
-        JavaPlugin plugin = Mockito.mock(JavaPlugin.class);
-        var tempDir = Files.createTempDirectory("ecobrain-test-db-");
-        Mockito.when(plugin.getDataFolder()).thenReturn(tempDir.toFile());
-
-        DatabaseManager db = new DatabaseManager(plugin);
-        db.initializeSchema();
-        ItemMarketRepository repo = new ItemMarketRepository(db);
-
-        String hash = "hash-1";
-        repo.upsertIpo(hash, "base64", 100.0D, 1.0D, 100, 50, 7);
-
-        ItemMarketRecord before = repo.findByHash(hash).orElseThrow();
-        Assertions.assertEquals(100, before.getTargetInventory());
-        Assertions.assertEquals(50, before.getCurrentInventory());
-        Assertions.assertEquals(7, before.getPhysicalStock());
-
-        repo.updateTargetInventoryWithProportionalCurrentScaling(hash, 100, 50, 200);
-
-        ItemMarketRecord after = repo.findByHash(hash).orElseThrow();
-        Assertions.assertEquals(200, after.getTargetInventory());
-        Assertions.assertEquals(100, after.getCurrentInventory()); // 50 * (200/100) = 100
-        Assertions.assertEquals(7, after.getPhysicalStock()); // must remain unchanged
-    }
-
-    @Test
-    void shouldRoundWhenRatioNotInteger() throws Exception {
-        JavaPlugin plugin = Mockito.mock(JavaPlugin.class);
-        var tempDir = Files.createTempDirectory("ecobrain-test-db-");
-        Mockito.when(plugin.getDataFolder()).thenReturn(tempDir.toFile());
-
-        DatabaseManager db = new DatabaseManager(plugin);
-        db.initializeSchema();
-        ItemMarketRepository repo = new ItemMarketRepository(db);
-
-        String hash = "hash-2";
-        repo.upsertIpo(hash, "base64", 100.0D, 1.0D, 192, 100, 0);
-
-        repo.updateTargetInventoryWithProportionalCurrentScaling(hash, 192, 100, 193);
-
-        ItemMarketRecord after = repo.findByHash(hash).orElseThrow();
-        Assertions.assertEquals(193, after.getTargetInventory());
-        // 100 * 193 / 192 = 100.5208.. -> round => 101
-        Assertions.assertEquals(101, after.getCurrentInventory());
-    }
 
     @Test
     void shouldDeleteOnlyItemsWithExactPhysicalStockOne() throws Exception {
@@ -67,8 +22,8 @@ class ItemMarketRepositoryTargetScalingTest {
         db.initializeSchema();
         ItemMarketRepository repo = new ItemMarketRepository(db);
 
-        repo.upsertIpo("hash-keep", "base64", 100.0D, 1.0D, 64, 64, 2);
-        repo.upsertIpo("hash-delete", "base64", 100.0D, 1.0D, 64, 64, 1);
+        repo.upsertIpo("hash-keep", "base64", 2);
+        repo.upsertIpo("hash-delete", "base64", 1);
 
         int deleted = repo.deleteAllByPhysicalStock(1);
 

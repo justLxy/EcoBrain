@@ -1,8 +1,5 @@
 package com.ecobrain.plugin;
 
-import com.ecobrain.plugin.ai.AIScheduler;
-import com.ecobrain.plugin.ai.OnnxModelRunner;
-import org.bukkit.scheduler.BukkitTask;
 import com.ecobrain.plugin.command.AdminCommand;
 import com.ecobrain.plugin.command.EcoBrainCommand;
 import com.ecobrain.plugin.config.PluginSettings;
@@ -16,7 +13,6 @@ import com.ecobrain.plugin.listener.QDropBulkSellListener;
 import com.ecobrain.plugin.persistence.DatabaseManager;
 import com.ecobrain.plugin.persistence.ItemMarketRepository;
 import com.ecobrain.plugin.serialization.ItemSerializer;
-import com.ecobrain.plugin.service.AMMCalculator;
 import com.ecobrain.plugin.service.EconomyService;
 import com.ecobrain.plugin.service.ItemOperationCoordinator;
 import com.ecobrain.plugin.service.MarketService;
@@ -38,7 +34,6 @@ public class EcoBrainPlugin extends JavaPlugin {
     private com.ecobrain.plugin.rewards.RewardsManager rewardsManager;
     private com.ecobrain.plugin.rewards.RewardsGUI rewardsGUI;
     private EconomyService economyService;
-    private AMMCalculator ammCalculator;
     private StatisticalPriceDiscoveryService priceDiscoveryService;
     private CircuitBreaker circuitBreaker;
     private MarketService marketService;
@@ -46,8 +41,6 @@ public class EcoBrainPlugin extends JavaPlugin {
     private MarketViewGUI marketViewGUI;
     private LeaderboardGUI leaderboardGUI;
     private EcoBrainCommand ecoBrainCommand;
-    private AIScheduler aiScheduler;
-    private OnnxModelRunner onnxModelRunner;
 
     @Override
     public void onEnable() {
@@ -67,7 +60,6 @@ public class EcoBrainPlugin extends JavaPlugin {
         }
 
         ItemOperationCoordinator itemOperationCoordinator = new ItemOperationCoordinator();
-        this.ammCalculator = new AMMCalculator();
         this.priceDiscoveryService = new StatisticalPriceDiscoveryService(repository, settings);
         this.circuitBreaker = new CircuitBreaker(repository, priceDiscoveryService, settings.circuitBreaker());
         this.marketService = new MarketService(
@@ -119,35 +111,11 @@ public class EcoBrainPlugin extends JavaPlugin {
         this.placeholderApiHook = new com.ecobrain.plugin.placeholder.PlaceholderApiHook(this, repository);
         this.placeholderApiHook.registerIfPresent();
 
-        java.io.File modelDir = new java.io.File(getDataFolder(), "models");
-        if (!modelDir.exists()) {
-            modelDir.mkdirs();
-        }
-        this.onnxModelRunner = new com.ecobrain.plugin.ai.OnnxModelRunner(modelDir, getLogger());
-
-        this.aiScheduler = new AIScheduler(
-            this,
-            this.onnxModelRunner,
-            repository,
-            ammCalculator,
-            settings.ai(),
-            itemSerializer,
-            itemOperationCoordinator
-        );
-        this.aiScheduler.setFullSettings(settings);
-        this.aiScheduler.start();
-
         getLogger().info("EcoBrain 已启用。");
     }
 
     @Override
     public void onDisable() {
-        if (aiScheduler != null) {
-            aiScheduler.stop();
-        }
-        if (onnxModelRunner != null) {
-            onnxModelRunner.close();
-        }
         if (placeholderApiHook != null) {
             placeholderApiHook.shutdown();
         }
@@ -181,6 +149,5 @@ public class EcoBrainPlugin extends JavaPlugin {
         if (rewardsManager != null) {
             rewardsManager.reload();
         }
-        aiScheduler.updateSettingsAndRestart(settings.ai(), settings);
     }
 }
